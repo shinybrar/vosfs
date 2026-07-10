@@ -5,11 +5,6 @@ Agents must also follow `AGENTS.md`; repository configuration and required CI
 checks are the executable enforcement of this policy. If they disagree, fix
 the policy and configuration together in the same pull request.
 
-The executable Development Baseline is being delivered through
-[issue #1](https://github.com/shinybrar/vosfs/issues/1). Until its tool and
-workflow configuration has merged, commands below define the required end
-state rather than capabilities already present on `main`.
-
 ## Ground rules
 
 - Start from a GitHub issue or sub-issue and keep the change within its scope.
@@ -47,6 +42,7 @@ Markdown checks.
 - Use Ruff as the only Python formatter and linter, and ty as the type checker.
 - Add or update pytest tests for observable behavior. Unit tests must be
   deterministic and offline; mark integration tests that require a service.
+- Maintain at least 90% overall branch coverage across `src/vosfs`.
 - Update user-facing Markdown in the same pull request as behavior changes.
   Do not document commands or APIs that do not exist.
 - Do not edit `uv.lock` by hand. Use `uv add`, `uv add --dev`, `uv remove`, or
