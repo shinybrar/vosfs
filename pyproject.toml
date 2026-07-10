@@ -1,6 +1,6 @@
 [project]
 name = "vosfs"
-version = "0.1.0"
+version = "0.2.0"
 description = "VOSpace FileSystem"
 readme = "README.md"
 authors = [
