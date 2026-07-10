@@ -3,7 +3,7 @@
     "repository": {"full_name": "shinybrar/vosfs"},
     "pull_request": {
       "user": {"login": "shinybrar"},
-      "head": {"ref": "release-please--branches--main"},
+      "head": {"ref": "release-please--branches--main--components--vosfs"},
       "labels": [{"name": "autorelease: pending"}]
     }
   },

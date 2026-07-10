@@ -19,6 +19,7 @@ SCRIPT = Path(__file__).parents[1] / "scripts" / "check_pr_metadata.py"
         ("cross-repository", 1),
         ("release-please", 0),
         ("release-please-wrong-author", 1),
+        ("release-please-wrong-branch", 1),
         ("release-please-wrong-label", 1),
         ("dependabot", 0),
         ("dependabot-wrong-branch", 1),

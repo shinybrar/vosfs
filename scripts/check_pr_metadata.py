@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
 
-RELEASE_BRANCH = "release-please--branches--main"
+RELEASE_BRANCH = "release-please--branches--main--components--vosfs"
 RELEASE_LABEL = "autorelease: pending"
 DEPENDABOT_AUTHOR = "dependabot[bot]"
 DEPENDABOT_BRANCH_PREFIX = "dependabot/"

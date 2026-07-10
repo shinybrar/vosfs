@@ -53,7 +53,9 @@ Markdown checks.
 
 All Markdown files must pass the configured Markdown lint, trailing-whitespace,
 and end-of-file checks. Public documentation under `docs/user/` must also pass
-a strict Zensical build. Do not commit generated site output to source branches.
+a strict Zensical build. The generated root `CHANGELOG.md` remains checked, with
+only MD012 and MD022 additionally disabled to preserve Release Please's
+deterministic output. Do not commit generated site output to source branches.
 Only the trusted Pages workflow may commit the complete generated site to the
 machine-owned `gh-pages` branch.
 
@@ -75,7 +77,8 @@ The pull request must pass the same required CI checks before merge.
 
 Human pull requests must close an issue in this repository. The only
 issue-link exceptions are release pull requests authored by the repository
-owner's Release Please PAT on `release-please--branches--main` carrying the
+owner's Release Please PAT on
+`release-please--branches--main--components--vosfs` carrying the
 `autorelease: pending` label, and dependency pull requests from `dependabot[bot]`
 on a `dependabot/` branch. These automations remain subject to the normal title,
 CI, review, and merge requirements.
