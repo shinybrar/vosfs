@@ -50,31 +50,11 @@ jobs:
       issues: read
       pull-requests: read
     steps:
-      - name: Select trusted policy source
-        id: policy
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
-          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
-          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
-          TARGET_REPOSITORY: ${{ github.repository }}
-        run: |
-          policy_sha="$BASE_SHA"
-          # Bootstrap only: this exact base predates the policy script. The
-          # immediate follow-up removes this dead-after-merge exception.
-          if [[ "$BASE_SHA" == "758b056f4f0a4cd19cd0026e46cbf593fa6353ac" && \
-                "$HEAD_BRANCH" == "ci-quality-gate-15" && \
-                "$HEAD_REPOSITORY" == "$TARGET_REPOSITORY" ]]; then
-            policy_sha="$MERGE_SHA"
-          fi
-          echo "sha=$policy_sha" >> "$GITHUB_OUTPUT"
-
       - name: Check out trusted policy
         if: github.event_name == 'pull_request'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          ref: ${{ steps.policy.outputs.sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
           path: .policy
           persist-credentials: false
 
