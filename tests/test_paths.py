@@ -1,0 +1,104 @@
+"""Tests for VOSpace path identity (contract section 4)."""
+
+import pytest
+
+from vosfs import paths
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("vos://a/b", "/a/b"),
+        ("vos:///a/b", "/a/b"),
+        ("/a/b", "/a/b"),
+        ("a/b", "/a/b"),
+        ("vos://", "/"),
+        ("vos:///", "/"),
+        ("/", "/"),
+        ("", "/"),
+        ("VOS://a/b", "/a/b"),
+        ("a/b/", "/a/b"),
+        ("//a/b", "/a/b"),
+        ("///a/b", "/a/b"),
+        ("vos://a//b", "/a/b"),
+    ],
+)
+def test_normalizes_equivalent_forms(raw: str, expected: str) -> None:
+    assert paths.strip_protocol(raw) == expected
+
+
+def test_decodes_percent_escape_once() -> None:
+    assert paths.strip_protocol("vos://dir/file%20name") == "/dir/file name"
+    assert paths.strip_protocol("/a/%C3%A9") == "/a/é"
+
+
+def test_preserves_unicode() -> None:
+    assert paths.strip_protocol("/data/éè") == "/data/éè"
+
+
+def test_normalization_is_idempotent_for_ordinary_paths() -> None:
+    for raw in ["vos://a/b c", "/data/é", "/x/y/z", "a/b/c"]:
+        once = paths.strip_protocol(raw)
+        assert paths.strip_protocol(once) == once
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "a/b?x=1",
+        "a/b#frag",
+        "vos://user@host/b",
+        "a/\x00/b",
+        "a/%2f/b",
+        "a/%2F/b",
+        "a/%5c/b",
+        "a/../b",
+        "../b",
+        "a/..",
+        "vos://a/b/..",
+    ],
+)
+def test_rejects_dangerous_paths(bad: str) -> None:
+    with pytest.raises(ValueError):  # noqa: PT011 - message text is not part of the contract
+        paths.strip_protocol(bad)
+
+
+def test_dot_segment_is_rejected() -> None:
+    with pytest.raises(ValueError):  # noqa: PT011
+        paths.strip_protocol("a/./b")
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("/a/b/c", "/a/b"),
+        ("/a", "/"),
+        ("/", "/"),
+        ("vos://a/b", "/a"),
+    ],
+)
+def test_parent(raw: str, expected: str) -> None:
+    assert paths.parent(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("/a/b/c", "c"),
+        ("/a", "a"),
+        ("/", ""),
+    ],
+)
+def test_name(raw: str, expected: str) -> None:
+    assert paths.name(raw) == expected
+
+
+def test_segments() -> None:
+    assert paths.segments("vos://a/b/c") == ["a", "b", "c"]
+    assert paths.segments("/") == []
+
+
+def test_encode_url_path_reencodes_segments() -> None:
+    assert paths.encode_url_path("/dir/file name") == "/dir/file%20name"
+    assert paths.encode_url_path("/") == ""
+    assert paths.encode_url_path("/a/é") == "/a/%C3%A9"

@@ -8,8 +8,13 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
+    "defusedxml>=0.7",
     "fsspec>=2026.6.0",
+    "httpx>=0.27",
 ]
+
+[project.entry-points."fsspec.specs"]
+vos = "vosfs:VOSpaceFileSystem"
 
 [build-system]
 requires = ["uv_build>=0.11.28,<0.12.0"]
@@ -18,12 +23,15 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "commitizen>=4.16.4,<5",
+    "lxml>=5",
     "mike @ git+https://github.com/squidfunk/mike.git@2d4ad799442f4592db8ad53b179bfb33db8c69ac",
     "mkdocstrings-python>=2.0.5",
     "pre-commit>=4.6.0",
     "pymarkdownlnt>=0.9.38",
     "pytest>=9.1.1",
+    "pytest-asyncio>=0.24",
     "pytest-cov>=7.1.0",
+    "respx>=0.21",
     "ruff>=0.15.21",
     "ty>=0.0.58",
     "zensical>=0.0.50",
@@ -40,6 +48,7 @@ addopts = [
     "--cov-report=term-missing",
 ]
 testpaths = ["tests"]
+asyncio_mode = "auto"
 markers = [
     "integration: tests that require a live VOSpace service",
 ]
@@ -68,6 +77,10 @@ ignore = [
     "D",    # Tests describe behavior through their names.
     "INP001", # Tests do not need to form a Python package.
     "S101", # pytest assertions are expected.
+    "S105", # Literal token/secret values are fixtures, not real credentials.
+    "S106", # Literal token/secret arguments are fixtures, not real credentials.
+    "SLF001", # Tests exercise internal seams and coroutine hooks by design.
+    "PLR2004", # Status codes and sizes are self-evident magic values in tests.
 ]
 
 [tool.ruff.lint.pydocstyle]
