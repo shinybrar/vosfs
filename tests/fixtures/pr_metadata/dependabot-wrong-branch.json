@@ -1,0 +1,11 @@
+{
+  "event": {
+    "repository": {"full_name": "shinybrar/vosfs"},
+    "pull_request": {
+      "user": {"login": "dependabot[bot]"},
+      "head": {"ref": "feature/not-dependabot"},
+      "labels": []
+    }
+  },
+  "references": []
+}

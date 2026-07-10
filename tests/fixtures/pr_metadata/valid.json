@@ -1,0 +1,28 @@
+{
+  "event": {
+    "repository": {"full_name": "shinybrar/vosfs"},
+    "pull_request": {
+      "user": {"login": "human-contributor"},
+      "head": {"ref": "feat/linked-change"},
+      "labels": []
+    }
+  },
+  "references": [
+    {
+      "data": {
+        "repository": {
+          "pullRequest": {
+            "closingIssuesReferences": {
+              "nodes": [
+                {
+                  "number": 15,
+                  "repository": {"nameWithOwner": "shinybrar/vosfs"}
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

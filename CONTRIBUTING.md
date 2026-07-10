@@ -37,7 +37,10 @@ Markdown checks.
 
 ## Make a change
 
-- Support the Python versions declared by `project.requires-python`.
+- Support every actively supported Python version allowed by
+  `project.requires-python`. CI tests that full range on Linux and tests the
+  newest-minus-two Python release on macOS and Windows. Advance the declared
+  minimum and matrix together as Python's five-version support window moves.
 - Keep package code under `src/vosfs/` and add type annotations to public APIs.
 - Use Ruff as the only Python formatter and linter, and ty as the type checker.
 - Add or update pytest tests for observable behavior. Unit tests must be
@@ -62,10 +65,18 @@ uv lock --check
 uv run pre-commit run --all-files
 uv run pytest
 uv run zensical build --strict --clean
+uv build
 ```
 
 If a hook changes files, review the changes, stage them, and run the gate again.
 The pull request must pass the same required CI checks before merge.
+
+Human pull requests must close an issue in this repository. The only
+issue-link exceptions are release pull requests from
+`shinybrar-vosfs-release[bot]` on `release-please--branches--main` carrying the
+`autorelease: pending` label, and dependency pull requests from
+`dependabot[bot]` on a `dependabot/` branch. These automations remain subject to
+the normal title, CI, review, and merge requirements.
 
 Pull-request CI validates code, tests, Markdown, and the strict Zensical build.
 After merge, a separate deployment workflow publishes the validated docs
