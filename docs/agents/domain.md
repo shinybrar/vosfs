@@ -13,7 +13,7 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 
 Single-context repo:
 
-```
+```text
 /
 ├── CONTEXT.md
 ├── docs/adr/
@@ -32,4 +32,4 @@ If the concept you need isn't in the glossary yet, that's a signal — either yo
 
 If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
 
-> _Contradicts ADR-0007 — but worth reopening because…_
+> Contradicts ADR-0007 — but worth reopening because…

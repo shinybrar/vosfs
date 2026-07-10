@@ -17,5 +17,116 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "commitizen>=4.16.4,<5",
+    "pre-commit>=4.6.0",
+    "pymarkdownlnt>=0.9.38",
     "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.21",
+    "ty>=0.0.58",
+    "zensical>=0.0.50",
 ]
+
+[tool.pytest]
+addopts = [
+    "-ra",
+    "--strict-config",
+    "--strict-markers",
+    "-m",
+    "not integration",
+    "--cov=vosfs",
+    "--cov-report=term-missing",
+]
+testpaths = ["tests"]
+markers = [
+    "integration: tests that require a live VOSpace service",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["vosfs"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+
+[tool.ruff]
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812", # Conflicts with the formatter.
+    "ISC001", # Conflicts with the formatter.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "ANN",  # Tests are outside the ty gate.
+    "D",    # Tests describe behavior through their names.
+    "INP001", # Tests do not need to form a Python package.
+    "S101", # pytest assertions are expected.
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ty.src]
+exclude = ["tests/"]
+
+[tool.commitizen]
+name = "cz_customize"
+
+[tool.commitizen.customize]
+message_template = "{{change_type}}{% if scope %}({{scope}}){% endif %}{% if breaking %}!{% endif %}: {{subject}}{% if body %}\n\n{{body}}{% endif %}{% if breaking %}\n\nBREAKING CHANGE: {{breaking}}{% endif %}{% if footer %}\n\n{{footer}}{% endif %}"
+example = "feat(filesystem): add authenticated reads"
+schema = "<type>(<scope>): <description>"
+schema_pattern = "(?s)^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\\(\\S+\\))?!?: [^\\r\\n]+((\\r?\\n\\r?\\n.*)|(\\s*))?$"
+
+[[tool.commitizen.customize.questions]]
+type = "list"
+name = "change_type"
+message = "Select the type of change"
+choices = [
+    { value = "feat", name = "feat: A new feature" },
+    { value = "fix", name = "fix: A bug fix" },
+    { value = "docs", name = "docs: Documentation only" },
+    { value = "style", name = "style: Formatting without behavior changes" },
+    { value = "refactor", name = "refactor: Neither a feature nor a fix" },
+    { value = "perf", name = "perf: A performance improvement" },
+    { value = "test", name = "test: Add or correct tests" },
+    { value = "build", name = "build: Build system or dependencies" },
+    { value = "ci", name = "ci: Continuous integration" },
+    { value = "chore", name = "chore: Maintenance" },
+    { value = "revert", name = "revert: Revert a previous change" },
+]
+
+[[tool.commitizen.customize.questions]]
+type = "input"
+name = "scope"
+message = "Scope (optional)"
+
+[[tool.commitizen.customize.questions]]
+type = "input"
+name = "subject"
+message = "Imperative description"
+
+[[tool.commitizen.customize.questions]]
+type = "input"
+name = "body"
+message = "Body (optional)"
+multiline = true
+
+[[tool.commitizen.customize.questions]]
+type = "input"
+name = "breaking"
+message = "Breaking change description (optional)"
+
+[[tool.commitizen.customize.questions]]
+type = "input"
+name = "footer"
+message = "Footer (optional)"
+multiline = true
