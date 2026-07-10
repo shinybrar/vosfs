@@ -6,6 +6,7 @@ The ``vos`` protocol is registered with fsspec through the ``fsspec.specs``
 entry-point group declared in ``pyproject.toml``.
 """
 
+from vosfs.errors import VOSpaceError
 from vosfs.filesystem import VOSpaceFileSystem
 
-__all__ = ["VOSpaceFileSystem"]
+__all__ = ["VOSpaceError", "VOSpaceFileSystem"]
