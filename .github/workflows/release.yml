@@ -1,0 +1,173 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing vX.Y.Z release whose artifacts should be rebuilt
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create release App token
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: vosfs
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      - name: Verify CI validated current main
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          if [[ "$main_sha" != "$VALIDATED_SHA" ]]; then
+            echo "CI validated $VALIDATED_SHA, but main is now $main_sha" >&2
+            exit 1
+          fi
+
+      - name: Open or update the release pull request
+        id: release
+        if: inputs.release_tag == ''
+        uses: googleapis/release-please-action@0dfd8538845b8e92600d271a895a5372865d4062 # v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Select released commit
+        id: released
+        if: steps.release.outputs.release_created == 'true' || inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          CREATED_TAG: ${{ steps.release.outputs.tag_name }}
+          CREATED_SHA: ${{ steps.release.outputs.sha }}
+          RECOVERY_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [[ -n "$RECOVERY_TAG" ]]; then
+            if [[ ! "$RECOVERY_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "release_tag must be an exact vX.Y.Z tag" >&2
+              exit 1
+            fi
+            gh release view "$RECOVERY_TAG" >/dev/null
+            read -r object_type sha < <(
+              gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RECOVERY_TAG" \
+                --jq '.object | "\(.type) \(.sha)"'
+            )
+            if [[ "$object_type" == "tag" ]]; then
+              sha="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq .object.sha)"
+            fi
+            tag="$RECOVERY_TAG"
+          else
+            sha="$CREATED_SHA"
+            tag="$CREATED_TAG"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the released commit
+        if: steps.released.outputs.sha != ''
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ steps.released.outputs.sha }}
+          persist-credentials: false
+
+      - name: Install uv
+        if: steps.released.outputs.sha != ''
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+
+      - name: Build release distributions
+        if: steps.released.outputs.sha != ''
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ steps.released.outputs.sha }}"
+          uv build
+
+      - name: Verify release distributions
+        if: steps.released.outputs.sha != ''
+        env:
+          RELEASE_TAG: ${{ steps.released.outputs.tag }}
+        run: |
+          uv run --locked --no-dev python - <<'PY'
+          import glob
+          import os
+          import re
+          import tarfile
+          import zipfile
+          from email.parser import BytesParser
+
+          tag = os.environ["RELEASE_TAG"]
+          if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag) is None:
+              raise SystemExit(f"invalid release tag: {tag}")
+          expected = {"Name": "vosfs", "Version": tag.removeprefix("v")}
+
+          wheels = glob.glob("dist/*.whl")
+          sdists = glob.glob("dist/*.tar.gz")
+          if len(wheels) != 1 or len(sdists) != 1:
+              raise SystemExit(
+                  f"expected one wheel and one sdist, found {wheels!r} and {sdists!r}"
+              )
+
+          with zipfile.ZipFile(wheels[0]) as archive:
+              names = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
+              if len(names) != 1:
+                  raise SystemExit(f"expected one wheel METADATA file, found {names!r}")
+              wheel_metadata = BytesParser().parsebytes(archive.read(names[0]))
+
+          with tarfile.open(sdists[0], mode="r:gz") as archive:
+              members = [
+                  member
+                  for member in archive.getmembers()
+                  if member.isfile() and member.name.endswith("/PKG-INFO")
+              ]
+              if len(members) != 1:
+                  raise SystemExit(f"expected one sdist PKG-INFO file, found {members!r}")
+              extracted = archive.extractfile(members[0])
+              if extracted is None:
+                  raise SystemExit("could not read sdist PKG-INFO")
+              sdist_metadata = BytesParser().parsebytes(extracted.read())
+
+          for artifact, metadata in (
+              (wheels[0], wheel_metadata),
+              (sdists[0], sdist_metadata),
+          ):
+              actual = {key: metadata.get(key) for key in expected}
+              if actual != expected:
+                  raise SystemExit(
+                      f"{artifact} metadata {actual!r} does not match {expected!r}"
+                  )
+          PY
+
+      - name: Attach distributions to the GitHub Release
+        if: steps.released.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RELEASE_TAG: ${{ steps.released.outputs.tag }}
+        run: gh release upload "$RELEASE_TAG" dist/*.whl dist/*.tar.gz --clobber
