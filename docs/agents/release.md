@@ -15,9 +15,9 @@ commit. It does not publish to a package registry. A manual run with an existing
 exact tag rebuilds missing artifacts from that release; a manual run without a
 tag retries Release Please.
 
-Do not hand-format the generated root `CHANGELOG.md`. Its dedicated PyMarkdown
-hook adds only MD012 and MD022 to the globally disabled MD013; every other
-configured Markdown rule still applies.
+Do not hand-format the generated root `CHANGELOG.md`. Release Please owns its
+format from Commitizen-compatible Conventional Commit titles, and PyMarkdown
+excludes it entirely. General whitespace and end-of-file hooks still apply.
 
 ## Lockfile fallback
 
