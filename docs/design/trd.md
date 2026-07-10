@@ -1,0 +1,654 @@
+# `vosfs` v0.3.0 OpenCADC Capability Contract
+
+<!-- pyml disable line-length -->
+
+Status: **Approved for implementation**
+
+Implementation status: **Not yet released**
+
+Contract target: **`vosfs` v0.3.0**
+
+Last updated: **2026-07-10**
+
+The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**,
+and **MAY** in this document are to be interpreted as described by
+[RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) and
+[RFC 8174](https://www.rfc-editor.org/rfc/rfc8174) when, and only when, they
+appear in all capitals.
+
+This document is the publication contract for `vosfs` v0.3.0. A capability is
+not considered implemented or releasable until its acceptance gates pass.
+This is the sole normative v0.3.0 contract; linked research notes are
+informative evidence and defer to this document if they differ.
+
+## 1. Purpose and compatibility claim
+
+`vosfs` provides an asynchronous
+[`fsspec`](https://github.com/fsspec/filesystem_spec) filesystem for the
+OpenCADC Cavern VOSpace service. It enables fsspec-aware Python tools and a
+bounded set of scientific-stack consumers to read, write, inspect, and mutate
+OpenCADC VOSpace paths.
+
+The server contract is the **OpenCADC VOSpace profile** evidenced by
+[`opencadc/vos` commit `cf976ce8141dd3341631b7f3e07aa38443d42f58`](https://github.com/opencadc/vos/tree/cf976ce8141dd3341631b7f3e07aa38443d42f58).
+The [IVOA VOSpace 2.1 Recommendation](https://www.ivoa.net/documents/VOSpace/20180620/REC-VOSpace-2.1.html)
+defines the wire vocabulary used by the implemented OpenCADC operations; it
+does not enlarge the v0.3.0 capability surface.
+
+`vosfs` v0.3.0 **MUST NOT** claim generic VOSpace 2.1 conformance or
+compatibility with unrelated VOSpace implementations.
+
+The executable compatibility baseline is:
+
+- Python 3.10 through 3.14;
+- fsspec 2026.6.0; and
+- the OpenCADC source snapshot named above.
+
+Exact downstream-library versions are release evidence, not permanent parts
+of this contract.
+
+## 2. Capability vocabulary
+
+Every public behavior has exactly one classification.
+
+| Class | Meaning |
+| --- | --- |
+| **Native** | Backed by an implemented and tested operation in the OpenCADC VOSpace profile. |
+| **Client-derived** | Supported by composing only native operations, including an explicitly documented fallback. |
+| **Extension-conditional** | Exposed only when a wired OpenCADC extension is advertised and its required behavior is verified. |
+| **Unsupported** | Deliberately excluded because the profile lacks the required semantics, no approved client-derived behavior supplies them, or the behavior is outside the v0.3.0 product scope. |
+
+There are no extension-conditional public operations in the v0.3.0 release
+set. OpenCADC extensions that are implemented and tested may be classified as
+native; all other extensions remain unsupported.
+
+An unsupported call **MUST** raise `NotImplementedError` before causing a
+remote mutation.
+
+## 3. Public filesystem construction
+
+The public constructor **MUST** accept these transport options.
+
+| Option | Type and default | Contract |
+| --- | --- | --- |
+| `endpoint_url` | required `str` | Absolute OpenCADC service base URL, for example `https://staging.canfar.net/arc`. No registry lookup is performed. |
+| `token` | `str | None` | Literal bearer token, including an OIDC access token. |
+| `tokenfile` | `str | None` | File whose bearer token is reread before every authenticated request. |
+| `certfile` | `str | None` | Combined X.509 certificate-chain and private-key PEM file. |
+| `timeouts` | mapping or `None` | Optional finite positive `connect`, `read`, `write`, and `pool` inactivity limits. |
+| `trust_env` | `bool = True` | Controls HTTPX proxy and CA environment handling. |
+
+The filesystem **MUST** also preserve fsspec's supported `asynchronous`,
+`loop`, `batch_size`, `skip_instance_cache`, `use_listings_cache`,
+`listings_expiry_time`, and `max_paths` options.
+
+The default HTTP timeouts are:
+
+| Timeout | Seconds |
+| --- | ---: |
+| Connect | 10 |
+| Pool | 10 |
+| Read | 60 |
+| Write | 60 |
+
+`endpoint_url` **MUST** use `https` when any credential is configured. It
+**MUST NOT** contain userinfo, a query, or a fragment. A trailing slash is
+normalized away.
+
+### 3.1 Credential resolution
+
+The environment fallbacks are exactly:
+
+| Constructor option | Environment fallback |
+| --- | --- |
+| `token` | `VOSFS_TOKEN` |
+| `tokenfile` | `VOSFS_TOKEN_FILE` |
+| `certfile` | `VOSFS_CERT_FILE` |
+
+If any explicit credential option is provided, all credential environment
+variables **MUST** be ignored. Otherwise, zero or exactly one environment
+source may be configured. After precedence resolution, `token`, `tokenfile`,
+and `certfile` are mutually exclusive. Invalid combinations **MUST** raise
+`ValueError` before network I/O. No credential means anonymous access.
+
+`VOSFS_TOKEN` **MUST** be reread before every authenticated request. The
+contents named by `tokenfile` **MUST** also be reread before every request.
+`vosfs` consumes access tokens but **MUST NOT** acquire or refresh them.
+
+The public API **MUST NOT** accept an auth object, live HTTP client, SSL
+context, callable provider, cookie jar, custom authorization headers, or
+`client_kwargs`. Cookie auth, HTTP Basic auth, delegated proxy headers, and
+interactive identity flows are unsupported.
+
+A literal `token` is included in fsspec pickle and JSON serialization. User
+documentation **MUST** state this and **SHOULD** recommend `tokenfile` or an
+environment source.
+
+## 4. Filesystem URL and VOSpace identity
+
+The service is selected only by `endpoint_url`. The apparent authority after
+the `vos://` protocol marker is part of the filesystem path, not a service or
+VOSpace authority.
+
+These inputs **MUST** normalize to the same internal path `/a/b`:
+
+- `vos://a/b`
+- `vos:///a/b`
+- `/a/b`
+- `a/b`
+
+`vos://`, `vos:///`, `/`, and the empty path represent root.
+
+Path parsing **MUST**:
+
+- decode percent escapes exactly once;
+- reject a query, fragment, userinfo, NUL, encoded path separator, and any
+  `..` segment that could escape root;
+- preserve Unicode path content; and
+- percent-encode individual path segments when constructing HTTP URLs.
+
+The logical VOSpace authority used inside XML documents **MUST** be discovered
+from the URI returned by the root node. It **MUST** be cached per filesystem
+instance and every later node URI **MUST** match it. The caller does not supply
+this authority.
+
+## 5. Supported OpenCADC service profile
+
+`vosfs` **MUST** discover service bindings by fetching
+`endpoint_url + "/capabilities"` on first I/O. It **MUST** resolve only the node
+and synchronous-transfer bindings and validate the configured credential
+against their advertised security methods.
+
+Binding selection **MUST** use these exact capability identifiers, not display
+names or URL suffix matching:
+
+- nodes: `ivo://ivoa.net/std/VOSpace/v2.0#nodes`, standard-role ParamHTTP
+  interface, base access URL; and
+- synchronous transfer: `ivo://ivoa.net/std/VOSpace#sync-2.1`, standard-role
+  ParamHTTP interface, full access URL.
+
+The supported security-method identifiers are the empty anonymous method,
+`ivo://ivoa.net/sso#token`, and
+`ivo://ivoa.net/sso#tls-with-certificate`. Advertised cookie authentication is
+not a supported credential source. The internal binding cache and parsed
+capability model **MUST NOT** be exposed as a public runtime-capabilities API.
+
+The service-binding cache is immutable for the filesystem instance. Directory
+cache invalidation **MUST NOT** refresh it. Reconstruction or a new instance
+fetches it again.
+
+| Resource | v0.3.0 class | Supported use |
+| --- | --- | --- |
+| `/capabilities` | Native | Discover the node and synchronous-transfer bindings and their security methods. |
+| `/nodes/*` | Native | GET node metadata/listing, PUT node creation, one private POST node-update primitive, and DELETE one file or empty container. v0.3.0 exposes no generic public property-write API. |
+| `/synctrans` | Native | Synchronous `pullFromVoSpace` and `pushToVoSpace` negotiation only. |
+| Negotiated `/files/*` endpoint | Native | HEAD/GET whole bytes and PUT create-or-truncate bytes. The URL is consumed only when returned by negotiation. |
+
+`vosfs` **MUST NOT** guess a missing operation URL. A missing binding disables
+only its dependent operation and raises an actionable `NotImplementedError`.
+
+The client **MUST NOT** construct a `/files` URL directly.
+
+### 5.1 Explicitly excluded server resources
+
+The following resources and behaviors are unsupported in v0.3.0, including
+when OpenCADC implements them:
+
+- asynchronous `/transfers` jobs and native server-side move;
+- `/async-delete` and `/async-setprops` jobs;
+- `/pkg` package downloads;
+- `/protocols`, `/views`, and `/properties` metadata resources;
+- search, server-side sort, and paginated listing;
+- `copyNode`, `pullToVoSpace`, `pushFromVoSpace`, and bidirectional mounts; and
+- every UWS phase-start, poll, abort, or cleanup lifecycle.
+
+`/synctrans` is retained as synchronous negotiation even though Cavern uses
+UWS components internally. From the `vosfs` perspective it is only a POST,
+303 interpretation, and GET of the synchronous result. `vosfs` **MUST NOT**
+start or poll a job.
+
+## 6. XML and node model
+
+XML request bodies **MUST** be UTF-8 with
+`Content-Type: text/xml; charset=utf-8` and `Accept: text/xml`. The runtime
+parser **MUST** reject external entities, bound response bodies before parsing,
+and validate the fields required by this contract. Generated documents and
+recorded XML fixtures **MUST** validate against the pinned VOSpace 2.1 schema
+in tests; runtime XSD validation is not required.
+
+Generated node and transfer documents **MUST** use the
+`http://www.ivoa.net/xml/VOSpace/v2.0` XML namespace and carry
+`version="2.1"` on the VOSpace document root.
+
+### 6.1 fsspec metadata mapping
+
+| OpenCADC node | `type` | `size` | Additional fields |
+| --- | --- | ---: | --- |
+| `DataNode` | `file` | Required integer byte length | `mtime`, `md5`, `content_type`, `uri`, `properties` when available. |
+| `ContainerNode` | `directory` | `0` | `mtime`, `uri`, `properties` when available. |
+| `LinkNode` | `other` | `0` | `islink=True`, `target`, `uri`; LinkNode properties are not promised. |
+
+`name` **MUST** be the full normalized filesystem path. URI-keyed node
+properties, including unknown properties, **MUST** be preserved in a read-only
+`properties` mapping. Server-computed properties remain read-only.
+
+`StructuredDataNode` and `UnstructuredDataNode` **MUST** be exposed as opaque
+files. v0.3.0 provides no structured-view or representation-selection API.
+
+Listings contain immediate children only and are unpaged. Client traversal
+**MUST NOT** follow LinkNodes. Byte reads MAY follow an internal LinkNode whose
+target has the discovered VOSpace authority; an external LinkNode **MUST**
+raise `NotImplementedError`.
+
+Copying a LinkNode materializes its target bytes as a DataNode. Client-derived
+move recreates the LinkNode at the destination before deleting the source.
+
+Generic property writes, permission mutation, public link creation, `chmod`,
+and `chown` are unsupported.
+
+The implementation retains one private node-update primitive that POSTs an
+explicitly supplied set of mutable, non-administrative properties for protocol
+conformance and internal workflows. It **MUST NOT** accept owner, group,
+permission, quota, length, checksum, creator, or node-type changes, and no
+public fsspec method exposes it in v0.3.0.
+
+## 7. Synchronous byte negotiation
+
+Every logical byte read or write **MUST** perform synchronous negotiation:
+
+1. construct a VOSpace 2.1 transfer document with one authority-qualified
+   target;
+2. use `pullFromVoSpace` plus an HTTPS GET protocol for reads, or
+   `pushToVoSpace` plus an HTTPS PUT protocol for writes;
+3. POST the document to the discovered `/synctrans` binding with automatic
+   redirects disabled;
+4. interpret the 303 `Location` as transfer details or a byte endpoint;
+5. GET transfer details when required and choose a compatible returned
+   protocol; and
+6. perform the one byte GET, HEAD, or PUT against the negotiated endpoint.
+
+A negotiation POST **MUST NOT** be replayed automatically. A negotiated
+endpoint **MUST NOT** be cached for another logical transfer.
+
+Every HTTP redirect outside this approved synchronous-transfer 303 chain
+**MUST** fail without following it.
+
+Redirect targets **MUST** be absolute `http` or `https` URLs without userinfo.
+Bearer targets **MUST** use `https`. Redirect loops and more than five hops
+**MUST** fail.
+
+Credential routing is determined by the selected negotiated security method,
+not origin alone:
+
+- an anonymous or pre-authorized endpoint receives no Authorization header,
+  Cookie, or caller X.509 certificate, whether same-origin or cross-origin;
+- a token endpoint receives a freshly resolved bearer header only when the
+  negotiated method is `ivo://ivoa.net/sso#token`; a cross-origin token target
+  additionally **MUST** use HTTPS;
+- a certificate endpoint uses the X.509 client only when the negotiated method
+  is `ivo://ivoa.net/sso#tls-with-certificate`, whether same-origin or
+  cross-origin, and **MUST** use HTTPS; and
+- when no returned endpoint matches the configured credential source, the
+  transfer fails before byte I/O.
+
+## 8. Read contract
+
+OpenCADC Cavern does not implement HTTP byte ranges. `vosfs` **MUST NOT** send
+a `Range` header or advertise network-efficient random access.
+
+- `_get_file` **MUST** stream one negotiated whole-object GET to the local
+  destination with bounded memory and byte-level callback updates.
+- `_cat_file(path, start, end)` **MUST** perform one whole GET, apply Python
+  half-open slice semantics locally, and support `None`, zero, negative
+  bounds, empty slices, and EOF clipping.
+- `_cat_ranges` **MUST** be overridden to group ranges by object and perform at
+  most one whole GET per object per call. The inherited per-range coordinator
+  is insufficient. Its `max_gap` argument is accepted for fsspec call
+  compatibility but cannot alter the one-whole-GET-per-object behavior.
+- `open("rb")` **MUST** download once into a disk-backed temporary file and
+  then provide local `read`, `readinto`, `readline`, iteration, `tell`, and
+  `seek(0/1/2)` semantics.
+- `open("r")` **MUST** use fsspec text wrapping over that staged binary file.
+- Empty files returned as HTTP 204 **MUST** read as `b""`.
+
+Byte requests **MUST** use `Accept-Encoding: identity` and consume raw response
+bytes so HTTP content decoding cannot alter filesystem content.
+
+`block_size`, `cache_type`, and `cache_options` are accepted for call
+compatibility but do not change the one-whole-download network behavior.
+
+`open_async`, remote Range/206 behavior, memory mapping, and partial network
+downloads are unsupported.
+
+## 9. Write contract
+
+- `_put_file` **MUST** stream one local file through one negotiated whole PUT
+  with bounded memory and byte-level callback updates.
+- `_put_file(mode="create")` **MUST** use the same non-atomic `_info`
+  existence preflight and `FileExistsError` behavior as create-mode piping.
+- `_pipe_file(mode="overwrite")` **MUST** issue one whole PUT and create or
+  truncate the target DataNode.
+- `_pipe_file(mode="create")` **MUST** use `_info` as an existence preflight
+  and raise `FileExistsError` for an existing path. The check is non-atomic.
+- `open("wb")` and `open("w")` **MUST** stage into a disk-backed temporary file
+  and issue one PUT only when close completes successfully.
+- `open("xb")` and `open("x")` **MUST** add the same non-atomic existence
+  preflight.
+- The upload **MUST** preserve raw bytes, provide `Content-Length` when known,
+  and use the caller's content type or `application/octet-stream`.
+- A provided or returned MD5 digest **MUST** be validated. HTTP 412 is an
+  integrity failure.
+
+A byte PUT success is HTTP 201. A 3xx response to the byte PUT **MUST** fail.
+The upload body is single-use and **MUST NOT** be replayed automatically.
+
+OpenCADC may truncate the destination before a failed upload completes. A
+failed PUT **MUST** be reported as an uncertain write that may have truncated
+the target. `vosfs` **MUST NOT** issue a cleanup DELETE.
+
+Append modes, every mode containing `+`, `autocommit=False`, transactions,
+offset writes, conditional create, atomic replacement, resumable upload, and
+multipart upload are unsupported.
+
+## 10. Namespace and mutation contract
+
+- `_mkdir` **MUST** create one ContainerNode and preserve normal
+  `FileExistsError` and missing-parent behavior.
+- `_makedirs` **MUST** discover missing ancestors, create them top-down, honor
+  `exist_ok`, and tolerate concurrent creation only when the resulting node is
+  a ContainerNode.
+- `_rm_file` **MUST** delete one non-container node.
+- Non-recursive `rm` and `rmdir` MAY delete a ContainerNode only after listing
+  and proving it empty. The check and delete are non-atomic. A non-empty
+  container **MUST** fail without deleting descendants.
+- Recursive `rm` **MUST** traverse client-side and DELETE files and empty
+  containers leaves-first. It **MUST NOT** call `/async-delete`.
+- `rm(..., maxdepth=<number>)` is unsupported.
+- `_cp_file` **MUST** use a bounded read-to-write relay. It MAY overwrite an
+  existing DataNode, preserves bytes only, and does not copy server-only
+  properties.
+- Recursive copy **MUST** create containers and relay files client-side. It is
+  non-atomic.
+- Move **MUST** require an absent destination, copy or recreate the source,
+  and delete the source only after destination success. It **MUST NOT** call
+  `/transfers`.
+- `touch(truncate=True)` **MUST** PUT zero bytes. `touch(truncate=False)` is
+  unsupported.
+
+Move and recursive operations do not roll back successful items. A failed
+source deletion may leave both move paths. Errors **MUST** identify completed
+and failed paths.
+
+Every successful mutation **MUST** invalidate the affected path and all
+affected parents. Move invalidates both source and destination trees. Failed
+or unattempted paths **MUST NOT** be represented as successfully mutated in
+the directory cache.
+
+## 11. fsspec capability matrix
+
+`VOSpaceFileSystem` **MUST** subclass `fsspec.asyn.AsyncFileSystem`, set
+`async_impl = True`, `protocol = "vos"`, and `cachable = True`, and register the
+`vos` protocol through the `fsspec.specs` entry-point group.
+
+| Public API or hook | Class | v0.3.0 behavior |
+| --- | --- | --- |
+| `info`, `stat` / `_info` | Native | Node metadata mapping in section 6. Missing paths raise `FileNotFoundError`. |
+| `ls`, `listdir` / `_ls` | Native | Immediate unpaged children with detailed and path-only forms. |
+| `exists`, `lexists`, `isfile`, `isdir`, `size`, `sizes` | Client-derived | Derived from `_info`; `lexists` does not dereference links. |
+| `modified` | Client-derived | Return the OpenCADC modification date. |
+| `created` | Unsupported | Raise `NotImplementedError`; no creation timestamp is fabricated. |
+| `walk`, `find`, `glob`, `expand_path` | Client-derived | Client traversal with fsspec `maxdepth`, detail, and error semantics. Traversal never follows links. |
+| `du`, `disk_usage`, `tree` | Client-derived | Unpaged client traversal; potentially expensive. |
+| `checksum`, `ukey` | Client-derived | fsspec metadata token; no separate public content-checksum API. |
+| `cat_file` | Client-derived | Whole-object GET followed by local slicing. |
+| `cat_ranges` | Client-derived | Custom grouping with at most one GET per object per call. |
+| `cat`, `head`, `tail`, `read_block` | Client-derived | Built from whole-object reads and staged seek. |
+| `get_file` | Native | Bounded negotiated GET to one local target. |
+| `get`, `download` | Client-derived | fsspec expansion and coordinator over `_get_file`. |
+| `open("rb"/"r")` | Client-derived | Disk-staged, seekable whole-object read. |
+| `open_async` | Unsupported | Raise `NotImplementedError`; async consumers use coroutine hooks. |
+| Remote Range/206 | Unsupported | No `Range` request is sent. |
+| `pipe_file(mode="overwrite")`, `write_bytes` | Native | Negotiated whole PUT with create-or-truncate behavior. |
+| `pipe_file(mode="create")` | Client-derived | `_info` preflight followed by negotiated PUT; explicitly non-atomic. |
+| `pipe` | Client-derived | Bounded fsspec coordinator over `_pipe_file`. |
+| `put_file(mode="overwrite")`, `upload` | Native | Bounded negotiated PUT from one local file. |
+| `put_file(mode="create")` | Client-derived | `_info` preflight followed by negotiated PUT; explicitly non-atomic. |
+| `put` | Client-derived | fsspec expansion and coordinator over `_put_file`. |
+| `open("wb"/"w"/"xb"/"x")` | Client-derived | Disk-staged upload on successful close. |
+| Append and `+` modes | Unsupported | Raise `NotImplementedError` before mutation. |
+| `mkdir` | Native | Create one ContainerNode. |
+| `makedirs`, `mkdirs` | Client-derived | Top-down ancestor creation. |
+| `rm_file` | Native | Delete one non-container node. |
+| `rm`, `rmdir` | Client-derived | Empty-check or leaves-first client deletion; no async UWS. |
+| `cp_file`, `copy`, `cp` | Client-derived | Bounded byte relay and client recursion. |
+| `mv`, `move`, `rename` | Client-derived | Non-atomic copy/recreate then delete; no overwrite. |
+| `touch(truncate=True)` | Native | Create or truncate to zero bytes. |
+| `touch(truncate=False)` | Unsupported | Raise `NotImplementedError`. |
+| Blocking facade | Client-derived | fsspec mirrors supported coroutine hooks when `asynchronous=False`. |
+| Async facade | Client-derived | fsspec exposes the supported coroutine hooks when `asynchronous=True`; no blocking facade on that instance. |
+| Callbacks | Client-derived | File transfers report bytes; bulk coordinators branch callbacks by file. |
+| Directory cache | Client-derived | Standard fsspec cache options plus mutation invalidation. |
+| Pickle, `to_json`, `from_json` | Client-derived | Primitive constructor state and fresh live resources after reconstruction. |
+| `simplecache::vos://` | Client-derived | Whole-file read and write wrapper. |
+| `filecache::vos://` | Client-derived | Whole-file read wrapper only. |
+| `blockcache::`, `cached::` | Unsupported | Range-oriented wrappers are outside the release claim. |
+| FUSE | Unsupported | No mount or offset-write claim. |
+
+## 12. HTTPX transport and lifecycle
+
+HTTPX is the sole production HTTP client. The filesystem **MUST** lazily own a
+client pool keyed by TLS configuration:
+
+1. one validating no-client-certificate client for anonymous, bearer, and
+   pre-authorized requests; and
+2. when `certfile` is configured, one validating client whose fresh
+   `ssl.SSLContext` loads that combined PEM.
+
+Bearer credentials are per-request headers and are not pool keys. Clients
+**MUST** use `follow_redirects=False`, no client-level auth, no default
+Authorization header, no cookie jar, and transport retries set to zero.
+
+Lazy client construction **MUST** be concurrency-safe and create at most one
+client per TLS key per filesystem instance and event loop.
+
+`aclose()` **MUST** be public and idempotent. It closes every realized client,
+clears the pool, evicts the instance from fsspec's instance cache, and makes
+later I/O fail as closed. Synchronous `close()` **MUST** bridge through the
+filesystem's fsspec loop. A finalizer MAY warn or attempt best-effort cleanup
+but is not the lifecycle contract.
+
+Pickle and fsspec JSON **MUST** contain only primitive constructor options.
+Live clients, loops, locks, responses, service bindings, temporary files, and
+directory caches **MUST NOT** be serialized. Reconstruction creates fresh live
+state and resolves environment credentials again. A caller-supplied runtime
+`loop` is accepted for fsspec compatibility but **MUST** be omitted from
+serialized storage options and recreated after reconstruction.
+
+## 13. Errors, redirects, retries, and cancellation
+
+| Failure | Required exception |
+| --- | --- |
+| Invalid input, node type, or option | `ValueError` |
+| Authentication or authorization | `PermissionError` |
+| Missing node or parent | `FileNotFoundError` |
+| Existing destination or conflict | `FileExistsError` |
+| Unsupported operation or missing required binding | `NotImplementedError` |
+| Quota exhaustion | `OSError` with `errno.ENOSPC` |
+| Locked or busy node | `BlockingIOError` |
+| HTTP timeout | `TimeoutError` |
+| Connection failure | `ConnectionError` |
+
+One public `VOSpaceError(OSError)` **MUST** represent every remaining
+OpenCADC, integrity, HTTP, and partial-completion failure. It **MUST** retain
+the HTTP status, symbolic fault when present, retry guidance, and completed
+and failed paths when applicable.
+
+Error bodies **MUST** be bounded to 8 KiB before parsing or reporting.
+Credentials, Cookie values, and pre-authorized URL tokens **MUST** be redacted
+from exceptions, logs, representations, and recorded fixtures.
+
+HTTPX automatic retries are disabled. `vosfs` v0.3.0 **MUST NOT** automatically
+replay a capabilities or node request, negotiation POST, mutation, byte GET,
+or byte PUT. Callers own higher-level retry policy.
+
+Cancellation **MUST** propagate unchanged, close the active response and local
+temporary file, and start no new request. No background transfer task may
+remain.
+
+## 14. Scientific-stack compatibility
+
+These are narrow release claims, not blanket claims for every API in each
+project.
+
+| Consumer | Required v0.3.0 gate | Explicit boundary |
+| --- | --- | --- |
+| pandas | `read_csv("vos://...", storage_options=...)` and `DataFrame.to_csv(...)` in a fresh process. | No blanket Excel, SQL, or engine claim. |
+| NumPy | Round-trip `.npy` and `.npz` through file objects; `loadtxt` through a file object. | `numpy.load("vos://...")` and remote `mmap_mode` are unsupported. |
+| Dask | CSV read/write through a fresh worker process with `blocksize=None`; deterministic reconstruction and tokenization. | Partitioned remote-range reads are unsupported. |
+| Zarr v3 | `FsspecStore` create, read, overwrite, list, delete, and partial-value reads. | Partial reads transfer the complete object. |
+| PyArrow/Parquet | `FSSpecHandler` dataset discovery and Parquet read/write. | Footer seeks stage complete objects; append streams are unsupported. |
+| `fsspec.fuse` | No release gate. | Unsupported in v0.3.0. |
+
+## 15. Executable acceptance contract
+
+### 15.1 Hermetic tests
+
+The implementation **SHOULD** have one internal HTTP transport seam.
+Production constructs HTTPX transports; tests inject RESpx/HTTPX mock
+transports. The injection point is test-internal and **MUST NOT** appear in
+`storage_options`.
+
+Hermetic tests **MUST** cover:
+
+1. capabilities, node GET/PUT/POST/DELETE, synchronous negotiation, and
+   negotiated byte GET/HEAD/PUT;
+2. exact XML, headers, redirect interpretation, endpoint credential routing,
+   raw-byte identity, empty files, and bounded bodies;
+3. every exception mapping, timeout, cancellation, uncertain write, and
+   partial-completion path;
+4. every supported coroutine hook with `asynchronous=True`, every mirrored
+   public method with `asynchronous=False`, and staged `open()` through its
+   supported synchronous seam;
+5. fsspec 2026.6.0's reusable abstract open, pipe, copy, get, put, and move
+   tests, with skips mapped to an explicit unsupported row;
+6. pickle and fsspec JSON round-trips in a fresh process before and after
+   client creation;
+7. instance-cache eviction, close behavior, directory-cache invalidation, and
+   environment credential reconstruction; and
+8. all scientific-stack gates in section 14.
+
+Replay tests **MUST** block unmatched network access and require every expected
+RESpx route to be called.
+
+### 15.2 Authoritative OpenCADC integration gate
+
+The hard integration endpoint defaults to `https://staging.canfar.net/arc` and
+**MUST** be configurable. The credential-gated live suite **MUST** run on every
+trusted default-branch push and for the exact release commit. A tagged release
+**MUST NOT** proceed without that successful exact-commit run.
+
+Local development MAY use `~/.ssl/cadcproxy.pem` through `VOSFS_CERT_FILE`.
+Trusted GitHub Actions uses username and password secrets to mint a short-lived
+combined proxy PEM with `cadcutils` and `cadc-get-cert`. `cadcutils` is an
+integration-only development dependency, not a runtime dependency.
+
+The CI certificate **MUST** be written under the runner's temporary directory,
+made owner-readable only, passed as `VOSFS_CERT_FILE`, never printed, and
+removed during unconditional cleanup. Certificate minting **MUST** use a
+runner-temporary owner-readable netrc or an equivalently non-logging input
+channel. Passwords **MUST NOT** appear in command arguments or logs.
+
+Live tests **MUST**:
+
+- create a unique run namespace;
+- exercise node create, list, inspect, update, file upload/download, copy,
+  move, non-recursive delete, and recursive client-side cleanup;
+- exercise `/synctrans` and negotiated byte endpoints but no asynchronous UWS
+  resource;
+- compare uploaded and downloaded bytes and metadata;
+- POST one allowed non-administrative property through the private node-update
+  primitive and verify it through public read-only metadata;
+- run both synchronous and asynchronous filesystem entry points where
+  applicable; and
+- run all five supported scientific-stack gates from section 14 against the
+  live namespace; and
+- remove the namespace leaves-first in `finally`, reporting any residue.
+
+Secrets **MUST NOT** be exposed to untrusted fork code. CI **MUST NOT** use
+`pull_request_target` to execute a contribution with these credentials.
+External pull requests run hermetic replay tests; the live gate runs in a
+trusted default-branch push and the protected exact-commit release workflow. A
+manual trusted run MAY provide additional evidence but does not replace either
+required gate.
+
+### 15.3 Recorded interaction fixtures
+
+Live staging interactions MAY be captured through an explicit, opt-in,
+project-owned HTTPX transport recorder. RESpx supplies strict routing,
+pass-through support, call history, and replay; the project owns recording,
+fixture persistence, and sanitization.
+
+Recording is disabled by default and in normal CI. Before a fixture is
+committed, the recorder **MUST** replace or remove:
+
+- Authorization, Proxy-Authorization, Cookie, and Set-Cookie values;
+- certificate material and username/password values;
+- pre-authorized tokens embedded in URL paths, queries, headers, or XML;
+- personal usernames, subject DNs, groups, and owner fields;
+- unique test roots, request IDs, transfer IDs, dates, and volatile service
+  headers; and
+- any response content not intentionally part of the deterministic test.
+
+Sanitized fixtures **MUST** be manually reviewed. They are regression evidence,
+not a substitute for the live release gate.
+
+## 16. Out of scope and roadmap
+
+The following are not v0.3.0 capabilities:
+
+- a CLI, registry/shortname resolution, or credential acquisition;
+- generic VOSpace portability or full VOSpace 2.1 conformance;
+- asynchronous UWS, native move, recursive-delete jobs, or bulk property jobs;
+- direct construction of `/files` URLs;
+- cross-service or cross-filesystem orchestration;
+- remote byte ranges, block caching, append/update modes, transactions,
+  conditional writes, atomic replacement, resumable upload, or multipart
+  upload;
+- server-side copy, search, sort, pagination, general views, package download,
+  and persistent Structured/Unstructured subtype semantics;
+- public property, permission, or link-creation APIs; and
+- FUSE and remote memory mapping.
+
+Future work may add one of these only through a new published capability
+contract and implementation gates.
+
+## 17. Stability and publication policy
+
+This RFC becomes a release claim only after every required gate passes and the
+release evidence records the tested OpenCADC, fsspec, Python, HTTPX, RESpx, and
+scientific-stack versions.
+
+After v0.3.0 is released:
+
+- patch releases **MUST NOT** rename constructor options, remove a supported
+  matrix row, weaken an exception guarantee, or change path identity;
+- a capability or constructor contract change requires a new minor version;
+  and
+- an implementation fix that restores this document's behavior may ship in a
+  patch release.
+
+## Appendix A. Informative source evidence
+
+The following sources explain why the contract has this shape; they are not
+additional requirements:
+
+- [`opencadc/vos` supported API audit](../research/opencadc-vos-supported-api.md)
+- [fsspec and scientific-stack matrix](../research/vosfs-v030-fsspec-matrix.md)
+- [HTTPX transport contract](../research/vosfs-v030-httpx-contract.md)
+- [integration-test plan](../research/vosfs-v030-integration-test-plan.md)
+- [initial cross-project gap analysis](../research/vosfs-contract-gap-analysis.md)
+- [OpenCADC synchronous transfer wiring](https://github.com/opencadc/vos/blob/cf976ce8141dd3341631b7f3e07aa38443d42f58/cavern/src/main/webapp/WEB-INF/web.xml#L147-L175)
+- [OpenCADC push/pull integration test](https://github.com/opencadc/vos/blob/cf976ce8141dd3341631b7f3e07aa38443d42f58/cadc-test-vos/src/main/java/org/opencadc/conformance/vos/TransferTest.java#L147-L274)
+- [`vostools` upload path](https://github.com/opencadc/vostools/blob/e54b472581d67b4c1db533cab95e955d2e9a7c5a/vos/vos/vos.py#L1904-L1919)
+- [HTTPX async client documentation](https://www.python-httpx.org/async/)
+- [RESPX user guide](https://lundberg.github.io/respx/guide/)
