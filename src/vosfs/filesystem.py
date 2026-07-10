@@ -8,18 +8,27 @@ async filesystem contract.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from fsspec.asyn import AsyncFileSystem, sync
 
-from vosfs import config, paths
+from vosfs import capabilities, config, errors, paths
 from vosfs.transport import ClientPool, build_timeout
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    import httpx
+    from vosfs.capabilities import ServiceBindings
+
+_SECURITY_METHOD_BY_CREDENTIAL = {
+    "anonymous": capabilities.ANONYMOUS_METHOD,
+    "token": capabilities.TOKEN_METHOD,
+    "certificate": capabilities.CERTIFICATE_METHOD,
+}
+_HTTP_OK = 200
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -95,11 +104,74 @@ class VOSpaceFileSystem(AsyncFileSystem):
             timeout=build_timeout(self.timeouts),
             injected_transport=transport,
         )
+        self._bindings: ServiceBindings | None = None
+        self._bindings_lock: asyncio.Lock | None = None
 
     @classmethod
     def _strip_protocol(cls, path: str) -> str:
         """Normalize a user path to the canonical internal VOSpace path."""
         return paths.strip_protocol(path)
+
+    def _security_method(self) -> str:
+        """Return the security-method identifier for the configured credential."""
+        return _SECURITY_METHOD_BY_CREDENTIAL[self._credential.method]
+
+    async def _get_bindings(self) -> ServiceBindings:
+        """Return the service bindings, discovering them once per instance.
+
+        The binding cache is immutable for the instance: it is fetched on first
+        I/O, is never refreshed by directory-cache invalidation, and is rebuilt
+        only by reconstruction.
+        """
+        if self._bindings is not None:
+            return self._bindings
+        if self._bindings_lock is None:
+            self._bindings_lock = asyncio.Lock()
+        async with self._bindings_lock:
+            if self._bindings is None:
+                self._bindings = await self._discover_bindings()
+            return self._bindings
+
+    async def _discover_bindings(self) -> ServiceBindings:
+        """Fetch and parse the VOSI capabilities document."""
+        response = await self._send_to_service(
+            "GET", self.endpoint_url + "/capabilities"
+        )
+        if response.status_code != _HTTP_OK:
+            body = errors.bounded_text(response.content)
+            raise errors.http_exception(
+                response.status_code, body=body, path="/capabilities"
+            )
+        return capabilities.parse_bindings(
+            response.content, security_method=self._security_method()
+        )
+
+    async def _send_to_service(
+        self,
+        method: str,
+        url: str,
+        *,
+        content: bytes | None = None,
+        headers: Mapping[str, str] | None = None,
+        stream: bool = False,
+    ) -> httpx.Response:
+        """Send an authenticated request to the service origin (node/capabilities).
+
+        The configured credential is applied by origin: a bearer header for the
+        token method, or the certificate client for the certificate method.
+        """
+        request_headers = dict(headers or {})
+        use_cert = False
+        if self._credential.method == "token":
+            bearer = self._credential.read_bearer()
+            request_headers["Authorization"] = f"Bearer {bearer}"
+        elif self._credential.method == "certificate":
+            use_cert = True
+        request = httpx.Request(method, url, headers=request_headers, content=content)
+        try:
+            return await self._pool.send(request, use_cert=use_cert, stream=stream)
+        except httpx.HTTPError as exc:
+            raise errors.transport_exception(exc, path=url) from exc
 
     async def aclose(self) -> None:
         """Close every realized HTTP client and evict the instance (idempotent).

@@ -24,9 +24,8 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
-from xml.etree.ElementTree import ParseError
 
-from defusedxml.ElementTree import fromstring as _safe_fromstring
+from vosfs.xmlio import DEFAULT_LIMIT, safe_parse
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -35,9 +34,6 @@ VOSPACE_NS = "http://www.ivoa.net/xml/VOSpace/v2.0"
 VOSPACE_VERSION = "2.1"
 XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
 XML_HEADERS = {"Content-Type": "text/xml; charset=utf-8", "Accept": "text/xml"}
-
-#: Default 8 MiB ceiling applied to a response body before it is parsed.
-_DEFAULT_LIMIT = 8_388_608
 
 # IVOA VOSpace core property URIs promoted to first-class :class:`Node` fields.
 LENGTH_PROPERTY_URI = "ivo://ivoa.net/vospace/core#length"
@@ -135,7 +131,7 @@ class Node:
     properties: Mapping[str, str]
 
 
-def parse_node(data: bytes, *, limit: int = _DEFAULT_LIMIT) -> Node:
+def parse_node(data: bytes, *, limit: int = DEFAULT_LIMIT) -> Node:
     """Parse a single ``node`` document into a :class:`Node`.
 
     Args:
@@ -150,11 +146,11 @@ def parse_node(data: bytes, *, limit: int = _DEFAULT_LIMIT) -> Node:
             external entity, is not a ``node`` document, or declares an unknown
             node type.
     """
-    root = _safe_parse(data, limit=limit)
+    root = safe_parse(data, limit=limit)
     return _node_from_element(root)
 
 
-def parse_listing(data: bytes, *, limit: int = _DEFAULT_LIMIT) -> list[Node]:
+def parse_listing(data: bytes, *, limit: int = DEFAULT_LIMIT) -> list[Node]:
     """Parse the immediate ``<nodes>`` children of a container document.
 
     Listings are unpaged and only the direct children are returned; nested
@@ -172,7 +168,7 @@ def parse_listing(data: bytes, *, limit: int = _DEFAULT_LIMIT) -> list[Node]:
         ValueError: If the body exceeds ``limit``, is malformed, uses a DTD or
             external entity, or contains a child with an unknown node type.
     """
-    root = _safe_parse(data, limit=limit)
+    root = safe_parse(data, limit=limit)
     nodes_element = root.find(_NODES_TAG)
     if nodes_element is None:
         return []
@@ -288,31 +284,6 @@ def build_property_update(uri: str, properties: Mapping[str, str]) -> bytes:
         element.set("uri", property_uri)
         element.text = value
     return _serialize(root)
-
-
-def _safe_parse(data: bytes, *, limit: int) -> ET.Element:
-    """Bound and defuse ``data``, returning the parsed document root.
-
-    Args:
-        data: The raw XML body.
-        limit: Maximum accepted size in bytes.
-
-    Returns:
-        The parsed root element.
-
-    Raises:
-        ValueError: If the body exceeds ``limit`` or is not well-formed XML.
-            DTDs and external entities are rejected by :mod:`defusedxml`, which
-            also raises :class:`ValueError`.
-    """
-    if len(data) > limit:
-        msg = f"XML body exceeds {limit} byte limit"
-        raise ValueError(msg)
-    try:
-        return _safe_fromstring(data, forbid_dtd=True)
-    except ParseError as exc:
-        msg = "malformed XML document"
-        raise ValueError(msg) from exc
 
 
 def _node_from_element(element: ET.Element) -> Node:
