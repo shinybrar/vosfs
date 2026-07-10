@@ -74,11 +74,11 @@ If a hook changes files, review the changes, stage them, and run the gate again.
 The pull request must pass the same required CI checks before merge.
 
 Human pull requests must close an issue in this repository. The only
-issue-link exceptions are release pull requests from
-`shinybrar-vosfs-release[bot]` on `release-please--branches--main` carrying the
-`autorelease: pending` label, and dependency pull requests from
-`dependabot[bot]` on a `dependabot/` branch. These automations remain subject to
-the normal title, CI, review, and merge requirements.
+issue-link exceptions are release pull requests authored by the repository
+owner's Release Please PAT on `release-please--branches--main` carrying the
+`autorelease: pending` label, and dependency pull requests from `dependabot[bot]`
+on a `dependabot/` branch. These automations remain subject to the normal title,
+CI, review, and merge requirements.
 
 Pull-request CI validates code, tests, Markdown, and the strict Zensical build.
 After merge, a separate deployment workflow publishes the validated docs
