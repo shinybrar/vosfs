@@ -11,13 +11,15 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any
 
-import httpx
-from fsspec.asyn import AsyncFileSystem
+from fsspec.asyn import AsyncFileSystem, sync
 
 from vosfs import config, paths
+from vosfs.transport import ClientPool, build_timeout
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    import httpx
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -87,33 +89,36 @@ class VOSpaceFileSystem(AsyncFileSystem):
         )
         self.timeouts = config.resolve_timeouts(timeouts)
         self.trust_env = trust_env
-        self._injected_transport = transport
+        self._pool = ClientPool(
+            certfile=self._credential.certfile,
+            trust_env=trust_env,
+            timeout=build_timeout(self.timeouts),
+            injected_transport=transport,
+        )
 
     @classmethod
     def _strip_protocol(cls, path: str) -> str:
         """Normalize a user path to the canonical internal VOSpace path."""
         return paths.strip_protocol(path)
 
-    def _new_client(
-        self,
-        *,
-        verify: bool = True,
-        cert: Any = None,  # noqa: ANN401 - httpx cert spec, wired fully with the pool
-    ) -> httpx.AsyncClient:
-        """Build an HTTPX async client through the single transport seam.
+    async def aclose(self) -> None:
+        """Close every realized HTTP client and evict the instance (idempotent).
 
-        Production builds a real HTTPX transport; tests inject a mock transport
-        via the ``transport`` constructor option. This is the one place HTTP
-        transports are constructed.
+        After this call the instance is removed from fsspec's instance cache and
+        any later HTTP I/O fails as closed.
         """
-        kwargs: dict[str, Any] = {
-            "follow_redirects": False,
-            "trust_env": self.trust_env,
-        }
-        if self._injected_transport is not None:
-            kwargs["transport"] = self._injected_transport
-        else:
-            kwargs["verify"] = verify
-            if cert is not None:
-                kwargs["cert"] = cert
-        return httpx.AsyncClient(**kwargs)
+        await self._pool.aclose()
+        # Evict just this instance; fsspec's public API only clears the whole cache.
+        type(self)._cache.pop(self._fs_token, None)  # noqa: SLF001
+
+    def close(self) -> None:
+        """Synchronously close the filesystem, bridging through the fsspec loop.
+
+        Raises:
+            RuntimeError: If called on an ``asynchronous=True`` instance, which
+                must be closed with ``await aclose()`` instead.
+        """
+        if self.asynchronous:
+            msg = "use 'await aclose()' to close an asynchronous filesystem"
+            raise RuntimeError(msg)
+        sync(self.loop, self.aclose)

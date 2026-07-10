@@ -37,10 +37,11 @@ def test_endpoint_trailing_slash_normalized() -> None:
 async def test_transport_seam_is_injectable(router: respx.Router) -> None:
     router.get("/capabilities").mock(return_value=httpx.Response(200, text="CAPS"))
     fs = make_fs(router, asynchronous=True)
-    async with fs._new_client() as client:
-        response = await client.get(fs.endpoint_url + "/capabilities")
+    client = await fs._pool.client()
+    response = await client.get(fs.endpoint_url + "/capabilities")
     assert response.status_code == 200
     assert response.text == "CAPS"
+    await fs.aclose()
 
 
 def test_seam_and_loop_absent_from_storage_options() -> None:
@@ -52,10 +53,11 @@ def test_seam_and_loop_absent_from_storage_options() -> None:
     assert fs.storage_options.get("token") == "secret-token"
 
 
-async def test_new_client_disables_redirects(router: respx.Router) -> None:
+async def test_client_disables_redirects(router: respx.Router) -> None:
     fs = make_fs(router, asynchronous=True)
-    async with fs._new_client() as client:
-        assert client.follow_redirects is False
+    client = await fs._pool.client()
+    assert client.follow_redirects is False
+    await fs.aclose()
 
 
 def test_invalid_endpoint_rejected() -> None:
