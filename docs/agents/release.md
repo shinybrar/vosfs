@@ -7,13 +7,17 @@ access token owned by the repository owner, limited to this repository, with
 Contents, Issues, and Pull Requests read/write permissions.
 
 Release pull requests are recognized only when the author is the repository
-owner, the branch is `release-please--branches--main`, and the label is
-`autorelease: pending`. They remain subject to the normal title, CI, review,
-and squash-merge gates. The workflow creates `vX.Y.Z` GitHub Releases and
-attaches a wheel and source distribution built from the released commit. It
-does not publish to a package registry. A manual run with an existing exact tag
-rebuilds missing artifacts from that release; a manual run without a tag
-retries Release Please.
+owner, the branch is `release-please--branches--main--components--vosfs`, and
+the label is `autorelease: pending`. They remain subject to the normal title,
+CI, review, and squash-merge gates. The workflow creates `vX.Y.Z` GitHub
+Releases and attaches a wheel and source distribution built from the released
+commit. It does not publish to a package registry. A manual run with an existing
+exact tag rebuilds missing artifacts from that release; a manual run without a
+tag retries Release Please.
+
+Do not hand-format the generated root `CHANGELOG.md`. Its dedicated PyMarkdown
+hook adds only MD012 and MD022 to the globally disabled MD013; every other
+configured Markdown rule still applies.
 
 ## Lockfile fallback
 
