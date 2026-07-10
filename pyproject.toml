@@ -18,6 +18,8 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "commitizen>=4.16.4,<5",
+    "mike @ git+https://github.com/squidfunk/mike.git@2d4ad799442f4592db8ad53b179bfb33db8c69ac",
+    "mkdocstrings-python>=2.0.5",
     "pre-commit>=4.6.0",
     "pymarkdownlnt>=0.9.38",
     "pytest>=9.1.1",
