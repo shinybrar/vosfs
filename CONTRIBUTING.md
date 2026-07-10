@@ -49,8 +49,8 @@ Markdown checks.
   `uv lock`, and commit `pyproject.toml` and `uv.lock` together.
 
 All Markdown files must pass the configured Markdown lint, trailing-whitespace,
-and end-of-file checks. Documentation under `docs/` must also pass a strict
-Zensical build. Do not commit generated site output.
+and end-of-file checks. Public documentation under `docs/user/` must also pass
+a strict Zensical build. Do not commit generated site output.
 
 ## Validate the change
 
@@ -61,7 +61,7 @@ the complete local gate:
 uv lock --check
 uv run pre-commit run --all-files
 uv run pytest
-uv run zensical build --strict
+uv run zensical build --strict --clean
 ```
 
 If a hook changes files, review the changes, stage them, and run the gate again.

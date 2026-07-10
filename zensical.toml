@@ -1,0 +1,32 @@
+[project]
+site_name = "vosfs"
+site_description = "Public documentation for the vosfs Python package."
+site_author = "vosfs contributors"
+site_url = "https://shinybrar.github.io/vosfs/"
+docs_dir = "docs/user"
+site_dir = "site"
+repo_url = "https://github.com/shinybrar/vosfs"
+nav = [
+    { "Home" = "index.md" },
+    { "API Reference" = "api-reference.md" },
+    { "Contributing" = "https://github.com/shinybrar/vosfs/blob/main/CONTRIBUTING.md" },
+]
+
+[project.theme]
+variant = "modern"
+language = "en"
+
+[project.extra.version]
+provider = "mike"
+
+[project.plugins.mkdocstrings.handlers.python]
+paths = ["src"]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "google"
+filters = ["!^_"]
+members_order = "source"
+show_object_full_path = false
+show_root_heading = true
+show_root_full_path = false
+show_source = true
