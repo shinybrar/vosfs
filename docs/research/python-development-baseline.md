@@ -1,6 +1,7 @@
 # Python Development Baseline: primary-source research
 
-Research ticket: [#6](https://github.com/shinybrar/vosfs/issues/6)  
+Research ticket: [#6](https://github.com/shinybrar/vosfs/issues/6)
+
 Researched: 2026-07-09
 
 This note records tool constraints for the Development Baseline. It is not a

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/v17.6.1/schemas/config.json",
+  "label": "autorelease: pending",
+  "release-label": "autorelease: tagged",
+  "packages": {
+    ".": {
+      "release-type": "python",
+      "package-name": "vosfs",
+      "versioning": "default",
+      "bump-minor-pre-major": false,
+      "bump-patch-for-minor-pre-major": false,
+      "include-component-in-tag": false,
+      "include-v-in-tag": true,
+      "pull-request-title-pattern": "chore: release ${version}",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value==\"vosfs\")].version"
+        }
+      ]
+    }
+  }
+}
