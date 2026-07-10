@@ -8,12 +8,13 @@ async filesystem contract.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any
 
 import httpx
 from fsspec.asyn import AsyncFileSystem
 
-from vosfs import paths
+from vosfs import config, paths
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -67,17 +68,24 @@ class VOSpaceFileSystem(AsyncFileSystem):
             storage_options: Remaining fsspec options (``skip_instance_cache``,
                 ``use_listings_cache``, ``listings_expiry_time``, ``max_paths``).
         """
+        config.reject_forbidden_options(storage_options)
         super().__init__(
             asynchronous=asynchronous,
             loop=loop,
             batch_size=batch_size,
             **storage_options,
         )
-        self.endpoint_url = _normalize_endpoint(endpoint_url)
-        self.token = token
-        self.tokenfile = tokenfile
-        self.certfile = certfile
-        self.timeouts = dict(timeouts) if timeouts is not None else None
+        self._credential = config.resolve_credential(
+            token=token,
+            tokenfile=tokenfile,
+            certfile=certfile,
+            environ=os.environ,
+        )
+        self.endpoint_url = config.validate_endpoint(
+            endpoint_url,
+            has_credential=not self._credential.is_anonymous,
+        )
+        self.timeouts = config.resolve_timeouts(timeouts)
         self.trust_env = trust_env
         self._injected_transport = transport
 
@@ -109,11 +117,3 @@ class VOSpaceFileSystem(AsyncFileSystem):
             if cert is not None:
                 kwargs["cert"] = cert
         return httpx.AsyncClient(**kwargs)
-
-
-def _normalize_endpoint(endpoint_url: str) -> str:
-    """Return ``endpoint_url`` with a single trailing slash removed."""
-    if not isinstance(endpoint_url, str) or not endpoint_url:
-        msg = "endpoint_url is required and must be a non-empty string"
-        raise ValueError(msg)
-    return endpoint_url.rstrip("/")

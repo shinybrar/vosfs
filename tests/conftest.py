@@ -40,12 +40,13 @@ def make_fs(
     router: respx.Router,
     *,
     asynchronous: bool = False,
+    endpoint_override: str | None = None,
     **options: Any,
 ) -> VOSpaceFileSystem:
     """Build a filesystem whose transport seam is the given respx router."""
     transport = httpx.MockTransport(router.async_handler)
     return VOSpaceFileSystem(
-        BASE_URL,
+        endpoint_override or BASE_URL,
         transport=transport,
         asynchronous=asynchronous,
         skip_instance_cache=True,
