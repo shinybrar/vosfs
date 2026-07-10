@@ -53,7 +53,9 @@ Markdown checks.
 
 All Markdown files must pass the configured Markdown lint, trailing-whitespace,
 and end-of-file checks. Public documentation under `docs/user/` must also pass
-a strict Zensical build. Do not commit generated site output.
+a strict Zensical build. Do not commit generated site output to source branches.
+Only the trusted Pages workflow may commit the complete generated site to the
+machine-owned `gh-pages` branch.
 
 ## Validate the change
 
