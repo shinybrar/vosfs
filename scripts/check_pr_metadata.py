@@ -11,7 +11,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
 
-RELEASE_AUTHOR = "shinybrar-vosfs-release[bot]"
 RELEASE_BRANCH = "release-please--branches--main"
 RELEASE_LABEL = "autorelease: pending"
 DEPENDABOT_AUTHOR = "dependabot[bot]"
@@ -45,11 +44,18 @@ def _labels(pull_request: Mapping[str, object]) -> set[str]:
     }
 
 
-def _is_automation_exception(pull_request: Mapping[str, object]) -> bool:
+def _is_automation_exception(
+    event: Mapping[str, object],
+    pull_request: Mapping[str, object],
+) -> bool:
     author = _value(pull_request, "user", "login")
     branch = _value(pull_request, "head", "ref")
+    repository = _value(event, "repository", "full_name")
+    repository_owner = (
+        repository.partition("/")[0] if isinstance(repository, str) else None
+    )
     release_exception = (
-        author == RELEASE_AUTHOR
+        author == repository_owner
         and branch == RELEASE_BRANCH
         and RELEASE_LABEL in _labels(pull_request)
     )
@@ -107,7 +113,7 @@ def check_metadata(event: object, references: object) -> str | None:
     pull_request = _mapping(event_mapping.get("pull_request"))
     if not pull_request:
         return None
-    if _is_automation_exception(pull_request):
+    if _is_automation_exception(event_mapping, pull_request):
         return None
     if _has_local_closing_reference(event_mapping, references):
         return None

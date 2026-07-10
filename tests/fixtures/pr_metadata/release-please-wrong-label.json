@@ -2,7 +2,7 @@
   "event": {
     "repository": {"full_name": "shinybrar/vosfs"},
     "pull_request": {
-      "user": {"login": "shinybrar-vosfs-release[bot]"},
+      "user": {"login": "shinybrar"},
       "head": {"ref": "release-please--branches--main"},
       "labels": [{"name": "autorelease: tagged"}]
     }

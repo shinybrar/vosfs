@@ -27,22 +27,10 @@ jobs:
       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     steps:
-      - name: Create release App token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ vars.RELEASE_PLEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_PLEASE_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: vosfs
-          permission-contents: write
-          permission-issues: write
-          permission-pull-requests: write
-
       - name: Verify CI validated current main
         if: github.event_name == 'workflow_run'
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
@@ -56,7 +44,7 @@ jobs:
         if: inputs.release_tag == ''
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         with:
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
@@ -65,7 +53,7 @@ jobs:
         id: released
         if: steps.release.outputs.release_created == 'true' || inputs.release_tag != ''
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           CREATED_TAG: ${{ steps.release.outputs.tag_name }}
           CREATED_SHA: ${{ steps.release.outputs.sha }}
           RECOVERY_TAG: ${{ inputs.release_tag }}
@@ -168,6 +156,6 @@ jobs:
       - name: Attach distributions to the GitHub Release
         if: steps.released.outputs.sha != ''
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           RELEASE_TAG: ${{ steps.released.outputs.tag }}
         run: gh release upload "$RELEASE_TAG" dist/*.whl dist/*.tar.gz --clobber
