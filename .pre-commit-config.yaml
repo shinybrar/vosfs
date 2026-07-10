@@ -46,13 +46,6 @@ repos:
         types: [markdown]
         exclude: ^CHANGELOG\.md$
 
-      - id: pymarkdown-changelog
-        name: PyMarkdown generated changelog
-        entry: uv run --locked pymarkdown --disable-rules MD012,MD013,MD022 scan
-        language: unsupported
-        types: [markdown]
-        files: ^CHANGELOG\.md$
-
       - id: commitizen
         name: Commitizen message
         entry: uv run --locked cz check --allow-abort --commit-msg-file

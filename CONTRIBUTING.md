@@ -51,13 +51,14 @@ Markdown checks.
 - Do not edit `uv.lock` by hand. Use `uv add`, `uv add --dev`, `uv remove`, or
   `uv lock`, and commit `pyproject.toml` and `uv.lock` together.
 
-All Markdown files must pass the configured Markdown lint, trailing-whitespace,
-and end-of-file checks. Public documentation under `docs/user/` must also pass
-a strict Zensical build. The generated root `CHANGELOG.md` remains checked, with
-only MD012 and MD022 additionally disabled to preserve Release Please's
-deterministic output. Do not commit generated site output to source branches.
-Only the trusted Pages workflow may commit the complete generated site to the
-machine-owned `gh-pages` branch.
+All hand-authored Markdown files must pass the configured Markdown lint,
+trailing-whitespace, and end-of-file checks. Public documentation under
+`docs/user/` must also pass a strict Zensical build. The generated root
+`CHANGELOG.md` is excluded from PyMarkdown; Release Please owns its formatting
+from Commitizen-compatible Conventional Commit titles. General whitespace and
+end-of-file hooks still apply. Do not commit generated site output to source
+branches. Only the trusted Pages workflow may commit the complete generated
+site to the machine-owned `gh-pages` branch.
 
 ## Validate the change
 
