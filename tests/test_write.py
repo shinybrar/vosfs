@@ -82,7 +82,7 @@ def test_open_w_text(router: respx.Router) -> None:
     files: dict[str, bytes] = {}
     mock_transfers(router, files)
     fs = make_fs(router)
-    with fs.open("/t.txt", "w") as handle:
+    with fs.open("/t.txt", "w", encoding="utf-8") as handle:
         handle.write("héllo")
     assert files["/t.txt"] == "héllo".encode()
     fs.close()
