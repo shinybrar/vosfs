@@ -488,6 +488,16 @@ class VOSpaceFileSystem(AsyncFileSystem):
         msg = f"unsupported open mode: {mode!r}"
         raise NotImplementedError(msg)
 
+    async def open_async(
+        self,
+        path: str,
+        mode: str = "rb",
+        **_kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> None:
+        """Reject asynchronous file opening; async consumers use coroutine hooks."""
+        msg = "open_async is unsupported; use the coroutine hooks instead"
+        raise NotImplementedError(msg)
+
     # -- writing bytes -------------------------------------------------------
 
     async def _write(
@@ -685,9 +695,17 @@ class VOSpaceFileSystem(AsyncFileSystem):
         await self._delete_node(path)
 
     async def _cp_file(self, path1: str, path2: str, **_kwargs: Any) -> None:  # noqa: ANN401
-        """Copy one object with a bounded read-to-write relay (bytes only)."""
+        """Copy one object with a bounded read-to-write relay (bytes only).
+
+        The destination's parent container is created if missing, so a recursive
+        copy materializes the destination tree even though fsspec's coordinator
+        relays only the files.
+        """
         path1 = self._strip_protocol(path1)
         path2 = self._strip_protocol(path2)
+        parent = paths.parent(path2)
+        if parent not in ("/", path2) and not await self._exists(parent):
+            await self._makedirs(parent, exist_ok=True)
         data = await self._read_whole(path1)
         await self._write(
             path2,

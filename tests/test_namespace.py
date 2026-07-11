@@ -131,6 +131,9 @@ def test_recursive_copy_creates_tree(router: respx.Router) -> None:
     fs.copy("/from", "/to", recursive=True)
     assert sim.blobs["/to/a"] == b"a"
     assert sim.blobs["/to/sub/b"] == b"b"
+    # The intermediate container node is created, not just the leaf blob, so the
+    # copy would also succeed against a real service that requires it.
+    assert sim.nodes["/to/sub"] == "container"
     fs.close()
 
 
