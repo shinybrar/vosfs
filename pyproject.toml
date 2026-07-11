@@ -23,10 +23,14 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "commitizen>=4.16.4,<5",
+    "dask[dataframe]>=2024",
     "lxml>=5",
     "mike @ git+https://github.com/squidfunk/mike.git@2d4ad799442f4592db8ad53b179bfb33db8c69ac",
     "mkdocstrings-python>=2.0.5",
+    "numpy>=1.26",
+    "pandas>=2",
     "pre-commit>=4.6.0",
+    "pyarrow>=15",
     "pymarkdownlnt>=0.9.38",
     "pytest>=9.1.1",
     "pytest-asyncio>=0.24",
@@ -34,6 +38,7 @@ dev = [
     "respx>=0.21",
     "ruff>=0.15.21",
     "ty>=0.0.58",
+    "zarr>=3 ; python_full_version >= '3.11'",
     "zensical>=0.0.50",
 ]
 
@@ -82,6 +87,7 @@ ignore = [
     "SLF001", # Tests exercise internal seams and coroutine hooks by design.
     "PLR2004", # Status codes and sizes are self-evident magic values in tests.
     "FBT001", # Parametrized tests pass boolean cases positionally.
+    "PLC0415", # Optional-dependency imports are local, guarded by importorskip.
 ]
 
 [tool.ruff.lint.pydocstyle]

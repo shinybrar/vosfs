@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
-    from io import BufferedReader, BufferedWriter
+    from io import BufferedRandom, BufferedReader
     from types import TracebackType
 
 
@@ -121,15 +121,21 @@ class StagedWriteFile:
     """
 
     def __init__(self, on_commit: Callable[[str], None]) -> None:
-        """Open a temporary buffer; ``on_commit`` receives its path on commit."""
+        """Open a read/write temporary buffer; ``on_commit`` receives its path."""
         self._path = new_temp_path()
-        self._file: BufferedWriter = Path(self._path).open("wb")  # noqa: SIM115 - closed here
+        # ``w+b`` so consumers that seek back and read (zip and archive writers)
+        # work; the buffer is still uploaded once, on a clean close.
+        self._file: BufferedRandom = Path(self._path).open("w+b")  # noqa: SIM115 - closed here
         self._on_commit = on_commit
         self._done = False
 
     def write(self, data: bytes) -> int:
         """Buffer ``data`` locally, returning the number of bytes written."""
         return self._file.write(data)
+
+    def read(self, size: int = -1) -> bytes:
+        """Read from the local buffer (present for archive writers that seek back)."""
+        return self._file.read(size)
 
     def tell(self) -> int:
         """Return the current buffer position."""
@@ -148,8 +154,8 @@ class StagedWriteFile:
         return True
 
     def readable(self) -> bool:
-        """Return that the buffer does not support reading."""
-        return False
+        """Return that the buffer supports reading."""
+        return True
 
     def seekable(self) -> bool:
         """Return that the local buffer supports seeking."""
