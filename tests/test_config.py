@@ -141,7 +141,7 @@ def test_endpoint_http_allowed_when_anonymous() -> None:
         ("", False),
     ],
 )
-def test_endpoint_rejections(url: str, has_credential: bool) -> None:  # noqa: FBT001
+def test_endpoint_rejections(url: str, has_credential: bool) -> None:
     with pytest.raises(ValueError):  # noqa: PT011
         validate_endpoint(url, has_credential=has_credential)
 

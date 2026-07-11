@@ -12,18 +12,19 @@ import asyncio
 import datetime
 import os
 from typing import TYPE_CHECKING, Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 import httpx
 from fsspec.asyn import AsyncFileSystem, sync
 
-from vosfs import capabilities, config, errors, nodes, paths
+from vosfs import capabilities, config, errors, negotiate, nodes, paths
 from vosfs.transport import ClientPool, build_timeout
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from vosfs.capabilities import ServiceBindings
+    from vosfs.negotiate import NegotiatedEndpoint
     from vosfs.nodes import Node
 
 _SECURITY_METHOD_BY_CREDENTIAL = {
@@ -32,6 +33,7 @@ _SECURITY_METHOD_BY_CREDENTIAL = {
     "certificate": capabilities.CERTIFICATE_METHOD,
 }
 _HTTP_OK = 200
+_HTTP_SEE_OTHER = 303
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -244,6 +246,114 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = f"no modification date is available for {path}"
             raise errors.VOSpaceError(msg)
         return _parse_datetime(node.mtime)
+
+    # -- synchronous byte negotiation ----------------------------------------
+
+    async def _require_authority(self) -> str:
+        """Return the discovered VOSpace authority, discovering it if needed."""
+        if self._authority is None:
+            self._parse_and_note(await self._get_node_document("/"))
+        if self._authority is None:  # pragma: no cover - root always carries a URI
+            msg = "unable to discover the VOSpace authority"
+            raise errors.VOSpaceError(msg)
+        return self._authority
+
+    async def _negotiate(
+        self, path: str, *, direction: str, protocol_uri: str
+    ) -> NegotiatedEndpoint:
+        """Negotiate a byte endpoint for one logical transfer of ``path``.
+
+        Builds a VOSpace 2.1 transfer document with one authority-qualified
+        target, POSTs it to the discovered sync binding with redirects disabled,
+        follows the single 303 to the transfer details, and chooses a protocol
+        whose security method is compatible with the configured credential.
+        """
+        bindings = await self._get_bindings()
+        sync_url = bindings.require_sync()
+        authority = await self._require_authority()
+        target = negotiate.build_target_uri(authority, path)
+        document = nodes.build_transfer_document(
+            target, direction=direction, protocols=[protocol_uri]
+        )
+        post = await self._send_to_service(
+            "POST", sync_url, content=document, headers=nodes.XML_HEADERS
+        )
+        if post.status_code != _HTTP_SEE_OTHER:
+            body = errors.bounded_text(post.content)
+            raise errors.http_exception(post.status_code, body=body, path=path)
+        location = negotiate.validate_redirect(
+            post.headers.get("location"),
+            base=sync_url,
+            sending_bearer=self._credential.method == "token",
+        )
+        details = await self._send_to_service(
+            "GET", location, headers=nodes.XML_HEADERS
+        )
+        if details.status_code != _HTTP_OK:
+            body = errors.bounded_text(details.content)
+            raise errors.http_exception(details.status_code, body=body, path=path)
+        protocol = negotiate.choose_protocol(
+            negotiate.parse_transfer_details(details.content),
+            self._security_method(),
+        )
+        return negotiate.NegotiatedEndpoint(protocol.endpoint, protocol.security_method)
+
+    def _byte_routing(
+        self, endpoint: NegotiatedEndpoint
+    ) -> tuple[dict[str, str], bool]:
+        """Return the headers and cert flag for a negotiated byte request.
+
+        Credentials are routed by the negotiated security method: a
+        pre-authorized or anonymous endpoint gets nothing; a token endpoint gets
+        a freshly resolved bearer header over https; a certificate endpoint uses
+        the X.509 client over https.
+        """
+        method = endpoint.security_method
+        if method == capabilities.ANONYMOUS_METHOD:
+            return {}, False
+        scheme = urlsplit(endpoint.url).scheme
+        if method == capabilities.TOKEN_METHOD:
+            if scheme != "https":
+                msg = "a token byte endpoint must use https"
+                raise errors.VOSpaceError(msg)
+            return {"Authorization": f"Bearer {self._credential.read_bearer()}"}, False
+        if method == capabilities.CERTIFICATE_METHOD:
+            if scheme != "https":
+                msg = "a certificate byte endpoint must use https"
+                raise errors.VOSpaceError(msg)
+            return {}, True
+        msg = f"unsupported negotiated security method: {method!r}"  # pragma: no cover
+        raise errors.VOSpaceError(msg)  # pragma: no cover
+
+    async def _byte_send(
+        self,
+        endpoint: NegotiatedEndpoint,
+        method: str,
+        *,
+        content: bytes | None = None,
+        headers: Mapping[str, str] | None = None,
+        stream: bool = False,
+    ) -> httpx.Response:
+        """Perform the one byte GET/HEAD/PUT against a negotiated endpoint.
+
+        A redirect (3xx) response fails: only the approved synchronous-transfer
+        303 chain may redirect.
+        """
+        request_headers, use_cert = self._byte_routing(endpoint)
+        request_headers.update(headers or {})
+        request = httpx.Request(
+            method, endpoint.url, headers=request_headers, content=content
+        )
+        try:
+            response = await self._pool.send(request, use_cert=use_cert, stream=stream)
+        except httpx.HTTPError as exc:
+            raise errors.transport_exception(exc, path=endpoint.url) from exc
+        if response.is_redirect:
+            if stream:
+                await response.aclose()
+            msg = f"unexpected redirect from byte endpoint: {response.status_code}"
+            raise errors.VOSpaceError(msg, status=response.status_code)
+        return response
 
     async def aclose(self) -> None:
         """Close every realized HTTP client and evict the instance (idempotent).

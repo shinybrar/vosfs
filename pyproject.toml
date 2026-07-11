@@ -81,6 +81,7 @@ ignore = [
     "S106", # Literal token/secret arguments are fixtures, not real credentials.
     "SLF001", # Tests exercise internal seams and coroutine hooks by design.
     "PLR2004", # Status codes and sizes are self-evident magic values in tests.
+    "FBT001", # Parametrized tests pass boolean cases positionally.
 ]
 
 [tool.ruff.lint.pydocstyle]
