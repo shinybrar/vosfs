@@ -41,7 +41,11 @@ repos:
 
       - id: pymarkdown
         name: PyMarkdown
-        entry: uv run --locked pymarkdown --disable-rules MD013 scan
+        # MD013 line length is handled by the editor. MD030/MD033/MD046 conflict
+        # with the MkDocs/Material authoring model the user docs use: MD033 for
+        # the required grid-cards <div>, MD030 for its "-   " card markers, and
+        # MD046 because indented admonition/card bodies read as indented code.
+        entry: uv run --locked pymarkdown --disable-rules MD013,MD030,MD033,MD046 scan
         language: unsupported
         types: [markdown]
         exclude: ^CHANGELOG\.md$

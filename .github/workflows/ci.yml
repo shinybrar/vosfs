@@ -146,6 +146,57 @@ jobs:
       - name: Run deterministic offline tests
         run: uv run pytest
 
+  live-integration:
+    name: Live OpenCADC integration gate
+    # Runs only on trusted default-branch pushes and manual dispatch, never on
+    # pull requests (no pull_request_target), and only when the repository opts
+    # in with the VOSFS_LIVE_GATE variable. Secrets are never exposed to forks.
+    if: >-
+      vars.VOSFS_LIVE_GATE == 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    env:
+      VOSFS_TEST_ENDPOINT: ${{ vars.VOSFS_TEST_ENDPOINT || 'https://staging.canfar.net/arc' }}
+      VOSFS_TEST_ROOT: ${{ vars.VOSFS_TEST_ROOT }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+          python-version: "3.12"
+
+      - name: Mint a short-lived proxy certificate
+        env:
+          CADC_USERNAME: ${{ secrets.CADC_USERNAME }}
+          CADC_PASSWORD: ${{ secrets.CADC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          netrc="$RUNNER_TEMP/.netrc"
+          printf 'machine ws-cadc.canfar.net login %s password %s\n' \
+            "$CADC_USERNAME" "$CADC_PASSWORD" > "$netrc"
+          chmod 600 "$netrc"
+          uv run --with cadcutils cadc-get-cert \
+            --netrc-file "$netrc" \
+            --cert-outfile "$RUNNER_TEMP/proxy.pem" > /dev/null 2>&1
+          chmod 600 "$RUNNER_TEMP/proxy.pem"
+          rm -f "$netrc"
+
+      - name: Run the credential-gated live suite
+        env:
+          VOSFS_CERT_FILE: ${{ runner.temp }}/proxy.pem
+        run: uv run --with cadcutils pytest -m integration
+
+      - name: Remove the proxy certificate
+        if: always()
+        run: rm -f "$RUNNER_TEMP/proxy.pem" "$RUNNER_TEMP/.netrc"
+
   required:
     name: Required
     if: always()
