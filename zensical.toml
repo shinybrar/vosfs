@@ -8,6 +8,7 @@ site_dir = "site"
 repo_url = "https://github.com/shinybrar/vosfs"
 nav = [
     { "Home" = "index.md" },
+    { "User Guide" = "guide.md" },
     { "API Reference" = "api-reference.md" },
     { "Contributing" = "https://github.com/shinybrar/vosfs/blob/main/CONTRIBUTING.md" },
 ]

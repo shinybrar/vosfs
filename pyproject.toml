@@ -1,7 +1,7 @@
 [project]
 name = "vosfs"
 version = "0.2.0"
-description = "VOSpace FileSystem"
+description = "An asynchronous fsspec filesystem for the OpenCADC VOSpace profile"
 readme = "README.md"
 authors = [
     { name = "Shiny Brar  (he/il)", email = "charanjotbrar@gmail.com" }
