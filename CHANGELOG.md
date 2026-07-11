@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0](https://github.com/shinybrar/vosfs/compare/v0.2.0...v0.3.0) (2026-07-11)
+
+
+### Features
+
+* VOSpace fsspec filesystem ([#64](https://github.com/shinybrar/vosfs/issues/64)) ([f7854a0](https://github.com/shinybrar/vosfs/commit/f7854a0e1005227aa70ad28fdad361cf8d8b4b22))
+
+
+### Bug Fixes
+
+* **ci:** exclude generated changelog from markdown lint ([#62](https://github.com/shinybrar/vosfs/issues/62)) ([77b5d2b](https://github.com/shinybrar/vosfs/commit/77b5d2be207eb293f1bd5266700d8b1932091ad7)), closes [#29](https://github.com/shinybrar/vosfs/issues/29)
+
+
+### Documentation
+
+* **trd:** add technical requirements document and research ([#44](https://github.com/shinybrar/vosfs/issues/44)) ([2dc8329](https://github.com/shinybrar/vosfs/commit/2dc83294c857123320fbfbe3ffeee705905d56ab)), closes [#29](https://github.com/shinybrar/vosfs/issues/29)
+
 ## [0.2.0](https://github.com/shinybrar/vosfs/compare/v0.1.0...v0.2.0) (2026-07-10)
 
 
