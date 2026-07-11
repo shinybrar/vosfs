@@ -97,31 +97,34 @@ def _decode_segment(segment: str) -> str:
 
 
 def parent(path: str) -> str:
-    """Return the parent of an already-normalized path, or ``/`` for root."""
-    normalized = strip_protocol(path)
-    if normalized == "/":
+    """Return the parent of an already-normalized path, or ``/`` for root.
+
+    The input is assumed already normalized (percent-decoded exactly once by
+    :func:`strip_protocol`); it is not decoded again.
+    """
+    if path == "/":
         return "/"
-    head = normalized.rsplit("/", 1)[0]
+    head = path.rsplit("/", 1)[0]
     return head or "/"
 
 
 def name(path: str) -> str:
     """Return the final segment of an already-normalized path (``""`` for root)."""
-    normalized = strip_protocol(path)
-    return normalized.rsplit("/", 1)[1]
+    if path == "/":
+        return ""
+    return path.rsplit("/", 1)[1]
 
 
 def segments(path: str) -> list[str]:
-    """Return the decoded segments of an already-normalized path."""
-    normalized = strip_protocol(path)
-    if normalized == "/":
-        return []
-    return normalized[1:].split("/")
+    """Return the segments of an already-normalized path (no further decoding)."""
+    return [segment for segment in path.split("/") if segment]
 
 
 def encode_url_path(path: str) -> str:
-    """Return the path with each segment percent-encoded for an HTTP URL.
+    """Return the normalized path with each segment percent-encoded for a URL.
 
-    Root normalizes to an empty string so it can be appended to a base URL.
+    Operates on the already-decoded internal path and re-encodes exactly once,
+    so normalization stays idempotent (root becomes an empty string so it can be
+    appended to a base URL).
     """
     return "".join(f"/{quote(segment, safe='')}" for segment in segments(path))

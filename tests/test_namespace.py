@@ -166,3 +166,32 @@ def test_move_same_path_is_noop(router: respx.Router) -> None:
     fs.mv("/src", "/src")
     assert sim.blobs["/src"] == b"x"
     fs.close()
+
+
+def test_move_empty_directory_creates_destination(router: respx.Router) -> None:
+    # Regression: a non-recursive move of an empty container must not delete the
+    # source without creating the destination (a data-loss bug).
+    sim = VOSpaceSim().add_container("/emptydir")
+    sim.install(router)
+    fs = make_fs(router)
+    fs.mv("/emptydir", "/dest")
+    assert "/emptydir" not in sim.nodes
+    assert sim.nodes["/dest"] == "container"
+    fs.close()
+
+
+def test_recursive_copy_preserves_empty_container(router: respx.Router) -> None:
+    # Regression: recursive copy must materialize empty source containers, not
+    # only containers that happen to hold a copied file.
+    sim = (
+        VOSpaceSim()
+        .add_container("/from")
+        .add_file("/from/a", b"a")
+        .add_container("/from/empty")
+    )
+    sim.install(router)
+    fs = make_fs(router)
+    fs.copy("/from", "/to", recursive=True)
+    assert sim.blobs["/to/a"] == b"a"
+    assert sim.nodes["/to/empty"] == "container"
+    fs.close()

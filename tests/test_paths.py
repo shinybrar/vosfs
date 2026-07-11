@@ -69,32 +69,32 @@ def test_dot_segment_is_rejected() -> None:
 
 
 @pytest.mark.parametrize(
-    ("raw", "expected"),
+    ("normalized", "expected"),
     [
         ("/a/b/c", "/a/b"),
         ("/a", "/"),
         ("/", "/"),
-        ("vos://a/b", "/a"),
     ],
 )
-def test_parent(raw: str, expected: str) -> None:
-    assert paths.parent(raw) == expected
+def test_parent(normalized: str, expected: str) -> None:
+    # parent operates on an already-normalized path (no second decode).
+    assert paths.parent(normalized) == expected
 
 
 @pytest.mark.parametrize(
-    ("raw", "expected"),
+    ("normalized", "expected"),
     [
         ("/a/b/c", "c"),
         ("/a", "a"),
         ("/", ""),
     ],
 )
-def test_name(raw: str, expected: str) -> None:
-    assert paths.name(raw) == expected
+def test_name(normalized: str, expected: str) -> None:
+    assert paths.name(normalized) == expected
 
 
 def test_segments() -> None:
-    assert paths.segments("vos://a/b/c") == ["a", "b", "c"]
+    assert paths.segments("/a/b/c") == ["a", "b", "c"]
     assert paths.segments("/") == []
 
 
@@ -102,3 +102,30 @@ def test_encode_url_path_reencodes_segments() -> None:
     assert paths.encode_url_path("/dir/file name") == "/dir/file%20name"
     assert paths.encode_url_path("/") == ""
     assert paths.encode_url_path("/a/é") == "/a/%C3%A9"
+
+
+def test_helpers_do_not_decode_literal_percent() -> None:
+    # A name with a literal percent-escape decodes exactly once on strip, and the
+    # helpers must not decode it again, so the HTTP URL round-trips to the
+    # original object rather than a second-decoded one.
+    once = paths.strip_protocol("vos://dir/100%2541")
+    assert once == "/dir/100%41"
+    assert paths.name(once) == "100%41"
+    assert paths.parent(once) == "/dir"
+    assert paths.encode_url_path(once) == "/dir/100%2541"
+
+
+def test_encode_url_path_reencodes_a_decoded_space() -> None:
+    # vos://dir/file%2520name normalizes once to the literal name "file%20name";
+    # encoding it for the URL must target that object, not a second-decoded space.
+    once = paths.strip_protocol("vos://dir/file%2520name")
+    assert once == "/dir/file%20name"
+    assert paths.encode_url_path(once) == "/dir/file%2520name"
+
+
+def test_encoded_separator_in_decoded_name_is_addressable() -> None:
+    # data%2fpart decodes once to a segment containing "%2f"; encoding it for a
+    # URL must not raise the encoded-separator rejection a second time.
+    once = paths.strip_protocol("vos://dir/data%252fpart")
+    assert once == "/dir/data%2fpart"
+    assert paths.encode_url_path(once) == "/dir/data%252fpart"

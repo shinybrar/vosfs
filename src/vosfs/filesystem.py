@@ -402,12 +402,16 @@ class VOSpaceFileSystem(AsyncFileSystem):
         return response
 
     async def _read_whole(self, path: str) -> bytes:
-        """Download one whole object into memory (an empty 204 reads as ``b''``)."""
+        """Download one whole object into memory (an empty 204 reads as ``b''``).
+
+        Consumes the raw response bytes so HTTP content decoding can never alter
+        filesystem content, matching the streamed ``_get_file`` path.
+        """
         response = await self._open_read_stream(path)
         try:
             if response.status_code == _HTTP_NO_CONTENT:
                 return b""
-            return await response.aread()
+            return b"".join([chunk async for chunk in response.aiter_raw(_READ_CHUNK)])
         finally:
             await response.aclose()
 
@@ -447,26 +451,34 @@ class VOSpaceFileSystem(AsyncFileSystem):
     async def _cat_ranges(  # noqa: PLR0913 - fsspec hook signature
         self,
         paths: list[str],
-        starts: Sequence[int | None],
-        ends: Sequence[int | None],
+        starts: int | Sequence[int | None] | None,
+        ends: int | Sequence[int | None] | None,
         max_gap: int | None = None,  # noqa: ARG002 - accepted for fsspec compatibility
         batch_size: int | None = None,  # noqa: ARG002 - accepted for fsspec compatibility
         on_error: str = "return",
         **_kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[bytes | BaseException]:
-        """Return each range with at most one whole GET per object per call."""
-        stripped = [self._strip_protocol(path) for path in paths]
+        """Return each range with at most one whole GET per object per call.
+
+        A scalar ``starts``/``ends`` is broadcast to every path, matching
+        fsspec's ``cat_ranges`` contract.
+        """
+        start_list = _broadcast(starts, len(paths))
+        end_list = _broadcast(ends, len(paths))
+        stripped = [self._strip_protocol(rpath) for rpath in paths]
         cache: dict[str, bytes | BaseException] = {}
-        for path in dict.fromkeys(stripped):
+        for stripped_path in dict.fromkeys(stripped):
             try:
-                cache[path] = await self._read_whole(path)
+                cache[stripped_path] = await self._read_whole(stripped_path)
             except Exception as exc:  # noqa: PERF203 - per-object on_error handling
                 if on_error == "raise":
                     raise
-                cache[path] = exc
+                cache[stripped_path] = exc
         results: list[bytes | BaseException] = []
-        for path, start, end in zip(stripped, starts, ends, strict=True):
-            whole = cache[path]
+        for stripped_path, start, end in zip(
+            stripped, start_list, end_list, strict=True
+        ):
+            whole = cache[stripped_path]
             results.append(whole[start:end] if isinstance(whole, bytes) else whole)
         return results
 
@@ -712,12 +724,16 @@ class VOSpaceFileSystem(AsyncFileSystem):
     async def _cp_file(self, path1: str, path2: str, **_kwargs: Any) -> None:  # noqa: ANN401
         """Copy one object with a bounded read-to-write relay (bytes only).
 
-        The destination's parent container is created if missing, so a recursive
-        copy materializes the destination tree even though fsspec's coordinator
-        relays only the files.
+        A container source recreates the destination container (fsspec's
+        recursive coordinator passes container paths here too), so empty
+        directories are preserved and a container is never read as bytes. For a
+        file, the destination's parent container is created if missing.
         """
         path1 = self._strip_protocol(path1)
         path2 = self._strip_protocol(path2)
+        if (await self._info(path1))["type"] == "directory":
+            await self._ensure_container(path2)
+            return
         parent = paths.parent(path2)
         if parent not in ("/", path2) and not await self._exists(parent):
             await self._makedirs(parent, exist_ok=True)
@@ -741,7 +757,8 @@ class VOSpaceFileSystem(AsyncFileSystem):
         """Move a path, requiring an absent destination (non-atomic, no overwrite).
 
         The source is copied (or recreated) and deleted only after the
-        destination succeeds; a failed source deletion may leave both paths.
+        destination genuinely exists; a failed source deletion may leave both
+        paths. A directory move always recurses so the whole tree is recreated.
         """
         source = self._strip_protocol(path1)
         destination = self._strip_protocol(path2)
@@ -750,7 +767,11 @@ class VOSpaceFileSystem(AsyncFileSystem):
         if self.exists(destination):
             msg = f"move destination already exists: {destination}"
             raise FileExistsError(msg)
+        recursive = recursive or self.isdir(source)
         self.copy(source, destination, recursive=recursive, maxdepth=maxdepth, **kwargs)
+        if not self.exists(destination):
+            msg = f"move did not create the destination: {destination}; source is kept"
+            raise errors.VOSpaceError(msg)
         self.rm(source, recursive=recursive)
         self._invalidate(source)
         self._invalidate(destination)
@@ -795,6 +816,15 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = "use 'await aclose()' to close an asynchronous filesystem"
             raise RuntimeError(msg)
         sync(self.loop, self.aclose)
+
+
+def _broadcast(
+    value: int | Sequence[int | None] | None, count: int
+) -> list[int | None]:
+    """Broadcast a scalar range bound to every path, or return the sequence."""
+    if value is None or isinstance(value, int):
+        return [value] * count
+    return list(value)
 
 
 def _origin(url: str) -> tuple[str, str | None, int | None]:

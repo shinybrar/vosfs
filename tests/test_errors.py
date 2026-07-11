@@ -259,3 +259,17 @@ def test_transport_exception_falls_back_to_vospace_error() -> None:
     exc = errors.transport_exception(RuntimeError("Bearer SECRETTOKEN"))
     assert isinstance(exc, errors.VOSpaceError)
     assert "SECRETTOKEN" not in str(exc)
+
+
+def test_redact_masks_aws_security_token() -> None:
+    # Regression: a pre-authorized S3-style URL carries a temporary STS session
+    # token in X-Amz-Security-Token, which must be redacted like other secrets.
+    url = (
+        "https://host/files?X-Amz-Credential=AKIA"
+        "&X-Amz-Security-Token=FwoGSESSIONSECRET123"
+        "&X-Amz-Signature=deadbeef"
+    )
+    redacted = errors.redact(url)
+    assert "FwoGSESSIONSECRET123" not in redacted
+    assert "AKIA" not in redacted
+    assert "deadbeef" not in redacted

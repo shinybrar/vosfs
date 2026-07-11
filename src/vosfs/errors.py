@@ -51,7 +51,8 @@ _AUTHORIZATION_RE = re.compile(r"(?i)(authorization:[ \t]*)[^\r\n]*")
 _BEARER_RE = re.compile(r"(?i)(bearer[ \t]+)[A-Za-z0-9._~+/=-]+")
 _URL_SECRET_RE = re.compile(
     r"(?i)([?&](?:token|signature|sig|access_token"
-    r"|x-amz-signature|x-amz-credential)=)[^&\s#]*",
+    r"|x-amz-signature|x-amz-credential|x-amz-security-token"
+    r"|awsaccesskeyid)=)[^&\s#]*",
 )
 _OPAQUE_SEGMENT_RE = re.compile(
     r"(?i)(/(?:preauth|authorization|credential|token|signature|auth|sig|cred)/)"

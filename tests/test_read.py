@@ -2,9 +2,10 @@
 
 from pathlib import Path
 
+import httpx
 import pytest
 import respx
-from conftest import make_fs, mock_transfers
+from conftest import BASE_URL, make_fs, mock_transfers
 
 
 async def test_get_file_streams_to_disk(router: respx.Router, tmp_path: Path) -> None:
@@ -68,6 +69,40 @@ async def test_cat_ranges_groups_multiple_objects(router: respx.Router) -> None:
     fs = make_fs(router, asynchronous=True)
     result = await fs._cat_ranges(["/a", "/b", "/a"], [0, 1, 2], [2, 3, 4])
     assert result == [b"aa", b"bb", b"aa"]
+    await fs.aclose()
+
+
+async def test_cat_ranges_broadcasts_scalar_bounds(router: respx.Router) -> None:
+    # Regression: fsspec permits a single int for starts/ends applied to all paths.
+    mock_transfers(router, {"/a": b"0123456789", "/b": b"abcdefghij"})
+    fs = make_fs(router, asynchronous=True)
+    assert await fs._cat_ranges(["/a", "/b"], 0, 3) == [b"012", b"abc"]
+    await fs.aclose()
+
+
+async def test_read_consumes_raw_bytes_despite_content_encoding(
+    router: respx.Router,
+) -> None:
+    import gzip
+
+    from vospace_sim import VOSpaceSim
+
+    raw = gzip.compress(b"plain payload")
+
+    async def gz_body() -> object:
+        yield raw
+
+    # Register a streamable byte GET declaring Content-Encoding: gzip first so it
+    # wins over the simulator's route; httpx would content-decode it via aread().
+    router.route(url__regex=rf"^{BASE_URL}/files").mock(
+        return_value=httpx.Response(
+            200, content=gz_body(), headers={"Content-Encoding": "gzip"}
+        ),
+    )
+    VOSpaceSim().add_file("/f", raw).install(router)
+    fs = make_fs(router, asynchronous=True)
+    # cat_file must return the RAW (gzipped) bytes, not the httpx-decoded body.
+    assert await fs._cat_file("/f") == raw
     await fs.aclose()
 
 
