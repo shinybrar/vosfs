@@ -9,19 +9,22 @@ async filesystem contract.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import os
 from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote
 
 import httpx
 from fsspec.asyn import AsyncFileSystem, sync
 
-from vosfs import capabilities, config, errors, paths
+from vosfs import capabilities, config, errors, nodes, paths
 from vosfs.transport import ClientPool, build_timeout
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from vosfs.capabilities import ServiceBindings
+    from vosfs.nodes import Node
 
 _SECURITY_METHOD_BY_CREDENTIAL = {
     "anonymous": capabilities.ANONYMOUS_METHOD,
@@ -106,6 +109,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         )
         self._bindings: ServiceBindings | None = None
         self._bindings_lock: asyncio.Lock | None = None
+        self._authority: str | None = None
 
     @classmethod
     def _strip_protocol(cls, path: str) -> str:
@@ -173,6 +177,74 @@ class VOSpaceFileSystem(AsyncFileSystem):
         except httpx.HTTPError as exc:
             raise errors.transport_exception(exc, path=url) from exc
 
+    # -- node metadata and listing -------------------------------------------
+
+    async def _get_node_document(self, path: str) -> bytes:
+        """GET the node document for ``path`` or raise the mapped exception."""
+        bindings = await self._get_bindings()
+        url = bindings.require_nodes() + paths.encode_url_path(path)
+        response = await self._send_to_service("GET", url, headers=nodes.XML_HEADERS)
+        if response.status_code != _HTTP_OK:
+            body = errors.bounded_text(response.content)
+            raise errors.http_exception(response.status_code, body=body, path=path)
+        return response.content
+
+    def _parse_and_note(self, data: bytes) -> Node:
+        """Parse a node document and record or validate its VOSpace authority."""
+        node = nodes.parse_node(data)
+        self._note_authority(node.uri)
+        return node
+
+    def _note_authority(self, uri: str) -> None:
+        """Record the VOSpace authority on first sight, then require it to match.
+
+        The authority is discovered from the URI returned by the root node,
+        cached per instance, and every later node URI must carry the same one.
+        """
+        authority = _authority_of(uri)
+        if self._authority is None:
+            self._authority = authority
+        elif authority != self._authority:
+            msg = f"node URI authority {authority!r} does not match {self._authority!r}"
+            raise errors.VOSpaceError(msg)
+
+    async def _info(self, path: str, **_kwargs: Any) -> dict[str, Any]:  # noqa: ANN401 - fsspec hook signature
+        """Return the fsspec metadata for ``path`` or raise ``FileNotFoundError``."""
+        path = self._strip_protocol(path)
+        node = self._parse_and_note(await self._get_node_document(path))
+        return nodes.to_info(node, path)
+
+    async def _ls(self, path: str, detail: bool = True, **_kwargs: Any) -> list[Any]:  # noqa: ANN401, FBT001, FBT002 - fsspec hook signature
+        """List the immediate children of ``path`` (or the node itself if a file)."""
+        path = self._strip_protocol(path)
+        data = await self._get_node_document(path)
+        node = self._parse_and_note(data)
+        if node.node_type != "container":
+            entries = [nodes.to_info(node, path)]
+        else:
+            entries = [
+                self._child_info(path, child) for child in nodes.parse_listing(data)
+            ]
+        if detail:
+            return entries
+        return [entry["name"] for entry in entries]
+
+    def _child_info(self, parent: str, child: Node) -> dict[str, Any]:
+        """Build the info dict for a listing child under ``parent``."""
+        name = _child_name(child.uri)
+        child_path = f"/{name}" if parent == "/" else f"{parent}/{name}"
+        self._note_authority(child.uri)
+        return nodes.to_info(child, child_path)
+
+    async def _modified(self, path: str) -> datetime.datetime:
+        """Return the OpenCADC modification date for ``path``."""
+        path = self._strip_protocol(path)
+        node = self._parse_and_note(await self._get_node_document(path))
+        if node.mtime is None:
+            msg = f"no modification date is available for {path}"
+            raise errors.VOSpaceError(msg)
+        return _parse_datetime(node.mtime)
+
     async def aclose(self) -> None:
         """Close every realized HTTP client and evict the instance (idempotent).
 
@@ -194,3 +266,22 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = "use 'await aclose()' to close an asynchronous filesystem"
             raise RuntimeError(msg)
         sync(self.loop, self.aclose)
+
+
+def _authority_of(uri: str) -> str:
+    """Return the VOSpace authority carried by a ``vos://authority/...`` URI."""
+    _scheme, separator, rest = uri.partition("://")
+    if not separator or not rest:
+        msg = f"node URI is not a VOSpace URI: {uri!r}"
+        raise errors.VOSpaceError(msg)
+    return rest.split("/", 1)[0]
+
+
+def _child_name(uri: str) -> str:
+    """Return the decoded final segment of a child node URI."""
+    return unquote(uri.rstrip("/").rsplit("/", 1)[-1])
+
+
+def _parse_datetime(value: str) -> datetime.datetime:
+    """Parse an ISO 8601 modification date, tolerating a trailing ``Z``."""
+    return datetime.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
