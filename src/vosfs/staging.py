@@ -73,12 +73,17 @@ class StagedWriteFile(io.BufferedRandom):
         self._done = False
 
     def close(self) -> None:
-        """Commit the buffer with one upload, then remove the temporary file."""
+        """Commit the buffer with one upload, then remove the temporary file.
+
+        The temporary file is removed even if the final flush (``super().close``)
+        or the upload raises, so a failed commit never leaks a staging file. A
+        flush failure skips the upload, since the buffer is then incomplete.
+        """
         if self._done:
             return
         self._done = True
-        super().close()
         try:
+            super().close()
             self._on_commit(self._path)
         finally:
             with contextlib.suppress(OSError):

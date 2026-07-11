@@ -310,11 +310,14 @@ class VOSpaceFileSystem(AsyncFileSystem):
 
         Builds a VOSpace 2.1 transfer document with one authority-qualified
         target, POSTs it to the discovered sync binding with redirects disabled,
-        and follows the single 303. Per the contract the ``Location`` may be
-        either a transfer-details document or a direct byte endpoint: an XML body
-        is parsed for a credential-compatible protocol, while a non-XML body
-        means the ``Location`` is itself a pre-authorized endpoint, routed
-        anonymously so no caller credential is ever sent to it.
+        follows the single 303 to the transfer details, and chooses a protocol
+        whose security method is compatible with the configured credential.
+
+        A 303 whose ``Location`` is a direct byte endpoint rather than a
+        transfer-details document is not yet supported: distinguishing the two
+        without consuming a (possibly single-use, possibly large) endpoint needs
+        a streaming discriminator validated against live OpenCADC. It is tracked
+        in issue #63; such a response surfaces as a transfer-details parse error.
         """
         bindings = await self._get_bindings()
         sync_url = bindings.require_sync()
@@ -336,10 +339,6 @@ class VOSpaceFileSystem(AsyncFileSystem):
             "GET", location, headers=nodes.XML_HEADERS
         )
         self._raise_for_status(details, path=path, allowed=(_HTTP_OK,))
-        if details.content.lstrip()[:1] != b"<":
-            # A non-XML body means the 303 pointed straight at a pre-authorized
-            # byte endpoint; use it verbatim, credential-free.
-            return negotiate.NegotiatedEndpoint(location, capabilities.ANONYMOUS_METHOD)
         return negotiate.choose_protocol(
             negotiate.parse_transfer_details(details.content),
             self._security_method(),
@@ -770,14 +769,17 @@ class VOSpaceFileSystem(AsyncFileSystem):
         """
         path1 = self._strip_protocol(path1)
         path2 = self._strip_protocol(path2)
-        # Materialize the destination's parent first, for both a directory and a
+        # Resolve the source first so a missing source fails before any
+        # destination container is created (no orphaned parent on error).
+        source_is_dir = (await self._info(path1))["type"] == "directory"
+        # Then materialize the destination's parent, for both a directory and a
         # file target, so copying into a not-yet-created subtree (for example a
         # recursive glob into ``target/newdir``) never orphans an intermediate
         # ContainerNode.
         parent = paths.parent(path2)
         if parent not in ("/", path2) and not await self._exists(parent):
             await self._makedirs(parent, exist_ok=True)
-        if (await self._info(path1))["type"] == "directory":
+        if source_is_dir:
             await self._ensure_container(path2)
             return
         # Relay through a disk-staged temporary file so an arbitrarily large

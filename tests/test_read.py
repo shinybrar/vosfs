@@ -175,18 +175,15 @@ def test_cat_head_tail(router: respx.Router) -> None:
     fs.close()
 
 
-def test_negotiation_uses_direct_byte_endpoint(router: respx.Router) -> None:
-    # A 303 whose Location is a direct pre-authorized endpoint (non-XML body) is
-    # used verbatim, and the real byte read carries no bearer even though a token
-    # is configured.
+def test_direct_byte_endpoint_303_is_unsupported(router: respx.Router) -> None:
+    # A 303 whose Location is a direct byte endpoint (non-XML) is not yet
+    # negotiated (issue #63): distinguishing it from transfer details without
+    # consuming a possibly single-use or large endpoint needs a streaming
+    # discriminator validated against live OpenCADC. Until then it surfaces as a
+    # transfer-details parse error rather than being used.
     import re
 
-    from conftest import (
-        NODES_URL,
-        ROOT_CONTAINER,
-        SYNC_URL,
-        mock_capabilities,
-    )
+    from conftest import NODES_URL, ROOT_CONTAINER, SYNC_URL, mock_capabilities
 
     mock_capabilities(router)
     router.get(NODES_URL).mock(return_value=httpx.Response(200, content=ROOT_CONTAINER))
@@ -194,18 +191,32 @@ def test_negotiation_uses_direct_byte_endpoint(router: respx.Router) -> None:
     router.post(SYNC_URL).mock(
         return_value=httpx.Response(303, headers={"Location": endpoint})
     )
+    router.route(url__regex=rf"^{re.escape(BASE_URL)}/files").mock(
+        return_value=httpx.Response(200, content=b"not-xml-payload")
+    )
+    fs = make_fs(router)
+    with pytest.raises(ValueError, match="XML"):
+        fs.cat_file("/d.bin")
+    fs.close()
 
-    async def _stream():
-        yield b"payload"
 
-    seen: dict[str, str | None] = {}
+def test_error_response_carries_retry_after_and_fault(router: respx.Router) -> None:
+    # End-to-end: a 503 with a Retry-After header and a fault body flows through
+    # _raise_for_status into VOSpaceError's fields.
+    from conftest import NODES_URL, mock_capabilities
 
-    def byte_op(request: httpx.Request) -> httpx.Response:
-        seen["auth"] = request.headers.get("authorization")
-        return httpx.Response(200, content=_stream())
+    from vosfs import errors
 
-    router.route(url__regex=rf"^{re.escape(BASE_URL)}/files").mock(side_effect=byte_op)
-    fs = make_fs(router, token="secret")
-    assert fs.cat_file("/d.bin") == b"payload"
-    assert seen["auth"] is None  # the real read never carries the bearer
+    mock_capabilities(router)
+    router.get(f"{NODES_URL}/x").mock(
+        return_value=httpx.Response(
+            503, headers={"Retry-After": "42"}, text="ServiceBusy: try again later"
+        )
+    )
+    fs = make_fs(router)
+    with pytest.raises(errors.VOSpaceError) as excinfo:
+        fs.info("/x")
+    assert excinfo.value.retry_after == 42.0
+    assert excinfo.value.fault == "ServiceBusy"
+    assert excinfo.value.status == 503
     fs.close()
