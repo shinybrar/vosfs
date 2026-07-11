@@ -12,6 +12,7 @@ import asyncio
 import base64
 import contextlib
 import datetime
+import errno
 import hashlib
 import os
 from pathlib import Path
@@ -580,6 +581,154 @@ class VOSpaceFileSystem(AsyncFileSystem):
             raise NotImplementedError(msg)
         self.pipe_file(path, b"", mode="overwrite")
 
+    # -- namespace and mutation ----------------------------------------------
+
+    async def _create_container(self, path: str) -> None:
+        """PUT one ContainerNode at ``path``."""
+        bindings = await self._get_bindings()
+        authority = await self._require_authority()
+        document = nodes.build_container_document(f"vos://{authority}{path}")
+        url = bindings.require_nodes() + paths.encode_url_path(path)
+        response = await self._send_to_service(
+            "PUT", url, content=document, headers=nodes.XML_HEADERS
+        )
+        if response.status_code not in (_HTTP_OK, _HTTP_CREATED):
+            body = errors.bounded_text(response.content)
+            raise errors.http_exception(response.status_code, body=body, path=path)
+        self._invalidate(path)
+
+    async def _delete_node(self, path: str) -> None:
+        """DELETE the node at ``path``."""
+        bindings = await self._get_bindings()
+        url = bindings.require_nodes() + paths.encode_url_path(path)
+        response = await self._send_to_service("DELETE", url)
+        if response.status_code not in (_HTTP_OK, _HTTP_NO_CONTENT):
+            body = errors.bounded_text(response.content)
+            raise errors.http_exception(response.status_code, body=body, path=path)
+        self._invalidate(path)
+
+    async def _mkdir(
+        self,
+        path: str,
+        create_parents: bool = True,  # noqa: FBT001, FBT002 - fsspec hook signature
+        **_kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> None:
+        """Create one ContainerNode, optionally creating missing ancestors."""
+        path = self._strip_protocol(path)
+        parent = paths.parent(path)
+        if create_parents and parent != path and not await self._exists(parent):
+            await self._makedirs(parent, exist_ok=True)
+        await self._create_container(path)
+
+    async def _makedirs(self, path: str, exist_ok: bool = False) -> None:  # noqa: FBT001, FBT002
+        """Create ``path`` and every missing ancestor, top-down."""
+        path = self._strip_protocol(path)
+        if not exist_ok and await self._exists(path):
+            msg = f"path already exists: {path}"
+            raise FileExistsError(msg)
+        for ancestor in _ancestors_top_down(path):
+            await self._ensure_container(ancestor)
+
+    async def _ensure_container(self, path: str) -> None:
+        """Create a container, tolerating a concurrently-created container."""
+        try:
+            await self._create_container(path)
+        except FileExistsError:
+            info = await self._info(path)
+            if info["type"] != "directory":
+                raise
+
+    async def _rm_file(self, path: str, **_kwargs: Any) -> None:  # noqa: ANN401 - fsspec hook signature
+        """Delete one non-container node."""
+        await self._delete_node(self._strip_protocol(path))
+
+    async def _rmdir(self, path: str) -> None:
+        """Delete an empty container after proving it empty (non-atomic)."""
+        path = self._strip_protocol(path)
+        if await self._ls(path, detail=False):
+            raise OSError(errno.ENOTEMPTY, "directory not empty", path)
+        await self._delete_node(path)
+
+    async def _rm(
+        self,
+        path: str | list[str],
+        recursive: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
+        batch_size: int | None = None,  # noqa: ARG002 - accepted for fsspec compatibility
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> None:
+        """Delete files and, with ``recursive``, empty-check or leaves-first trees."""
+        if kwargs.get("maxdepth") is not None:
+            msg = "rm(maxdepth=...) is unsupported"
+            raise NotImplementedError(msg)
+        targets = path if isinstance(path, list) else [path]
+        for target in targets:
+            await self._rm_one(self._strip_protocol(target), recursive=recursive)
+
+    async def _rm_one(self, path: str, *, recursive: bool) -> None:
+        """Delete a single path, dispatching by node type and recursion."""
+        info = await self._info(path)
+        if info["type"] != "directory":
+            await self._delete_node(path)
+        elif recursive:
+            await self._rm_tree(path)
+        else:
+            await self._rmdir(path)
+
+    async def _rm_tree(self, path: str) -> None:
+        """Delete a container and its descendants leaves-first, client-side."""
+        for child in await self._ls(path, detail=True):
+            child_path = child["name"]
+            if child["type"] == "directory":
+                await self._rm_tree(child_path)
+            else:
+                await self._delete_node(child_path)
+        await self._delete_node(path)
+
+    async def _cp_file(self, path1: str, path2: str, **_kwargs: Any) -> None:  # noqa: ANN401
+        """Copy one object with a bounded read-to-write relay (bytes only)."""
+        path1 = self._strip_protocol(path1)
+        path2 = self._strip_protocol(path2)
+        data = await self._read_whole(path1)
+        await self._write(
+            path2,
+            data,
+            size=len(data),
+            content_type=None,
+            expected_digest=hashlib.md5(data).digest(),  # noqa: S324 - integrity, not security
+        )
+
+    def mv(
+        self,
+        path1: str,
+        path2: str,
+        recursive: bool = False,  # noqa: FBT001, FBT002 - fsspec signature
+        maxdepth: int | None = None,
+        **kwargs: Any,  # noqa: ANN401 - fsspec signature
+    ) -> None:
+        """Move a path, requiring an absent destination (non-atomic, no overwrite).
+
+        The source is copied (or recreated) and deleted only after the
+        destination succeeds; a failed source deletion may leave both paths.
+        """
+        source = self._strip_protocol(path1)
+        destination = self._strip_protocol(path2)
+        if source == destination:
+            return
+        if self.exists(destination):
+            msg = f"move destination already exists: {destination}"
+            raise FileExistsError(msg)
+        self.copy(source, destination, recursive=recursive, maxdepth=maxdepth, **kwargs)
+        self.rm(source, recursive=recursive)
+        self._invalidate(source)
+        self._invalidate(destination)
+
+    def _invalidate(self, path: str) -> None:
+        """Invalidate the directory cache for ``path`` and its parent."""
+        self.invalidate_cache(path)
+        parent = paths.parent(path)
+        if parent != path:
+            self.invalidate_cache(parent)
+
     async def aclose(self) -> None:
         """Close every realized HTTP client and evict the instance (idempotent).
 
@@ -620,6 +769,16 @@ def _child_name(uri: str) -> str:
 def _parse_datetime(value: str) -> datetime.datetime:
     """Parse an ISO 8601 modification date, tolerating a trailing ``Z``."""
     return datetime.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+
+
+def _ancestors_top_down(path: str) -> list[str]:
+    """Return ``path`` and its ancestors from the topmost down to ``path``."""
+    result: list[str] = []
+    current = ""
+    for segment in paths.segments(path):
+        current = f"{current}/{segment}"
+        result.append(current)
+    return result
 
 
 def _md5_of_file(path: str) -> bytes:
