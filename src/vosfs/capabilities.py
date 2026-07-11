@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from vosfs.xmlio import safe_parse
+from vosfs.xmlio import local_name, safe_parse
 
 if TYPE_CHECKING:
     import xml.etree.ElementTree as ET
@@ -109,7 +109,7 @@ def _resolve(
 def _find_capability(root: ET.Element, standard_id: str) -> ET.Element | None:
     for element in root.iter():
         if (
-            _local(element.tag) == "capability"
+            local_name(element.tag) == "capability"
             and element.get("standardID") == standard_id
         ):
             return element
@@ -119,7 +119,10 @@ def _find_capability(root: ET.Element, standard_id: str) -> ET.Element | None:
 def _standard_param_http_interfaces(capability: ET.Element) -> list[ET.Element]:
     interfaces = []
     for element in capability:
-        if _local(element.tag) != "interface" or element.get("role") != _STANDARD_ROLE:
+        if (
+            local_name(element.tag) != "interface"
+            or element.get("role") != _STANDARD_ROLE
+        ):
             continue
         xsi_type = element.get(_XSI_TYPE_ATTR, "")
         if xsi_type.rsplit(":", 1)[-1] == _PARAM_HTTP:
@@ -132,7 +135,7 @@ def _accepts(interface: ET.Element, security_method: str) -> bool:
     advertised = {
         element.get("standardID", "")
         for element in interface
-        if _local(element.tag) == "securityMethod"
+        if local_name(element.tag) == "securityMethod"
     }
     advertised.discard("")
     if security_method == ANONYMOUS_METHOD:
@@ -141,7 +144,7 @@ def _accepts(interface: ET.Element, security_method: str) -> bool:
 
 
 def _access_url(interface: ET.Element, *, use: str) -> str | None:
-    urls = [element for element in interface if _local(element.tag) == "accessURL"]
+    urls = [element for element in interface if local_name(element.tag) == "accessURL"]
     for element in urls:
         if element.get("use") == use and element.text:
             return element.text.strip()
@@ -149,8 +152,3 @@ def _access_url(interface: ET.Element, *, use: str) -> str | None:
         if element.text:
             return element.text.strip()
     return None
-
-
-def _local(tag: str) -> str:
-    """Return the local name of a possibly namespace-qualified tag."""
-    return tag.rsplit("}", 1)[-1]

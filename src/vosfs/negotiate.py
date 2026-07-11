@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlsplit
 
 from vosfs.capabilities import ANONYMOUS_METHOD
 from vosfs.errors import VOSpaceError
-from vosfs.xmlio import safe_parse
+from vosfs.xmlio import local_name, safe_parse
 
 if TYPE_CHECKING:
     import xml.etree.ElementTree as ET
@@ -62,7 +62,7 @@ def parse_transfer_details(data: bytes) -> list[Protocol]:
     protocols = [
         Protocol(endpoint=endpoint, security_method=_security_method_of(element))
         for element in root.iter()
-        if _local(element.tag) == "protocol"
+        if local_name(element.tag) == "protocol"
         and (endpoint := _endpoint_of(element)) is not None
     ]
     if not protocols:
@@ -124,17 +124,13 @@ def validate_redirect(location: str | None, *, base: str, sending_bearer: bool) 
 
 def _endpoint_of(protocol: ET.Element) -> str | None:
     for child in protocol:
-        if _local(child.tag) == "endpoint" and child.text:
+        if local_name(child.tag) == "endpoint" and child.text:
             return child.text.strip()
     return None
 
 
 def _security_method_of(protocol: ET.Element) -> str:
     for child in protocol:
-        if _local(child.tag) == "securityMethod":
+        if local_name(child.tag) == "securityMethod":
             return child.get("standardID", ANONYMOUS_METHOD)
     return ANONYMOUS_METHOD
-
-
-def _local(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1]

@@ -169,6 +169,23 @@ def parse_listing(data: bytes, *, limit: int = DEFAULT_LIMIT) -> list[Node]:
             external entity, or contains a child with an unknown node type.
     """
     root = safe_parse(data, limit=limit)
+    return _children_of(root)
+
+
+def parse_container(
+    data: bytes, *, limit: int = DEFAULT_LIMIT
+) -> tuple[Node, list[Node]]:
+    """Parse a node document once, returning the node and its immediate children.
+
+    Avoids parsing the same body twice when a caller needs both the container
+    node and its listing.
+    """
+    root = safe_parse(data, limit=limit)
+    return _node_from_element(root), _children_of(root)
+
+
+def _children_of(root: ET.Element) -> list[Node]:
+    """Return the immediate ``<nodes>`` children of a parsed document root."""
     nodes_element = root.find(_NODES_TAG)
     if nodes_element is None:
         return []

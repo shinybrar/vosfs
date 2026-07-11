@@ -42,3 +42,8 @@ def safe_parse(data: bytes, *, limit: int = DEFAULT_LIMIT) -> ET.Element:
     except ParseError as exc:
         msg = "malformed XML document"
         raise ValueError(msg) from exc
+
+
+def local_name(tag: str) -> str:
+    """Return the local name of a possibly namespace-qualified element tag."""
+    return tag.rsplit("}", 1)[-1]

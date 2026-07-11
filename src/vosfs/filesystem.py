@@ -157,11 +157,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         response = await self._send_to_service(
             "GET", self.endpoint_url + "/capabilities"
         )
-        if response.status_code != _HTTP_OK:
-            body = errors.bounded_text(response.content)
-            raise errors.http_exception(
-                response.status_code, body=body, path="/capabilities"
-            )
+        self._raise_for_status(response, path="/capabilities", allowed=(_HTTP_OK,))
         return capabilities.parse_bindings(
             response.content, security_method=self._security_method()
         )
@@ -197,6 +193,18 @@ class VOSpaceFileSystem(AsyncFileSystem):
         except httpx.HTTPError as exc:
             raise errors.transport_exception(exc, path=url) from exc
 
+    def _raise_for_status(
+        self,
+        response: httpx.Response,
+        *,
+        path: str,
+        allowed: tuple[int, ...],
+    ) -> None:
+        """Raise the mapped exception when a response status is not allowed."""
+        if response.status_code not in allowed:
+            body = errors.bounded_text(response.content)
+            raise errors.http_exception(response.status_code, body=body, path=path)
+
     # -- node metadata and listing -------------------------------------------
 
     async def _get_node_document(self, path: str) -> bytes:
@@ -204,9 +212,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         bindings = await self._get_bindings()
         url = bindings.require_nodes() + paths.encode_url_path(path)
         response = await self._send_to_service("GET", url, headers=nodes.XML_HEADERS)
-        if response.status_code != _HTTP_OK:
-            body = errors.bounded_text(response.content)
-            raise errors.http_exception(response.status_code, body=body, path=path)
+        self._raise_for_status(response, path=path, allowed=(_HTTP_OK,))
         return response.content
 
     def _parse_and_note(self, data: bytes) -> Node:
@@ -250,12 +256,15 @@ class VOSpaceFileSystem(AsyncFileSystem):
         return [entry["name"] for entry in entries]
 
     async def _fetch_listing(self, path: str) -> list[dict[str, Any]]:
-        """Fetch a listing, caching a container's immediate children."""
-        data = await self._get_node_document(path)
-        node = self._parse_and_note(data)
+        """Fetch a listing, caching a container's immediate children.
+
+        The document is parsed once for both the node and its children.
+        """
+        node, children = nodes.parse_container(await self._get_node_document(path))
+        self._note_authority(node.uri)
         if node.node_type != "container":
             return [nodes.to_info(node, path)]
-        entries = [self._child_info(path, child) for child in nodes.parse_listing(data)]
+        entries = [self._child_info(path, child) for child in children]
         self.dircache[path] = entries
         return entries
 
@@ -306,9 +315,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         post = await self._send_to_service(
             "POST", sync_url, content=document, headers=nodes.XML_HEADERS
         )
-        if post.status_code != _HTTP_SEE_OTHER:
-            body = errors.bounded_text(post.content)
-            raise errors.http_exception(post.status_code, body=body, path=path)
+        self._raise_for_status(post, path=path, allowed=(_HTTP_SEE_OTHER,))
         location = negotiate.validate_redirect(
             post.headers.get("location"),
             base=sync_url,
@@ -317,9 +324,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         details = await self._send_to_service(
             "GET", location, headers=nodes.XML_HEADERS
         )
-        if details.status_code != _HTTP_OK:
-            body = errors.bounded_text(details.content)
-            raise errors.http_exception(details.status_code, body=body, path=path)
+        self._raise_for_status(details, path=path, allowed=(_HTTP_OK,))
         protocol = negotiate.choose_protocol(
             negotiate.parse_transfer_details(details.content),
             self._security_method(),
@@ -629,9 +634,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         response = await self._send_to_service(
             "PUT", url, content=document, headers=nodes.XML_HEADERS
         )
-        if response.status_code not in (_HTTP_OK, _HTTP_CREATED):
-            body = errors.bounded_text(response.content)
-            raise errors.http_exception(response.status_code, body=body, path=path)
+        self._raise_for_status(response, path=path, allowed=(_HTTP_OK, _HTTP_CREATED))
         self._invalidate(path)
 
     async def _delete_node(self, path: str) -> None:
@@ -639,9 +642,9 @@ class VOSpaceFileSystem(AsyncFileSystem):
         bindings = await self._get_bindings()
         url = bindings.require_nodes() + paths.encode_url_path(path)
         response = await self._send_to_service("DELETE", url)
-        if response.status_code not in (_HTTP_OK, _HTTP_NO_CONTENT):
-            body = errors.bounded_text(response.content)
-            raise errors.http_exception(response.status_code, body=body, path=path)
+        self._raise_for_status(
+            response, path=path, allowed=(_HTTP_OK, _HTTP_NO_CONTENT)
+        )
         self._invalidate(path)
 
     async def _mkdir(
