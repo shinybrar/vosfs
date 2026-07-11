@@ -78,6 +78,116 @@ fs.put("local.csv", "/project/copy.csv")
 local `read`/`readinto`/`readline`/iteration/`tell`/`seek`. `open("wb")` buffers
 into a temporary file and uploads once when the file closes successfully.
 
+## Scientific Python stack
+
+Because `vosfs` registers the `vos` protocol, any fsspec-aware tool can read and
+write `vos://` URLs directly. Pass the endpoint (and at most one credential) as
+`storage_options`, or construct a `VOSpaceFileSystem` and hand it to the tool.
+
+!!! tip "`storage_options` mirrors the constructor"
+
+    Every keyword accepted by `VOSpaceFileSystem` — `endpoint_url`, `token`,
+    `tokenfile`, `certfile`, `timeouts` — is valid inside `storage_options`.
+    Omit the credential to resolve it from `VOSFS_TOKEN`, `VOSFS_TOKEN_FILE`, or
+    `VOSFS_CERT_FILE` in the environment.
+
+=== "pandas"
+
+    ```python
+    import pandas as pd
+
+    storage_options = {"endpoint_url": "https://staging.canfar.net/arc"}
+
+    frame = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    frame.to_csv("vos://project/data.csv", index=False, storage_options=storage_options)
+
+    restored = pd.read_csv("vos://project/data.csv", storage_options=storage_options)
+    ```
+
+=== "NumPy"
+
+    Save and load through an fsspec file object. `.npy`, `.npz`, and text
+    (`np.loadtxt`/`np.savetxt`) all round-trip.
+
+    ```python
+    import fsspec
+    import numpy as np
+
+    storage_options = {"endpoint_url": "https://staging.canfar.net/arc"}
+    array = np.arange(12, dtype="int64").reshape(3, 4)
+
+    with fsspec.open("vos://project/a.npy", "wb", **storage_options) as handle:
+        np.save(handle, array)
+
+    with fsspec.open("vos://project/a.npy", "rb", **storage_options) as handle:
+        restored = np.load(handle)
+    ```
+
+=== "Dask"
+
+    ```python
+    import dask.dataframe as dd
+
+    storage_options = {"endpoint_url": "https://staging.canfar.net/arc"}
+
+    # blocksize=None: Cavern has no byte ranges, so each file is one partition.
+    lazy = dd.read_csv("vos://project/d.csv", storage_options=storage_options, blocksize=None)
+    result = lazy.compute()
+    ```
+
+=== "Zarr"
+
+    Zarr v3 reads and writes each chunk as a whole object. Use an asynchronous
+    filesystem for the store (requires Python 3.11+).
+
+    ```python
+    import numpy as np
+    import zarr
+
+    from vosfs import VOSpaceFileSystem
+
+    fs = VOSpaceFileSystem(
+        endpoint_url="https://staging.canfar.net/arc",
+        asynchronous=True,
+    )
+    store = zarr.storage.FsspecStore(fs, path="/project/array.zarr")
+
+    root = zarr.open_group(store=store, mode="w")
+    data = root.create_array("data", shape=(10,), dtype="int32")
+    data[:] = np.arange(10, dtype="int32")
+
+    reopened = zarr.open_group(store=store, mode="r")
+    assert reopened["data"][3:6].tolist() == [3, 4, 5]
+    ```
+
+=== "PyArrow"
+
+    Wrap the filesystem in a `PyFileSystem` and address paths without the
+    `vos://` prefix.
+
+    ```python
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from pyarrow.fs import FSSpecHandler, PyFileSystem
+
+    from vosfs import VOSpaceFileSystem
+
+    fs = VOSpaceFileSystem(endpoint_url="https://staging.canfar.net/arc")
+    pa_fs = PyFileSystem(FSSpecHandler(fs))
+
+    table = pa.table({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    pq.write_table(table, "/project/data.parquet", filesystem=pa_fs)
+    restored = pq.read_table("/project/data.parquet", filesystem=pa_fs)
+    ```
+
+!!! note "Whole-object transfer"
+
+    Cavern serves no byte ranges, so every consumer reads whole objects. Formats
+    that rely on random access still work — `vosfs` stages each object (or Zarr
+    chunk) to a local temporary file — but there is no server-side range
+    optimization. For Dask, pass `blocksize=None` so each file is a single
+    partition.
+
 ## Capability summary
 
 Every public behavior carries exactly one classification.
