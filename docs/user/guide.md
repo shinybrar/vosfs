@@ -5,9 +5,11 @@ filesystem for the **OpenCADC Cavern VOSpace** service. It exposes the `vos`
 protocol so fsspec-aware Python tools can read, write, inspect, and mutate
 OpenCADC VOSpace paths.
 
-`vosfs` targets the OpenCADC VOSpace profile only. It does **not** claim generic
-IVOA VOSpace 2.1 conformance or compatibility with unrelated VOSpace
-implementations.
+!!! warning "OpenCADC profile only"
+
+    `vosfs` targets the OpenCADC VOSpace profile. It does **not** claim generic
+    IVOA VOSpace 2.1 conformance or compatibility with unrelated VOSpace
+    implementations.
 
 ## Constructing a filesystem
 
@@ -40,13 +42,14 @@ or refreshes them.
 If no credential option is given, `vosfs` falls back to exactly one of the
 environment variables `VOSFS_TOKEN`, `VOSFS_TOKEN_FILE`, or `VOSFS_CERT_FILE`.
 Providing any explicit credential option ignores all of these variables. With
-no credential at all, access is anonymous.
+no credential at all, access is anonymous. `endpoint_url` must use `https`
+whenever a credential is configured.
 
-`endpoint_url` must use `https` whenever a credential is configured.
+!!! note "Serialization"
 
-> **Serialization note.** A literal `token` is included in fsspec pickle and
-> JSON serialization. Prefer `tokenfile` or an environment source when the
-> filesystem may be serialized.
+    A literal `token` is included in fsspec pickle and JSON serialization.
+    Prefer `tokenfile` or an environment source when the filesystem may be
+    serialized.
 
 ```python
 fs = fsspec.filesystem(
@@ -77,40 +80,153 @@ into a temporary file and uploads once when the file closes successfully.
 
 ## Capability summary
 
-Every public behavior has one classification. The full, normative matrix lives
-in the [capability contract](https://github.com/shinybrar/vosfs/blob/main/docs/design/trd.md).
+Every public behavior carries exactly one classification.
 
-**Supported** (native or client-derived): `info`/`ls`/`exists`/`isfile`/
-`isdir`/`size`/`modified`; `walk`/`find`/`glob`/`du`/`tree`; `cat`/`cat_file`/
-`cat_ranges`/`head`/`tail`/`read_block`/`get`/`get_file`; `pipe`/`pipe_file`/
-`put`/`put_file`; `open("rb"/"r"/"wb"/"w"/"xb"/"x")`; `mkdir`/`makedirs`;
-`rm`/`rmdir`/`rm_file` (empty-check or leaves-first client deletion);
-`cp`/`copy`/`cp_file`; `mv`/`move`/`rename` (non-atomic, no overwrite);
-`touch(truncate=True)`; `checksum`/`ukey`; pickle/`to_json`; and the
-`simplecache::vos://` and `filecache::vos://` wrappers.
+!!! abstract "Normative source"
 
-**Unsupported** (raise `NotImplementedError`, or are absent): `created`;
-`open_async`; remote byte ranges / `Range` requests; append, `+`, offset,
-atomic, resumable, and multipart writes; `touch(truncate=False)`;
-`rm(..., maxdepth=...)`; server-side copy, move, search, sort, and pagination;
-public property, permission, and link-creation APIs; the `blockcache::` and
-`cached::` wrappers; and FUSE.
+    The tables below are a reader-friendly digest. The full, authoritative
+    capability matrix lives in the
+    [capability contract](https://github.com/shinybrar/vosfs/blob/main/docs/design/trd.md);
+    where the two differ, the contract wins.
+
+### Supported
+
+Native operations and the client-derived behaviors composed from them.
+
+<div class="grid cards" markdown>
+
+-   :material-magnify:{ .lg .middle } __Inspect__
+
+    ---
+
+    `info` · `ls` · `exists` · `isfile` · `isdir` · `size` · `modified`
+
+-   :material-file-tree:{ .lg .middle } __Traverse__
+
+    ---
+
+    Client-derived from `ls`:
+
+    `walk` · `find` · `glob` · `du` · `tree`
+
+-   :material-download:{ .lg .middle } __Read__
+
+    ---
+
+    `cat` · `cat_file` · `cat_ranges` · `head` · `tail` · `read_block` · `get` · `get_file`
+
+    Whole-object transfer; ranges are sliced client-side.
+
+-   :material-upload:{ .lg .middle } __Write__
+
+    ---
+
+    `pipe` · `pipe_file` · `put` · `put_file`
+
+    One whole `PUT` per file.
+
+-   :material-file-document-edit-outline:{ .lg .middle } __Open__
+
+    ---
+
+    `open("rb" / "r" / "wb" / "w" / "xb" / "x")`
+
+    Backed by a disk-staged temporary file.
+
+-   :material-folder-plus-outline:{ .lg .middle } __Directories__
+
+    ---
+
+    `mkdir` · `makedirs`
+
+-   :material-delete-outline:{ .lg .middle } __Delete__
+
+    ---
+
+    `rm` · `rmdir` · `rm_file`
+
+    Empty-check or leaves-first client deletion.
+
+-   :material-content-copy:{ .lg .middle } __Copy__
+
+    ---
+
+    `cp` · `copy` · `cp_file`
+
+-   :material-swap-horizontal:{ .lg .middle } __Move__
+
+    ---
+
+    `mv` · `move` · `rename`
+
+    Non-atomic, no overwrite.
+
+-   :material-fingerprint:{ .lg .middle } __Identity & metadata__
+
+    ---
+
+    `touch(truncate=True)` · `checksum` · `ukey`
+
+-   :material-package-variant:{ .lg .middle } __Serialization__
+
+    ---
+
+    `pickle` · `to_json`
+
+-   :material-cached:{ .lg .middle } __Cache wrappers__
+
+    ---
+
+    `simplecache::vos://` · `filecache::vos://`
+
+</div>
+
+### Unsupported
+
+!!! failure "These raise `NotImplementedError` before any remote mutation, or are absent entirely"
+
+    The filesystem never silently degrades — an unsupported call fails fast.
+
+| Operation / feature | Why |
+| --- | --- |
+| Remote byte ranges, `Range` requests | Cavern serves whole objects only |
+| `blockcache::` / `cached::` wrappers | Require server-side byte ranges |
+| Append, `+` mode, offset / atomic / resumable / multipart writes | One whole `PUT` per file |
+| `touch(truncate=False)` | Would require a partial update |
+| `rm(..., maxdepth=...)` | Bounded-depth deletion is not modeled |
+| `created` timestamps, `open_async` | Not provided by the profile |
+| Server-side copy, move, search, sort, pagination | Absent from the OpenCADC profile |
+| Public property, permission, and link-creation APIs | Out of v0.3.0 scope |
+| FUSE mounting | Not supported |
 
 ## Errors
 
-Failures map to standard Python exceptions: `ValueError` for invalid input,
-`PermissionError` for authentication or authorization, `FileNotFoundError` for a
-missing node or parent, `FileExistsError` for a conflict, `NotImplementedError`
-for an unsupported operation or a missing service binding, `OSError` with
-`errno.ENOSPC` for quota exhaustion, `BlockingIOError` for a locked node,
-`TimeoutError` for an HTTP timeout, and `ConnectionError` for a connection
-failure. Every remaining OpenCADC, integrity, HTTP, and partial-completion
-failure is raised as the single public `vosfs.VOSpaceError` (a subclass of
-`OSError`), which carries the HTTP status, symbolic fault, retry guidance, and
-completed and failed paths where applicable. Credentials and pre-authorized URL
-tokens are redacted from every exception and log.
+Failures map to the closest standard Python exception. Anything without a
+precise match is raised as the single public `vosfs.VOSpaceError`.
 
-`vosfs` never retries automatically; callers own higher-level retry policy.
+| Exception | Raised when |
+| --- | --- |
+| `ValueError` | Invalid input — a malformed path, bad option, or oversized/ill-formed XML |
+| `PermissionError` | Authentication or authorization was refused |
+| `FileNotFoundError` | A referenced node or its parent does not exist |
+| `FileExistsError` | The target already exists and the operation will not overwrite |
+| `NotImplementedError` | The operation is unsupported, or the service advertises no matching binding |
+| `OSError` (`errno.ENOSPC`) | A storage quota is exhausted |
+| `BlockingIOError` | The node is locked |
+| `TimeoutError` | An HTTP request exceeded its timeout |
+| `ConnectionError` | The underlying connection failed |
+| `vosfs.VOSpaceError` | Every remaining OpenCADC, integrity, HTTP, and partial-completion failure |
+
+!!! info "`vosfs.VOSpaceError`"
+
+    A subclass of `OSError`. It carries the HTTP status, a symbolic fault code,
+    retry guidance, and — for partial failures — the completed and failed paths.
+
+!!! note "Redaction and retries"
+
+    Credentials and pre-authorized URL tokens are redacted from every exception
+    and log. `vosfs` never retries automatically; callers own higher-level retry
+    policy.
 
 ## Closing
 
