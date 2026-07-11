@@ -1,0 +1,148 @@
+"""Tests for the read contract (section 8)."""
+
+from pathlib import Path
+
+import pytest
+import respx
+from conftest import make_fs, mock_transfers
+
+
+async def test_get_file_streams_to_disk(router: respx.Router, tmp_path: Path) -> None:
+    mock_transfers(router, {"/data.bin": b"hello world"})
+    fs = make_fs(router, asynchronous=True)
+    local = tmp_path / "out.bin"
+    await fs._get_file("/data.bin", str(local))
+    assert local.read_bytes() == b"hello world"
+    await fs.aclose()
+
+
+async def test_get_file_empty_204(router: respx.Router, tmp_path: Path) -> None:
+    mock_transfers(router, {"/empty": b""})
+    fs = make_fs(router, asynchronous=True)
+    local = tmp_path / "empty"
+    await fs._get_file("/empty", str(local))
+    assert local.read_bytes() == b""
+    await fs.aclose()
+
+
+async def test_cat_file_whole(router: respx.Router) -> None:
+    mock_transfers(router, {"/f": b"abcdef"})
+    fs = make_fs(router, asynchronous=True)
+    assert await fs._cat_file("/f") == b"abcdef"
+    await fs.aclose()
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "expected"),
+    [
+        (0, 3, b"abc"),
+        (2, None, b"cdef"),
+        (None, 2, b"ab"),
+        (-2, None, b"ef"),
+        (3, 3, b""),
+        (0, 100, b"abcdef"),
+    ],
+)
+async def test_cat_file_slicing(
+    router: respx.Router, start: int | None, end: int | None, expected: bytes
+) -> None:
+    mock_transfers(router, {"/f": b"abcdef"})
+    fs = make_fs(router, asynchronous=True)
+    assert await fs._cat_file("/f", start, end) == expected
+    await fs.aclose()
+
+
+async def test_cat_ranges_one_get_per_object(router: respx.Router) -> None:
+    mock_transfers(router, {"/f": b"abcdefghij"})
+    fs = make_fs(router, asynchronous=True)
+    result = await fs._cat_ranges(["/f", "/f", "/f"], [0, 2, 5], [2, 4, 8])
+    assert result == [b"ab", b"cd", b"fgh"]
+    # Only one byte GET for the single object, despite three ranges.
+    byte_calls = [c for c in router.calls if "/files" in str(c.request.url)]
+    assert len(byte_calls) == 1
+    await fs.aclose()
+
+
+async def test_cat_ranges_groups_multiple_objects(router: respx.Router) -> None:
+    mock_transfers(router, {"/a": b"aaaa", "/b": b"bbbb"})
+    fs = make_fs(router, asynchronous=True)
+    result = await fs._cat_ranges(["/a", "/b", "/a"], [0, 1, 2], [2, 3, 4])
+    assert result == [b"aa", b"bb", b"aa"]
+    await fs.aclose()
+
+
+async def test_identity_encoding_header_sent(router: respx.Router) -> None:
+    mock_transfers(router, {"/f": b"x"})
+    fs = make_fs(router, asynchronous=True)
+    await fs._cat_file("/f")
+    byte_call = next(c for c in router.calls if "/files" in str(c.request.url))
+    assert byte_call.request.headers["Accept-Encoding"] == "identity"
+    await fs.aclose()
+
+
+def test_open_rb_is_seekable(router: respx.Router) -> None:
+    mock_transfers(router, {"/f": b"0123456789"})
+    fs = make_fs(router)
+    with fs.open("/f", "rb") as handle:
+        assert handle.read(3) == b"012"
+        assert handle.tell() == 3
+        handle.seek(5)
+        assert handle.read() == b"56789"
+        handle.seek(-2, 2)
+        assert handle.read() == b"89"
+        handle.seek(0)
+        buffer = bytearray(4)
+        assert handle.readinto(buffer) == 4
+        assert bytes(buffer) == b"0123"
+    fs.close()
+
+
+async def test_cat_file_missing_raises(router: respx.Router) -> None:
+    mock_transfers(router, {})
+    fs = make_fs(router, asynchronous=True)
+    with pytest.raises(FileNotFoundError):
+        await fs._cat_file("/missing")
+    await fs.aclose()
+
+
+async def test_cat_ranges_on_error_raise(router: respx.Router) -> None:
+    mock_transfers(router, {})
+    fs = make_fs(router, asynchronous=True)
+    with pytest.raises(FileNotFoundError):
+        await fs._cat_ranges(["/missing"], [0], [1], on_error="raise")
+    await fs.aclose()
+
+
+async def test_cat_ranges_on_error_return(router: respx.Router) -> None:
+    mock_transfers(router, {"/ok": b"hello"})
+    fs = make_fs(router, asynchronous=True)
+    result = await fs._cat_ranges(["/ok", "/missing"], [0, 0], [2, 1])
+    assert result[0] == b"he"
+    assert isinstance(result[1], FileNotFoundError)
+    await fs.aclose()
+
+
+def test_open_write_mode_not_supported_here(router: respx.Router) -> None:
+    mock_transfers(router, {})
+    fs = make_fs(router)
+    with pytest.raises(NotImplementedError):
+        fs._open("/f", "wb")
+    fs.close()
+
+
+def test_open_text_mode(router: respx.Router) -> None:
+    mock_transfers(router, {"/f": b"line1\nline2\n"})
+    fs = make_fs(router)
+    with fs.open("/f", "r") as handle:
+        assert handle.readline() == "line1\n"
+        assert list(handle) == ["line2\n"]
+    fs.close()
+
+
+def test_cat_head_tail(router: respx.Router) -> None:
+    mock_transfers(router, {"/f": b"abcdefghij"})
+    fs = make_fs(router)
+    assert fs.cat("/f") == b"abcdefghij"
+    assert fs.head("/f", 3) == b"abc"
+    assert fs.tail("/f", 2) == b"ij"
+    fs.close()

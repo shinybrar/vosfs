@@ -11,17 +11,21 @@ from __future__ import annotations
 import asyncio
 import datetime
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlsplit
 
 import httpx
 from fsspec.asyn import AsyncFileSystem, sync
+from fsspec.callbacks import DEFAULT_CALLBACK
 
-from vosfs import capabilities, config, errors, negotiate, nodes, paths
+from vosfs import capabilities, config, errors, negotiate, nodes, paths, staging
 from vosfs.transport import ClientPool, build_timeout
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
+
+    from fsspec.callbacks import Callback
 
     from vosfs.capabilities import ServiceBindings
     from vosfs.negotiate import NegotiatedEndpoint
@@ -33,7 +37,10 @@ _SECURITY_METHOD_BY_CREDENTIAL = {
     "certificate": capabilities.CERTIFICATE_METHOD,
 }
 _HTTP_OK = 200
+_HTTP_NO_CONTENT = 204
 _HTTP_SEE_OTHER = 303
+_IDENTITY_ENCODING = {"Accept-Encoding": "identity"}
+_READ_CHUNK = 1 << 20
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -354,6 +361,115 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = f"unexpected redirect from byte endpoint: {response.status_code}"
             raise errors.VOSpaceError(msg, status=response.status_code)
         return response
+
+    # -- reading bytes -------------------------------------------------------
+
+    async def _open_read_stream(self, path: str) -> httpx.Response:
+        """Negotiate a read and return the open, streaming byte response."""
+        endpoint = await self._negotiate(
+            path,
+            direction=negotiate.DIRECTION_PULL,
+            protocol_uri=negotiate.PROTOCOL_HTTPS_GET,
+        )
+        response = await self._byte_send(
+            endpoint, "GET", headers=_IDENTITY_ENCODING, stream=True
+        )
+        if response.status_code not in (_HTTP_OK, _HTTP_NO_CONTENT):
+            body = errors.bounded_text(await response.aread())
+            await response.aclose()
+            raise errors.http_exception(response.status_code, body=body, path=path)
+        return response
+
+    async def _read_whole(self, path: str) -> bytes:
+        """Download one whole object into memory (an empty 204 reads as ``b''``)."""
+        response = await self._open_read_stream(path)
+        try:
+            if response.status_code == _HTTP_NO_CONTENT:
+                return b""
+            return await response.aread()
+        finally:
+            await response.aclose()
+
+    async def _get_file(
+        self,
+        rpath: str,
+        lpath: str,
+        callback: Callback = DEFAULT_CALLBACK,
+        **_kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> None:
+        """Stream one negotiated whole-object GET to a local file."""
+        rpath = self._strip_protocol(rpath)
+        response = await self._open_read_stream(rpath)
+        try:
+            size = response.headers.get("content-length")
+            callback.set_size(int(size) if size is not None else None)
+            with Path(lpath).open("wb") as local:  # noqa: ASYNC230 - staging to local disk
+                if response.status_code == _HTTP_NO_CONTENT:
+                    return
+                async for chunk in response.aiter_raw(_READ_CHUNK):
+                    local.write(chunk)
+                    callback.relative_update(len(chunk))
+        finally:
+            await response.aclose()
+
+    async def _cat_file(
+        self,
+        path: str,
+        start: int | None = None,
+        end: int | None = None,
+        **_kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> bytes:
+        """Return one whole-object read sliced with Python half-open semantics."""
+        data = await self._read_whole(self._strip_protocol(path))
+        return data[start:end]
+
+    async def _cat_ranges(  # noqa: PLR0913 - fsspec hook signature
+        self,
+        paths: list[str],
+        starts: Sequence[int | None],
+        ends: Sequence[int | None],
+        max_gap: int | None = None,  # noqa: ARG002 - accepted for fsspec compatibility
+        batch_size: int | None = None,  # noqa: ARG002 - accepted for fsspec compatibility
+        on_error: str = "return",
+        **_kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> list[bytes | BaseException]:
+        """Return each range with at most one whole GET per object per call."""
+        stripped = [self._strip_protocol(path) for path in paths]
+        cache: dict[str, bytes | BaseException] = {}
+        for path in dict.fromkeys(stripped):
+            try:
+                cache[path] = await self._read_whole(path)
+            except Exception as exc:  # noqa: PERF203 - per-object on_error handling
+                if on_error == "raise":
+                    raise
+                cache[path] = exc
+        results: list[bytes | BaseException] = []
+        for path, start, end in zip(stripped, starts, ends, strict=True):
+            whole = cache[path]
+            results.append(whole[start:end] if isinstance(whole, bytes) else whole)
+        return results
+
+    def _open(
+        self,
+        path: str,
+        mode: str = "rb",
+        block_size: int | None = None,  # noqa: ARG002 - accepted, non-behavioural
+        autocommit: bool = True,  # noqa: ARG002, FBT001, FBT002 - fsspec hook signature
+        cache_options: Any = None,  # noqa: ANN401, ARG002 - accepted, non-behavioural
+        **_kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> staging.StagedReadFile:
+        """Open ``path`` for reading, disk-staging the whole object first.
+
+        Only binary read mode reaches here directly; fsspec wraps text mode over
+        this staged binary file. Write and append modes are handled elsewhere.
+        """
+        if "r" not in mode:
+            msg = f"unsupported open mode for reading: {mode!r}"
+            raise NotImplementedError(msg)
+        path = self._strip_protocol(path)
+        temp_path = staging.new_temp_path()
+        self.get_file(path, temp_path)
+        return staging.StagedReadFile(temp_path)
 
     async def aclose(self) -> None:
         """Close every realized HTTP client and evict the instance (idempotent).
