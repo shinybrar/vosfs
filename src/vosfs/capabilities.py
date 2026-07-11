@@ -144,11 +144,19 @@ def _accepts(interface: ET.Element, security_method: str) -> bool:
 
 
 def _access_url(interface: ET.Element, *, use: str) -> str | None:
+    """Return the access URL matching ``use``, or an unqualified one.
+
+    An ``accessURL`` whose ``use`` differs (for example a ``full`` URL when a
+    ``base`` URL is required, or the reverse) is never returned: the two are not
+    interchangeable — a ``base`` URL is meant to have a node path appended, a
+    ``full`` URL is used verbatim. Only an ``accessURL`` that omits ``use``
+    entirely is accepted as a fallback.
+    """
     urls = [element for element in interface if local_name(element.tag) == "accessURL"]
     for element in urls:
         if element.get("use") == use and element.text:
             return element.text.strip()
     for element in urls:
-        if element.text:
+        if element.get("use") is None and element.text:
             return element.text.strip()
     return None

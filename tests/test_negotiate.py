@@ -18,8 +18,6 @@ from vosfs.negotiate import (
     DIRECTION_PULL,
     PROTOCOL_HTTPS_GET,
     NegotiatedEndpoint,
-    Protocol,
-    build_target_uri,
     choose_protocol,
     parse_transfer_details,
     validate_redirect,
@@ -52,13 +50,9 @@ def _details(endpoint: str, *, security_method: str | None = None) -> bytes:
 # --- pure helpers ---------------------------------------------------------------
 
 
-def test_build_target_uri() -> None:
-    assert build_target_uri("x!vault", "/a/b") == "vos://x!vault/a/b"
-
-
 def test_parse_transfer_details_anonymous() -> None:
-    protocols = parse_transfer_details(_details("https://h.test/files/x"))
-    assert protocols == [Protocol("https://h.test/files/x", ANONYMOUS_METHOD)]
+    endpoints = parse_transfer_details(_details("https://h.test/files/x"))
+    assert endpoints == [NegotiatedEndpoint("https://h.test/files/x", ANONYMOUS_METHOD)]
 
 
 def test_parse_transfer_details_with_security_method() -> None:
@@ -75,17 +69,17 @@ def test_parse_transfer_details_without_endpoint_raises() -> None:
 
 
 def test_choose_protocol_prefers_compatible() -> None:
-    protocols = [
-        Protocol("https://h/cert", CERTIFICATE_METHOD),
-        Protocol("https://h/anon", ANONYMOUS_METHOD),
+    endpoints = [
+        NegotiatedEndpoint("https://h/cert", CERTIFICATE_METHOD),
+        NegotiatedEndpoint("https://h/anon", ANONYMOUS_METHOD),
     ]
-    assert choose_protocol(protocols, TOKEN_METHOD).endpoint == "https://h/anon"
+    assert choose_protocol(endpoints, TOKEN_METHOD).url == "https://h/anon"
 
 
 def test_choose_protocol_no_match_raises() -> None:
-    protocols = [Protocol("https://h/cert", CERTIFICATE_METHOD)]
+    endpoints = [NegotiatedEndpoint("https://h/cert", CERTIFICATE_METHOD)]
     with pytest.raises(OSError, match="no negotiated endpoint"):
-        choose_protocol(protocols, TOKEN_METHOD)
+        choose_protocol(endpoints, TOKEN_METHOD)
 
 
 @pytest.mark.parametrize(

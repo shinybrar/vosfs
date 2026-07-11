@@ -210,3 +210,12 @@ def test_append_mode_unsupported(router: respx.Router) -> None:
     with pytest.raises(NotImplementedError):
         fs.open("/f", "ab")
     fs.close()
+
+
+def test_open_write_autocommit_false_is_unsupported(router: respx.Router) -> None:
+    files: dict[str, bytes] = {}
+    mock_transfers(router, files)
+    fs = make_fs(router)
+    with pytest.raises(NotImplementedError, match="autocommit"):
+        fs.open("/x.txt", "wb", autocommit=False)
+    fs.close()

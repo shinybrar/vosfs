@@ -81,18 +81,6 @@ def test_parent(normalized: str, expected: str) -> None:
     assert paths.parent(normalized) == expected
 
 
-@pytest.mark.parametrize(
-    ("normalized", "expected"),
-    [
-        ("/a/b/c", "c"),
-        ("/a", "a"),
-        ("/", ""),
-    ],
-)
-def test_name(normalized: str, expected: str) -> None:
-    assert paths.name(normalized) == expected
-
-
 def test_segments() -> None:
     assert paths.segments("/a/b/c") == ["a", "b", "c"]
     assert paths.segments("/") == []
@@ -110,7 +98,6 @@ def test_helpers_do_not_decode_literal_percent() -> None:
     # original object rather than a second-decoded one.
     once = paths.strip_protocol("vos://dir/100%2541")
     assert once == "/dir/100%41"
-    assert paths.name(once) == "100%41"
     assert paths.parent(once) == "/dir"
     assert paths.encode_url_path(once) == "/dir/100%2541"
 

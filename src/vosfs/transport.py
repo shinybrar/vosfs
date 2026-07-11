@@ -75,6 +75,12 @@ class ClientPool:
             msg = "I/O operation on closed filesystem"
             raise ValueError(msg)
 
+    def _get_lock(self) -> asyncio.Lock:
+        """Return the pool lock, creating it lazily on first contention."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
     async def client(self, *, use_cert: bool = False) -> httpx.AsyncClient:
         """Return the pooled client for the requested TLS configuration.
 
@@ -89,9 +95,11 @@ class ClientPool:
         key = _CERT if use_cert else _PLAIN
         if key in self._clients:
             return self._clients[key]
-        if self._lock is None:
-            self._lock = asyncio.Lock()
-        async with self._lock:
+        async with self._get_lock():
+            # Re-check under the lock: a concurrent ``aclose`` may have run
+            # between the fast-path check and lock acquisition, so a client must
+            # never be built (and leaked) into an already-closed pool.
+            self._ensure_open()
             if key not in self._clients:
                 self._clients[key] = self._build(key)
             return self._clients[key]
@@ -152,10 +160,16 @@ class ClientPool:
         return response
 
     async def aclose(self) -> None:
-        """Close every realized client and mark the pool closed (idempotent)."""
-        self._closed = True
-        clients = list(self._clients.values())
-        self._clients.clear()
+        """Close every realized client and mark the pool closed (idempotent).
+
+        The closed flag is set and the client map is drained under the same lock
+        that guards lazy client creation, so a waiter cannot build and store an
+        open client after the pool has been closed.
+        """
+        async with self._get_lock():
+            self._closed = True
+            clients = list(self._clients.values())
+            self._clients.clear()
         for client in clients:
             await client.aclose()
 

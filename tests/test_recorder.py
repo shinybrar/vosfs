@@ -41,3 +41,10 @@ def test_recorder_records_sanitized_interaction() -> None:
     assert interaction.request_headers["Authorization"] == "<redacted>"
     assert interaction.response_headers["Set-Cookie"] == "<redacted>"
     assert "deadbeef" not in interaction.url
+
+
+def test_sanitize_url_redacts_preauth_path_token() -> None:
+    url = "https://ws/minoc/files/preauth:SEKRET_TOKEN_123/cadc:T/f.fits"
+    out = sanitize_url(url)
+    assert "SEKRET_TOKEN_123" not in out
+    assert "preauth:<redacted>" in out

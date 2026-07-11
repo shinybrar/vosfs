@@ -173,3 +173,39 @@ def test_cat_head_tail(router: respx.Router) -> None:
     assert fs.head("/f", 3) == b"abc"
     assert fs.tail("/f", 2) == b"ij"
     fs.close()
+
+
+def test_negotiation_uses_direct_byte_endpoint(router: respx.Router) -> None:
+    # A 303 whose Location is a direct pre-authorized endpoint (non-XML body) is
+    # used verbatim, and the real byte read carries no bearer even though a token
+    # is configured.
+    import re
+
+    from conftest import (
+        NODES_URL,
+        ROOT_CONTAINER,
+        SYNC_URL,
+        mock_capabilities,
+    )
+
+    mock_capabilities(router)
+    router.get(NODES_URL).mock(return_value=httpx.Response(200, content=ROOT_CONTAINER))
+    endpoint = f"{BASE_URL}/files/preauth:TESTTOKEN/d.bin"
+    router.post(SYNC_URL).mock(
+        return_value=httpx.Response(303, headers={"Location": endpoint})
+    )
+
+    async def _stream():
+        yield b"payload"
+
+    seen: dict[str, str | None] = {}
+
+    def byte_op(request: httpx.Request) -> httpx.Response:
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, content=_stream())
+
+    router.route(url__regex=rf"^{re.escape(BASE_URL)}/files").mock(side_effect=byte_op)
+    fs = make_fs(router, token="secret")
+    assert fs.cat_file("/d.bin") == b"payload"
+    assert seen["auth"] is None  # the real read never carries the bearer
+    fs.close()

@@ -108,13 +108,6 @@ def parent(path: str) -> str:
     return head or "/"
 
 
-def name(path: str) -> str:
-    """Return the final segment of an already-normalized path (``""`` for root)."""
-    if path == "/":
-        return ""
-    return path.rsplit("/", 1)[1]
-
-
 def segments(path: str) -> list[str]:
     """Return the segments of an already-normalized path (no further decoding)."""
     return [segment for segment in path.split("/") if segment]

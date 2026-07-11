@@ -27,6 +27,10 @@ _SECRET_HEADERS = frozenset(
 _SECRET_QUERY_KEYS = re.compile(
     r"(?i)(token|signature|sig|access_token|x-amz-signature|x-amz-credential)",
 )
+# OpenCADC pre-authorized URLs carry the token as a ``preauth:<token>`` path
+# segment (e.g. ``/files/preauth:<token>/cadc:PATH/file``), never as a query
+# parameter, so the path itself must be sanitized.
+_SECRET_PATH_TOKEN = re.compile(r"(?i)(preauth:)[^/]+")
 
 
 @dataclass
@@ -79,15 +83,16 @@ def sanitize_headers(headers: Mapping[str, str]) -> dict[str, str]:
 
 
 def sanitize_url(url: str) -> str:
-    """Redact userinfo and pre-authorized token query parameters from a URL."""
+    """Redact userinfo, pre-authorized path tokens, and secret query params."""
     parts = urlsplit(url)
     netloc = parts.hostname or ""
     if parts.port:
         netloc = f"{netloc}:{parts.port}"
+    path = _SECRET_PATH_TOKEN.sub(rf"\1{_REDACTED}", parts.path)
     query = urlencode(
         [
             (key, _REDACTED if _SECRET_QUERY_KEYS.search(key) else value)
             for key, value in parse_qsl(parts.query, keep_blank_values=True)
         ],
     )
-    return urlunsplit((parts.scheme, netloc, parts.path, query, ""))
+    return urlunsplit((parts.scheme, netloc, path, query, ""))

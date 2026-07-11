@@ -191,3 +191,20 @@ async def test_discovery_maps_transport_error(router: respx.Router) -> None:
     with pytest.raises(ConnectionError):
         await fs._get_bindings()
     await fs.aclose()
+
+
+def test_binding_rejects_mismatched_access_url_use() -> None:
+    doc = f"""<?xml version="1.0"?>
+<vosi:capabilities xmlns:vosi="http://www.ivoa.net/xml/VOSICapabilities/v1.0"
+                   xmlns:vs="http://www.ivoa.net/xml/VODataService/v1.1"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <capability standardID="{capabilities.NODES_STANDARD_ID}">
+    <interface xsi:type="vs:ParamHTTP" role="std">
+      <accessURL use="full">https://h/nodes</accessURL>
+    </interface>
+  </capability>
+</vosi:capabilities>""".encode()
+    bindings = parse_bindings(doc, security_method=capabilities.ANONYMOUS_METHOD)
+    assert bindings.nodes_url is None
+    with pytest.raises(NotImplementedError):
+        bindings.require_nodes()

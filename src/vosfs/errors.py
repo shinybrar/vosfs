@@ -58,6 +58,11 @@ _OPAQUE_SEGMENT_RE = re.compile(
     r"(?i)(/(?:preauth|authorization|credential|token|signature|auth|sig|cred)/)"
     r"[A-Za-z0-9._~=+-]{20,}",
 )
+# OpenCADC embeds a pre-authorized token as a colon-delimited path *segment*,
+# e.g. ``/files/preauth:<token>/cadc:PATH/file``. The slash-delimited pattern
+# above cannot see it, so redact the token that follows a ``preauth:`` marker up
+# to the next path separator or query/fragment boundary.
+_PREAUTH_TOKEN_RE = re.compile(r"(?i)(preauth:)[^/\s?#&]+")
 
 _REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (_COOKIE_RE, rf"\1{_REDACTED}"),
@@ -65,6 +70,7 @@ _REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (_BEARER_RE, rf"\1{_REDACTED}"),
     (_URL_SECRET_RE, rf"\1{_REDACTED}"),
     (_OPAQUE_SEGMENT_RE, rf"\1{_REDACTED}"),
+    (_PREAUTH_TOKEN_RE, rf"\1{_REDACTED}"),
 )
 
 
@@ -150,6 +156,51 @@ def _is_quota_fault(fault: str | None) -> bool:
     return fault is not None and "quota" in fault.lower()
 
 
+# Symbolic VOSpace/OpenCADC fault names recognised in a response body. The set
+# is intentionally small and best-effort: it drives the quota-to-ENOSPC mapping
+# and enriches diagnostics, never control flow beyond the documented taxonomy.
+_KNOWN_FAULTS: tuple[str, ...] = (
+    "QuotaExceeded",
+    "NodeLocked",
+    "PermissionDenied",
+    "ContainerNotFound",
+    "NodeNotFound",
+    "DuplicateNode",
+    "InvalidArgument",
+    "InvalidURI",
+    "ServiceBusy",
+)
+
+
+def extract_fault(body: str) -> str | None:
+    """Return a recognised symbolic fault named in ``body``, else ``None``.
+
+    OpenCADC reports faults as free text; this scans a bounded, already-decoded
+    body for a known fault token, case-insensitively. The match is conservative
+    so an ordinary message never fabricates a fault.
+    """
+    lowered = body.lower()
+    for fault in _KNOWN_FAULTS:
+        if fault.lower() in lowered:
+            return fault
+    return None
+
+
+def parse_retry_after(value: str | None) -> float | None:
+    """Return the ``Retry-After`` delay in seconds, or ``None`` when unusable.
+
+    Only the delta-seconds form is honoured; an HTTP-date form (or any
+    non-numeric or negative value) returns ``None``.
+    """
+    if value is None:
+        return None
+    try:
+        seconds = float(value.strip())
+    except ValueError:
+        return None
+    return seconds if seconds >= 0 else None
+
+
 def bounded_text(data: bytes, limit: int = MAX_ERROR_BODY) -> str:
     """Decode at most ``limit`` bytes of ``data`` as UTF-8.
 
@@ -171,9 +222,11 @@ def redact(text: str) -> str:
     The following secrets are replaced with ``<redacted>``: ``Authorization``
     header values and bare ``Bearer`` tokens, ``Cookie`` and ``Set-Cookie``
     header values, pre-authorized query parameters (``token``, ``signature``,
-    ``sig``, ``access_token``, ``X-Amz-Signature``, ``X-Amz-Credential``), and
-    long opaque URL path segments that follow a pre-authorization marker. The
-    match is conservative: text without a secret pattern is returned unchanged.
+    ``sig``, ``access_token``, ``X-Amz-Signature``, ``X-Amz-Credential``), long
+    opaque URL path segments that follow a slash-delimited pre-authorization
+    marker, and the colon-delimited ``preauth:<token>`` segment OpenCADC embeds
+    in its pre-authorized ``/files/`` URLs. The match is conservative: text
+    without a secret pattern is returned unchanged.
 
     Args:
         text: The text that may contain secret material.

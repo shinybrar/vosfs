@@ -150,28 +150,6 @@ def parse_node(data: bytes, *, limit: int = DEFAULT_LIMIT) -> Node:
     return _node_from_element(root)
 
 
-def parse_listing(data: bytes, *, limit: int = DEFAULT_LIMIT) -> list[Node]:
-    """Parse the immediate ``<nodes>`` children of a container document.
-
-    Listings are unpaged and only the direct children are returned; nested
-    container contents are not traversed.
-
-    Args:
-        data: The raw XML response body of a container node.
-        limit: Maximum accepted body size in bytes, enforced before parsing.
-
-    Returns:
-        The immediate child nodes, or an empty list when the container has no
-        ``<nodes>`` element.
-
-    Raises:
-        ValueError: If the body exceeds ``limit``, is malformed, uses a DTD or
-            external entity, or contains a child with an unknown node type.
-    """
-    root = safe_parse(data, limit=limit)
-    return _children_of(root)
-
-
 def parse_container(
     data: bytes, *, limit: int = DEFAULT_LIMIT
 ) -> tuple[Node, list[Node]]:

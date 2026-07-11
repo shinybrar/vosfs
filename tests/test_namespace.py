@@ -195,3 +195,11 @@ def test_recursive_copy_preserves_empty_container(router: respx.Router) -> None:
     assert sim.blobs["/to/a"] == b"a"
     assert sim.nodes["/to/empty"] == "container"
     fs.close()
+
+
+async def test_rm_file_refuses_a_container(router: respx.Router) -> None:
+    sim = VOSpaceSim().add_container("/dir")
+    fs = _fs(router, sim)
+    with pytest.raises(IsADirectoryError):
+        await fs._rm_file("/dir")
+    await fs.aclose()

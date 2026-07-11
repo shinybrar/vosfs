@@ -28,28 +28,15 @@ PROTOCOL_HTTPS_PUT = "ivo://ivoa.net/vospace/core#httpsput"
 
 
 @dataclass(frozen=True)
-class Protocol:
-    """One negotiated transfer protocol: a byte endpoint and its security method."""
-
-    endpoint: str
-    security_method: str
-
-
-@dataclass(frozen=True)
 class NegotiatedEndpoint:
-    """The chosen byte endpoint and the security method that routes credentials."""
+    """A negotiated byte endpoint and the security method that routes credentials."""
 
     url: str
     security_method: str
 
 
-def build_target_uri(authority: str, path: str) -> str:
-    """Return the authority-qualified transfer target ``vos://authority/path``."""
-    return f"vos://{authority}{path}"
-
-
-def parse_transfer_details(data: bytes) -> list[Protocol]:
-    """Parse the negotiated protocols from a transfer-details document.
+def parse_transfer_details(data: bytes) -> list[NegotiatedEndpoint]:
+    """Parse the negotiated endpoints from a transfer-details document.
 
     A protocol without a ``securityMethod`` is treated as a pre-authorized,
     anonymous endpoint.
@@ -59,30 +46,32 @@ def parse_transfer_details(data: bytes) -> list[Protocol]:
         VOSpaceError: If it advertises no usable protocol endpoint.
     """
     root = safe_parse(data)
-    protocols = [
-        Protocol(endpoint=endpoint, security_method=_security_method_of(element))
+    endpoints = [
+        NegotiatedEndpoint(url=endpoint, security_method=_security_method_of(element))
         for element in root.iter()
         if local_name(element.tag) == "protocol"
         and (endpoint := _endpoint_of(element)) is not None
     ]
-    if not protocols:
+    if not endpoints:
         msg = "the transfer negotiation returned no usable protocol endpoint"
         raise VOSpaceError(msg)
-    return protocols
+    return endpoints
 
 
-def choose_protocol(protocols: list[Protocol], credential_method: str) -> Protocol:
-    """Return the first protocol compatible with the configured credential.
+def choose_protocol(
+    endpoints: list[NegotiatedEndpoint], credential_method: str
+) -> NegotiatedEndpoint:
+    """Return the first endpoint compatible with the configured credential.
 
     A pre-authorized (anonymous) endpoint is always usable; otherwise the
-    protocol's security method must equal the credential's method.
+    endpoint's security method must equal the credential's method.
 
     Raises:
         VOSpaceError: If no returned endpoint matches the credential source.
     """
-    for protocol in protocols:
-        if protocol.security_method in (ANONYMOUS_METHOD, credential_method):
-            return protocol
+    for endpoint in endpoints:
+        if endpoint.security_method in (ANONYMOUS_METHOD, credential_method):
+            return endpoint
     msg = "no negotiated endpoint matches the configured credential source"
     raise VOSpaceError(msg)
 

@@ -203,7 +203,15 @@ class VOSpaceFileSystem(AsyncFileSystem):
         """Raise the mapped exception when a response status is not allowed."""
         if response.status_code not in allowed:
             body = errors.bounded_text(response.content)
-            raise errors.http_exception(response.status_code, body=body, path=path)
+            raise errors.http_exception(
+                response.status_code,
+                body=body,
+                fault=errors.extract_fault(body),
+                path=path,
+                retry_after=errors.parse_retry_after(
+                    response.headers.get("retry-after")
+                ),
+            )
 
     # -- node metadata and listing -------------------------------------------
 
@@ -302,13 +310,16 @@ class VOSpaceFileSystem(AsyncFileSystem):
 
         Builds a VOSpace 2.1 transfer document with one authority-qualified
         target, POSTs it to the discovered sync binding with redirects disabled,
-        follows the single 303 to the transfer details, and chooses a protocol
-        whose security method is compatible with the configured credential.
+        and follows the single 303. Per the contract the ``Location`` may be
+        either a transfer-details document or a direct byte endpoint: an XML body
+        is parsed for a credential-compatible protocol, while a non-XML body
+        means the ``Location`` is itself a pre-authorized endpoint, routed
+        anonymously so no caller credential is ever sent to it.
         """
         bindings = await self._get_bindings()
         sync_url = bindings.require_sync()
         authority = await self._require_authority()
-        target = negotiate.build_target_uri(authority, path)
+        target = f"vos://{authority}{path}"
         document = nodes.build_transfer_document(
             target, direction=direction, protocols=[protocol_uri]
         )
@@ -325,11 +336,14 @@ class VOSpaceFileSystem(AsyncFileSystem):
             "GET", location, headers=nodes.XML_HEADERS
         )
         self._raise_for_status(details, path=path, allowed=(_HTTP_OK,))
-        protocol = negotiate.choose_protocol(
+        if details.content.lstrip()[:1] != b"<":
+            # A non-XML body means the 303 pointed straight at a pre-authorized
+            # byte endpoint; use it verbatim, credential-free.
+            return negotiate.NegotiatedEndpoint(location, capabilities.ANONYMOUS_METHOD)
+        return negotiate.choose_protocol(
             negotiate.parse_transfer_details(details.content),
             self._security_method(),
         )
-        return negotiate.NegotiatedEndpoint(protocol.endpoint, protocol.security_method)
 
     def _byte_routing(
         self, endpoint: NegotiatedEndpoint
@@ -402,8 +416,15 @@ class VOSpaceFileSystem(AsyncFileSystem):
         )
         if response.status_code not in (_HTTP_OK, _HTTP_NO_CONTENT):
             body = errors.bounded_text(await response.aread())
+            retry_after = errors.parse_retry_after(response.headers.get("retry-after"))
             await response.aclose()
-            raise errors.http_exception(response.status_code, body=body, path=path)
+            raise errors.http_exception(
+                response.status_code,
+                body=body,
+                fault=errors.extract_fault(body),
+                path=path,
+                retry_after=retry_after,
+            )
         return response
 
     async def _read_whole(self, path: str) -> bytes:
@@ -492,19 +513,25 @@ class VOSpaceFileSystem(AsyncFileSystem):
         path: str,
         mode: str = "rb",
         block_size: int | None = None,  # noqa: ARG002 - accepted, non-behavioural
-        autocommit: bool = True,  # noqa: ARG002, FBT001, FBT002 - fsspec hook signature
+        autocommit: bool = True,  # noqa: FBT001, FBT002 - fsspec hook signature
         cache_options: Any = None,  # noqa: ANN401, ARG002 - accepted, non-behavioural
         **_kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> staging.StagedReadFile | staging.StagedWriteFile:
         """Open ``path``, disk-staging the whole object for read or write.
 
         Only binary modes reach here directly; fsspec wraps text mode over the
-        staged binary file. Append and update (``+``) modes are unsupported.
+        staged binary file. Append and update (``+``) modes are unsupported, and
+        a staged write always uploads on close: deferred commit
+        (``autocommit=False``) is unsupported because this profile has no
+        stage-then-commit primitive.
         """
         if "a" in mode or "+" in mode:
             msg = f"append and update modes are unsupported: {mode!r}"
             raise NotImplementedError(msg)
         path = self._strip_protocol(path)
+        if not autocommit and ("w" in mode or "x" in mode):
+            msg = "deferred commit (autocommit=False) is unsupported"
+            raise NotImplementedError(msg)
         if "r" in mode:
             temp_path = staging.new_temp_path()
             self.get_file(path, temp_path)
@@ -679,8 +706,17 @@ class VOSpaceFileSystem(AsyncFileSystem):
                 raise
 
     async def _rm_file(self, path: str, **_kwargs: Any) -> None:  # noqa: ANN401 - fsspec hook signature
-        """Delete one non-container node."""
-        await self._delete_node(self._strip_protocol(path))
+        """Delete one non-container node, refusing a container target.
+
+        ``rm_file`` is the file-only primitive; deleting a directory must go
+        through ``rm``/``rmdir`` so the empty-check or leaves-first contract is
+        honoured. Guarding here stops a stray ``rm_file`` on a container from
+        issuing a recursive server-side ``DELETE``.
+        """
+        path = self._strip_protocol(path)
+        if (await self._info(path))["type"] == "directory":
+            raise IsADirectoryError(errno.EISDIR, "path is a container", path)
+        await self._delete_node(path)
 
     async def _rmdir(self, path: str) -> None:
         """Delete an empty container after proving it empty (non-atomic)."""
@@ -734,20 +770,26 @@ class VOSpaceFileSystem(AsyncFileSystem):
         """
         path1 = self._strip_protocol(path1)
         path2 = self._strip_protocol(path2)
-        if (await self._info(path1))["type"] == "directory":
-            await self._ensure_container(path2)
-            return
+        # Materialize the destination's parent first, for both a directory and a
+        # file target, so copying into a not-yet-created subtree (for example a
+        # recursive glob into ``target/newdir``) never orphans an intermediate
+        # ContainerNode.
         parent = paths.parent(path2)
         if parent not in ("/", path2) and not await self._exists(parent):
             await self._makedirs(parent, exist_ok=True)
-        data = await self._read_whole(path1)
-        await self._write(
-            path2,
-            data,
-            size=len(data),
-            content_type=None,
-            expected_digest=hashlib.md5(data).digest(),  # noqa: S324 - integrity, not security
-        )
+        if (await self._info(path1))["type"] == "directory":
+            await self._ensure_container(path2)
+            return
+        # Relay through a disk-staged temporary file so an arbitrarily large
+        # object is never held whole in memory; the staged PUT still validates
+        # the round-trip md5.
+        temp_path = staging.new_temp_path()
+        try:
+            await self._get_file(path1, temp_path)
+            await self._put_file(temp_path, path2, mode="overwrite")
+        finally:
+            with contextlib.suppress(OSError):
+                Path(temp_path).unlink()  # noqa: ASYNC240 - local-disk cleanup, not remote I/O
 
     def mv(
         self,

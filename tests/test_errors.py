@@ -273,3 +273,43 @@ def test_redact_masks_aws_security_token() -> None:
     assert "FwoGSESSIONSECRET123" not in redacted
     assert "AKIA" not in redacted
     assert "deadbeef" not in redacted
+
+
+# --- review-fix regressions: preauth redaction, Retry-After, symbolic fault ----
+
+
+def test_redact_masks_preauth_colon_path_token() -> None:
+    url = "https://ws/minoc/files/preauth:AbC123secretToken456/cadc:TEST/f.fits"
+    out = errors.redact(url)
+    assert "AbC123secretToken456" not in out
+    assert "preauth:<redacted>" in out
+
+
+def test_parse_retry_after_reads_delta_seconds() -> None:
+    assert errors.parse_retry_after("12") == 12.0
+    assert errors.parse_retry_after("  30 ") == 30.0
+
+
+def test_parse_retry_after_ignores_dates_negatives_and_none() -> None:
+    assert errors.parse_retry_after("Wed, 21 Oct 2099 07:28:00 GMT") is None
+    assert errors.parse_retry_after("-5") is None
+    assert errors.parse_retry_after(None) is None
+
+
+def test_extract_fault_matches_known_tokens_only() -> None:
+    assert errors.extract_fault("the QuotaExceeded ceiling was hit") == "QuotaExceeded"
+    assert errors.extract_fault("NodeLocked by another writer") == "NodeLocked"
+    assert errors.extract_fault("an ordinary message") is None
+
+
+def test_http_exception_quota_fault_maps_to_enospc() -> None:
+    exc = errors.http_exception(400, body="QuotaExceeded", fault="QuotaExceeded")
+    assert isinstance(exc, OSError)
+    assert exc.errno == errno.ENOSPC
+
+
+def test_http_exception_carries_retry_after_and_fault() -> None:
+    exc = errors.http_exception(503, fault="ServiceBusy", retry_after=30.0)
+    assert isinstance(exc, errors.VOSpaceError)
+    assert exc.retry_after == 30.0
+    assert exc.fault == "ServiceBusy"

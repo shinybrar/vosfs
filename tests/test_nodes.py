@@ -24,7 +24,7 @@ from vosfs.nodes import (
     build_container_document,
     build_property_update,
     build_transfer_document,
-    parse_listing,
+    parse_container,
     parse_node,
     to_info,
 )
@@ -239,30 +239,33 @@ def test_link_node_missing_target_is_rejected() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# parse_listing
+# parse_container
 # --------------------------------------------------------------------------- #
 
 
-def test_parse_listing_returns_immediate_children() -> None:
-    children = parse_listing(read_fixture("container_listing.xml"))
+def test_parse_container_returns_node_and_immediate_children() -> None:
+    node, children = parse_container(read_fixture("container_listing.xml"))
+    assert node.node_type == "container"
     kinds = [child.node_type for child in children]
     assert kinds == ["data", "data", "data", "container", "link"]
     assert children[0].size == 10485760
     assert children[-1].target == "vos://cadc.nrc.ca!vault/user/report.fits"
 
 
-def test_parse_listing_without_nodes_element_is_empty() -> None:
+def test_parse_container_without_nodes_element_is_empty() -> None:
     document = (
         f'<vos:node xmlns:vos="{VOSPACE_NS}" '
         'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
         'xsi:type="vos:DataNode" uri="vos://x/f"/>'
     ).encode()
-    assert parse_listing(document) == []
+    node, children = parse_container(document)
+    assert node.node_type == "data"
+    assert children == []
 
 
-def test_parse_listing_is_bounded() -> None:
+def test_parse_container_is_bounded() -> None:
     with pytest.raises(ValueError, match="limit"):
-        parse_listing(b"<vos:node/>" * 10, limit=8)
+        parse_container(b"<vos:node/>" * 10, limit=8)
 
 
 # --------------------------------------------------------------------------- #

@@ -156,3 +156,22 @@ def test_json_round_trip(router: respx.Router) -> None:
     assert "transport" not in blob
     restored = VOSpaceFileSystem.from_json(blob)
     assert restored.endpoint_url == fs.endpoint_url
+
+
+# --- review-fix regression: close/build must be serialized ----------------------
+
+
+async def test_client_after_close_raises(router: respx.Router) -> None:
+    pool = _pool(injected_transport=httpx.MockTransport(router.async_handler))
+    await pool.aclose()
+    with pytest.raises(ValueError, match="closed"):
+        await pool.client()
+
+
+async def test_build_and_close_race_leaves_no_open_client(router: respx.Router) -> None:
+    import asyncio
+
+    pool = _pool(injected_transport=httpx.MockTransport(router.async_handler))
+    await asyncio.gather(pool.client(), pool.aclose(), return_exceptions=True)
+    assert pool.closed is True
+    assert pool._clients == {}

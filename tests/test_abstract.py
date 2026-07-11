@@ -11,13 +11,11 @@ is overridden with an explicit ``skip`` whose reason maps to the unsupported
 capability, so the green run doubles as a capability matrix. The skips fall into
 a small set of root causes:
 
-* ``_WRITE_PARENT`` -- a byte write (``pipe_file``/``put_file``/``cp_file``)
-  materializes only the target data node; it never creates a missing parent
-  ``ContainerNode``. Files written below a not-yet-created directory are
-  orphaned: unreachable by ``ls``/``find`` and the parent is not an ``isdir``.
-* ``_COPY_TREE`` -- remote-to-remote recursive copy relays each data node's
-  bytes but never materializes intermediate ``ContainerNode``s (the per-file
-  copy hook cannot create directories), so copied directory trees are unreachable.
+* ``_WRITE_PARENT`` -- a byte write (``pipe_file``/``put_file``) materializes
+  only the target data node; it never creates a missing parent ``ContainerNode``.
+  Files written below a not-yet-created directory are orphaned: unreachable by
+  ``ls``/``find`` and the parent is not an ``isdir``. (``cp_file`` does create
+  the destination parent, so copy trees are supported.)
 * ``_GET_TREE`` -- recursive download invokes the per-file byte hook on directory
   entries, but a ``ContainerNode`` has no negotiable byte endpoint (HTTP 404).
 * ``_QUESTION_MARK`` -- path normalization treats ``?`` as a URL query delimiter,
@@ -56,11 +54,6 @@ _WRITE_PARENT = (
     f"unsupported in {_VERSION}: a byte write materializes only the target data "
     "node and never creates a missing parent ContainerNode, so a file written "
     "below a not-yet-created directory is orphaned (no isdir, absent from ls/find)"
-)
-_COPY_TREE = (
-    f"unsupported in {_VERSION}: remote-to-remote recursive copy relays data-node "
-    "bytes but does not materialize intermediate ContainerNodes (the per-file copy "
-    "hook cannot create directories), so a copied directory tree is unreachable"
 )
 _GET_TREE = (
     f"unsupported in {_VERSION}: recursive download invokes the per-file byte hook "
@@ -138,9 +131,9 @@ def _glob_params(reason_for: Callable[..., str | None]) -> list:
 def _copy_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noqa: ARG001
     if "?" in path:
         return _QUESTION_MARK
-    # Every row that actually copies something needs directories it cannot make;
-    # only the empty-result rows (which copy nothing) can pass.
-    return _COPY_TREE if expected else None
+    # Recursive copy now materializes intermediate ContainerNodes, so only the
+    # '?'-glob rows (unresolvable path normalization) remain unsupported.
+    return None
 
 
 def _get_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noqa: ARG001
@@ -189,32 +182,9 @@ class VOSpaceFixtures(AbstractFixtures):
 class TestCopy(VOSpaceFixtures, AbstractCopyTests):
     """Remote-to-remote copy suite."""
 
-    @pytest.mark.skip(reason=_WRITE_PARENT)
-    def test_copy_file_to_new_directory(self): ...
-
-    @pytest.mark.skip(reason=_WRITE_PARENT)
-    def test_copy_file_to_file_in_new_directory(self): ...
-
-    @pytest.mark.skip(reason=_WRITE_PARENT)
-    def test_copy_list_of_files_to_new_directory(self): ...
-
-    @pytest.mark.skip(reason=_WRITE_PARENT)
-    def test_copy_two_files_new_directory(self): ...
-
-    @pytest.mark.skip(reason=_COPY_TREE)
-    def test_copy_directory_to_existing_directory(self): ...
-
-    @pytest.mark.skip(reason=_COPY_TREE)
-    def test_copy_directory_to_new_directory(self): ...
-
-    @pytest.mark.skip(reason=_COPY_TREE)
-    def test_copy_glob_to_existing_directory(self): ...
-
-    @pytest.mark.skip(reason=_COPY_TREE)
-    def test_copy_glob_to_new_directory(self): ...
-
-    @pytest.mark.skip(reason=_COPY_TREE)
-    def test_copy_directory_without_files_with_same_name_prefix(self): ...
+    # Copying a file below a not-yet-created directory, and recursive/directory
+    # copies, are supported: ``_cp_file`` creates the destination file's parent
+    # and materializes intermediate ContainerNodes, so these inherited tests run.
 
     @pytest.mark.skip(reason=_HASHED_TEARDOWN)
     def test_copy_with_source_and_destination_as_list(self): ...
