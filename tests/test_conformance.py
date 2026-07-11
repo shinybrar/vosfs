@@ -116,6 +116,23 @@ def test_listings_cache_invalidated_on_mutation(router: respx.Router) -> None:
     fs.close()
 
 
+def test_recursive_removal_clears_subtree_cache(router: respx.Router) -> None:
+    sim = (
+        VOSpaceSim()
+        .add_container("/d")
+        .add_container("/d/sub")
+        .add_file("/d/sub/x", b"x")
+    )
+    sim.install(router)
+    fs = make_fs(router, use_listings_cache=True)
+    fs.ls("/d/sub")  # cache a descendant listing
+    assert "/d/sub" in fs.dircache
+    fs.rm("/d", recursive=True)
+    # The whole subtree is evicted, not just /d and its immediate parent.
+    assert "/d/sub" not in fs.dircache
+    fs.close()
+
+
 # --- cache wrappers -------------------------------------------------------------
 
 

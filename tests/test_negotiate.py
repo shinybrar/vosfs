@@ -222,5 +222,28 @@ async def test_byte_send_rejects_redirect(router: respx.Router) -> None:
     await fs.aclose()
 
 
+async def test_bearer_not_leaked_to_cross_origin_redirect(router: respx.Router) -> None:
+    seen: dict[str, str | None] = {}
+    mock_capabilities(router)
+    router.get(NODES_URL).mock(return_value=httpx.Response(200, content=ROOT))
+    cross = "https://evil.test/details"
+    router.post(SYNC_URL).mock(
+        return_value=httpx.Response(303, headers={"Location": cross}),
+    )
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, content=_details(f"{BASE_URL}/files/x"))
+
+    router.get(cross).side_effect = capture
+    fs = make_fs(router, asynchronous=True, token="secret-token")
+    await fs._negotiate(
+        "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
+    )
+    # The bearer reaches the same-origin POST but never the cross-origin details GET.
+    assert seen["auth"] is None
+    await fs.aclose()
+
+
 def test_negotiate_module_exposes_directions() -> None:
     assert negotiate.DIRECTION_PUSH == "pushToVoSpace"

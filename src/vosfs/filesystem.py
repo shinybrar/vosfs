@@ -175,18 +175,22 @@ class VOSpaceFileSystem(AsyncFileSystem):
         headers: Mapping[str, str] | None = None,
         stream: bool = False,
     ) -> httpx.Response:
-        """Send an authenticated request to the service origin (node/capabilities).
+        """Send a request to the service, applying the credential same-origin only.
 
-        The configured credential is applied by origin: a bearer header for the
-        token method, or the certificate client for the certificate method.
+        The configured credential is attached only when ``url`` is same-origin as
+        ``endpoint_url``: a bearer header for the token method, or the certificate
+        client for the certificate method. A redirect ``Location`` (for example
+        the transfer-details URL) therefore can never route a bearer token or
+        client certificate to another host.
         """
         request_headers = dict(headers or {})
         use_cert = False
-        if self._credential.method == "token":
-            bearer = self._credential.read_bearer()
-            request_headers["Authorization"] = f"Bearer {bearer}"
-        elif self._credential.method == "certificate":
-            use_cert = True
+        if _same_origin(url, self.endpoint_url):
+            if self._credential.method == "token":
+                bearer = self._credential.read_bearer()
+                request_headers["Authorization"] = f"Bearer {bearer}"
+            elif self._credential.method == "certificate":
+                use_cert = True
         request = httpx.Request(method, url, headers=request_headers, content=content)
         try:
             return await self._pool.send(request, use_cert=use_cert, stream=stream)
@@ -231,19 +235,29 @@ class VOSpaceFileSystem(AsyncFileSystem):
         return nodes.to_info(node, path)
 
     async def _ls(self, path: str, detail: bool = True, **_kwargs: Any) -> list[Any]:  # noqa: ANN401, FBT001, FBT002 - fsspec hook signature
-        """List the immediate children of ``path`` (or the node itself if a file)."""
+        """List the immediate children of ``path`` (or the node itself if a file).
+
+        Container listings are served from and stored in the standard fsspec
+        directory cache; mutations invalidate the affected entries.
+        """
         path = self._strip_protocol(path)
-        data = await self._get_node_document(path)
-        node = self._parse_and_note(data)
-        if node.node_type != "container":
-            entries = [nodes.to_info(node, path)]
-        else:
-            entries = [
-                self._child_info(path, child) for child in nodes.parse_listing(data)
-            ]
+        try:
+            entries = self.dircache[path]
+        except KeyError:
+            entries = await self._fetch_listing(path)
         if detail:
             return entries
         return [entry["name"] for entry in entries]
+
+    async def _fetch_listing(self, path: str) -> list[dict[str, Any]]:
+        """Fetch a listing, caching a container's immediate children."""
+        data = await self._get_node_document(path)
+        node = self._parse_and_note(data)
+        if node.node_type != "container":
+            return [nodes.to_info(node, path)]
+        entries = [self._child_info(path, child) for child in nodes.parse_listing(data)]
+        self.dircache[path] = entries
+        return entries
 
     def _child_info(self, parent: str, child: Node) -> dict[str, Any]:
         """Build the info dict for a listing child under ``parent``."""
@@ -530,6 +544,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
             )
             raise errors.VOSpaceError(msg, status=response.status_code)
         _verify_returned_digest(response, expected_digest, path)
+        self._invalidate(path)
 
     async def _pipe_file(
         self,
@@ -741,11 +756,23 @@ class VOSpaceFileSystem(AsyncFileSystem):
         self._invalidate(destination)
 
     def _invalidate(self, path: str) -> None:
-        """Invalidate the directory cache for ``path`` and its parent."""
-        self.invalidate_cache(path)
+        """Invalidate the directory cache for ``path``, its subtree, and parent.
+
+        Clearing the whole subtree keeps a recursively moved or removed tree from
+        leaving stale descendant listings behind, and clearing the parent lets
+        its listing pick up the mutation (contract section 10). fsspec's base
+        ``invalidate_cache`` is a no-op outside a transaction, so the directory
+        cache is pruned directly.
+        """
+        prefix = "/" if path == "/" else f"{path}/"
         parent = paths.parent(path)
-        if parent != path:
-            self.invalidate_cache(parent)
+        stale = [
+            entry
+            for entry in list(self.dircache)
+            if entry in (path, parent) or entry.startswith(prefix)
+        ]
+        for entry in stale:
+            self.dircache.pop(entry, None)
 
     async def aclose(self) -> None:
         """Close every realized HTTP client and evict the instance (idempotent).
@@ -768,6 +795,18 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = "use 'await aclose()' to close an asynchronous filesystem"
             raise RuntimeError(msg)
         sync(self.loop, self.aclose)
+
+
+def _origin(url: str) -> tuple[str, str | None, int | None]:
+    """Return the (scheme, host, port) origin of a URL with default ports."""
+    parts = urlsplit(url)
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    return (parts.scheme, parts.hostname, port)
+
+
+def _same_origin(a: str, b: str) -> bool:
+    """Whether two URLs share the same scheme, host, and (defaulted) port."""
+    return _origin(a) == _origin(b)
 
 
 def _authority_of(uri: str) -> str:
