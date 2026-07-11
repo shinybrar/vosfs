@@ -16,7 +16,7 @@
       
       
       
-        <link rel="next" href="./api-reference/">
+        <link rel="next" href="./guide/">
       
       
         
@@ -240,6 +240,32 @@
   
   
     <li class="md-nav__item">
+      <a href="./guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  User Guide
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="./api-reference/" class="md-nav__link">
         
   
@@ -331,10 +357,25 @@
 
 
 <h1 id="vosfs">vosfs<a class="headerlink" href="#vosfs" title="Permanent link">&para;</a></h1>
-<p><code>vosfs</code> is the Python package for VOSpace filesystem support.</p>
-<p>The project currently exposes a small typed public interface while filesystem
-features are developed. See the <a href="api-reference/">API Reference</a> for the API
-available in the current source.</p>
+<p><code>vosfs</code> is an asynchronous <a href="https://filesystem-spec.readthedocs.io/"><code>fsspec</code></a>
+filesystem for the OpenCADC Cavern VOSpace service. It registers the <code>vos</code>
+protocol so fsspec-aware Python tools — and a bounded set of scientific-stack
+consumers (pandas, NumPy, Dask, Zarr, PyArrow) — can read, write, inspect, and
+mutate OpenCADC VOSpace paths.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">fsspec</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">fs</span> <span class="o">=</span> <span class="n">fsspec</span><span class="o">.</span><span class="n">filesystem</span><span class="p">(</span><span class="s2">&quot;vos&quot;</span><span class="p">,</span> <span class="n">endpoint_url</span><span class="o">=</span><span class="s2">&quot;https://staging.canfar.net/arc&quot;</span><span class="p">)</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">fs</span><span class="o">.</span><span class="n">ls</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p><code>vosfs</code> targets the OpenCADC VOSpace profile only; it does not claim generic
+IVOA VOSpace 2.1 conformance.</p>
+<ul>
+<li>The <a href="guide/">User Guide</a> covers construction, credentials, and the
+  supported and unsupported behavior.</li>
+<li>The <a href="api-reference/">API Reference</a> documents the public interface.</li>
+<li>The normative surface is the capability contract in
+  <a href="https://github.com/shinybrar/vosfs/blob/main/docs/design/trd.md"><code>docs/design/trd.md</code></a>.</li>
+</ul>
 <p>To contribute, follow the
 <a href="https://github.com/shinybrar/vosfs/blob/main/CONTRIBUTING.md">contributor guide</a>.</p>
 
