@@ -122,14 +122,6 @@ async def test_cat_ranges_on_error_return(router: respx.Router) -> None:
     await fs.aclose()
 
 
-def test_open_write_mode_not_supported_here(router: respx.Router) -> None:
-    mock_transfers(router, {})
-    fs = make_fs(router)
-    with pytest.raises(NotImplementedError):
-        fs._open("/f", "wb")
-    fs.close()
-
-
 def test_open_text_mode(router: respx.Router) -> None:
     mock_transfers(router, {"/f": b"line1\nline2\n"})
     fs = make_fs(router)

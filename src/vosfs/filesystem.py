@@ -9,7 +9,10 @@ async filesystem contract.
 from __future__ import annotations
 
 import asyncio
+import base64
+import contextlib
 import datetime
+import hashlib
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -23,7 +26,7 @@ from vosfs import capabilities, config, errors, negotiate, nodes, paths, staging
 from vosfs.transport import ClientPool, build_timeout
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import AsyncIterator, Mapping, Sequence
 
     from fsspec.callbacks import Callback
 
@@ -37,10 +40,13 @@ _SECURITY_METHOD_BY_CREDENTIAL = {
     "certificate": capabilities.CERTIFICATE_METHOD,
 }
 _HTTP_OK = 200
+_HTTP_CREATED = 201
 _HTTP_NO_CONTENT = 204
 _HTTP_SEE_OTHER = 303
+_HTTP_PRECONDITION_FAILED = 412
 _IDENTITY_ENCODING = {"Accept-Encoding": "identity"}
 _READ_CHUNK = 1 << 20
+_DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -394,10 +400,10 @@ class VOSpaceFileSystem(AsyncFileSystem):
         self,
         rpath: str,
         lpath: str,
-        callback: Callback = DEFAULT_CALLBACK,
-        **_kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> None:
         """Stream one negotiated whole-object GET to a local file."""
+        callback: Callback = kwargs.get("callback", DEFAULT_CALLBACK)
         rpath = self._strip_protocol(rpath)
         response = await self._open_read_stream(rpath)
         try:
@@ -457,19 +463,122 @@ class VOSpaceFileSystem(AsyncFileSystem):
         autocommit: bool = True,  # noqa: ARG002, FBT001, FBT002 - fsspec hook signature
         cache_options: Any = None,  # noqa: ANN401, ARG002 - accepted, non-behavioural
         **_kwargs: Any,  # noqa: ANN401 - fsspec hook signature
-    ) -> staging.StagedReadFile:
-        """Open ``path`` for reading, disk-staging the whole object first.
+    ) -> staging.StagedReadFile | staging.StagedWriteFile:
+        """Open ``path``, disk-staging the whole object for read or write.
 
-        Only binary read mode reaches here directly; fsspec wraps text mode over
-        this staged binary file. Write and append modes are handled elsewhere.
+        Only binary modes reach here directly; fsspec wraps text mode over the
+        staged binary file. Append and update (``+``) modes are unsupported.
         """
-        if "r" not in mode:
-            msg = f"unsupported open mode for reading: {mode!r}"
+        if "a" in mode or "+" in mode:
+            msg = f"append and update modes are unsupported: {mode!r}"
             raise NotImplementedError(msg)
         path = self._strip_protocol(path)
-        temp_path = staging.new_temp_path()
-        self.get_file(path, temp_path)
-        return staging.StagedReadFile(temp_path)
+        if "r" in mode:
+            temp_path = staging.new_temp_path()
+            self.get_file(path, temp_path)
+            return staging.StagedReadFile(temp_path)
+        if "w" in mode or "x" in mode:
+            if "x" in mode and self.exists(path):
+                msg = f"path already exists: {path}"
+                raise FileExistsError(msg)
+            return staging.StagedWriteFile(
+                lambda temp: self.put_file(temp, path, mode="overwrite"),
+            )
+        msg = f"unsupported open mode: {mode!r}"
+        raise NotImplementedError(msg)
+
+    # -- writing bytes -------------------------------------------------------
+
+    async def _write(
+        self,
+        path: str,
+        body: Any,  # noqa: ANN401 - httpx accepts bytes or an async byte iterator
+        *,
+        size: int | None,
+        content_type: str | None,
+        expected_digest: bytes | None,
+    ) -> None:
+        """Perform one negotiated whole PUT, validating status and integrity."""
+        endpoint = await self._negotiate(
+            path,
+            direction=negotiate.DIRECTION_PUSH,
+            protocol_uri=negotiate.PROTOCOL_HTTPS_PUT,
+        )
+        headers = {"Content-Type": content_type or _DEFAULT_CONTENT_TYPE}
+        if size is not None:
+            headers["Content-Length"] = str(size)
+        response = await self._byte_send(endpoint, "PUT", content=body, headers=headers)
+        if response.status_code == _HTTP_PRECONDITION_FAILED:
+            msg = f"integrity check failed for {path}"
+            raise errors.VOSpaceError(msg, status=_HTTP_PRECONDITION_FAILED)
+        if response.status_code != _HTTP_CREATED:
+            detail = errors.bounded_text(response.content)
+            msg = (
+                f"uncertain write to {path}: HTTP {response.status_code}; the "
+                f"target may have been truncated. {detail}"
+            )
+            raise errors.VOSpaceError(msg, status=response.status_code)
+        _verify_returned_digest(response, expected_digest, path)
+
+    async def _pipe_file(
+        self,
+        path: str,
+        value: bytes,
+        mode: str = "overwrite",
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> None:
+        """Write ``value`` to ``path`` with one whole PUT (create or overwrite)."""
+        path = self._strip_protocol(path)
+        if mode == "create" and await self._exists(path):
+            msg = f"path already exists: {path}"
+            raise FileExistsError(msg)
+        await self._write(
+            path,
+            value,
+            size=len(value),
+            content_type=kwargs.get("content_type"),
+            expected_digest=hashlib.md5(value).digest(),  # noqa: S324 - integrity, not security
+        )
+
+    async def _put_file(
+        self,
+        lpath: str,
+        rpath: str,
+        mode: str = "overwrite",
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> None:
+        """Stream one local file through one negotiated whole PUT."""
+        callback: Callback = kwargs.get("callback", DEFAULT_CALLBACK)
+        rpath = self._strip_protocol(rpath)
+        if mode == "create" and await self._exists(rpath):
+            msg = f"path already exists: {rpath}"
+            raise FileExistsError(msg)
+        size = Path(lpath).stat().st_size  # noqa: ASYNC240 - local-disk stat, not remote I/O
+        callback.set_size(size)
+        await self._write(
+            rpath,
+            _file_body(lpath, callback),
+            size=size,
+            content_type=kwargs.get("content_type"),
+            expected_digest=_md5_of_file(lpath),
+        )
+
+    def touch(
+        self,
+        path: str,
+        truncate: bool = True,  # noqa: FBT001, FBT002 - fsspec signature
+        **_kwargs: Any,  # noqa: ANN401 - fsspec signature
+    ) -> None:
+        """Create or truncate ``path`` to zero bytes.
+
+        Raises:
+            NotImplementedError: If ``truncate`` is false, which this profile
+                cannot express without an atomic modification-time update.
+        """
+        if not truncate:
+            msg = "touch(truncate=False) is unsupported"
+            raise NotImplementedError(msg)
+        self.pipe_file(path, b"", mode="overwrite")
 
     async def aclose(self) -> None:
         """Close every realized HTTP client and evict the instance (idempotent).
@@ -511,3 +620,52 @@ def _child_name(uri: str) -> str:
 def _parse_datetime(value: str) -> datetime.datetime:
     """Parse an ISO 8601 modification date, tolerating a trailing ``Z``."""
     return datetime.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+
+
+def _md5_of_file(path: str) -> bytes:
+    """Return the MD5 digest of a local file, read in bounded chunks."""
+    digest = hashlib.md5()  # noqa: S324 - integrity check, not a security primitive
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(_READ_CHUNK), b""):
+            digest.update(chunk)
+    return digest.digest()
+
+
+async def _file_body(path: str, callback: Callback) -> AsyncIterator[bytes]:
+    """Yield a local file in bounded chunks, reporting progress via callback."""
+    # Local-disk reads are fast and bounded; async file I/O would add a dependency.
+    with Path(path).open("rb") as handle:  # noqa: ASYNC230 - staging from local disk
+        for chunk in iter(lambda: handle.read(_READ_CHUNK), b""):
+            yield chunk
+            callback.relative_update(len(chunk))
+
+
+def _verify_returned_digest(
+    response: httpx.Response,
+    expected: bytes | None,
+    path: str,
+) -> None:
+    """Validate a server-returned MD5 digest against the uploaded bytes."""
+    if expected is None:
+        return
+    header = response.headers.get("content-md5") or response.headers.get("digest")
+    if header is None:
+        return
+    returned = _decode_digest(header)
+    if returned is not None and returned != expected:
+        msg = f"MD5 mismatch after writing {path}"
+        raise errors.VOSpaceError(msg, status=response.status_code)
+
+
+def _decode_digest(header: str) -> bytes | None:
+    """Decode an MD5 digest header from hex or base64, or ``None`` if unusable."""
+    value = (
+        header.split("=", 1)[1].strip()
+        if header.lower().startswith("md5=")
+        else header.strip()
+    )
+    with contextlib.suppress(ValueError):
+        return bytes.fromhex(value)
+    with contextlib.suppress(ValueError):
+        return base64.b64decode(value, validate=True)
+    return None

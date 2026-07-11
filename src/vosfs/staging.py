@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-    from io import BufferedReader
+    from collections.abc import Callable, Iterator
+    from io import BufferedReader, BufferedWriter
     from types import TracebackType
 
 
@@ -110,3 +110,89 @@ class StagedReadFile:
     ) -> None:
         """Close on context exit."""
         self.close()
+
+
+class StagedWriteFile:
+    """A writable buffer that uploads once, only on a successful close.
+
+    Writes accumulate in a disk-backed temporary file. On a clean close the
+    ``on_commit`` callback uploads it; if the context block raises, the buffer
+    is discarded without any upload, so a failed write never issues a PUT.
+    """
+
+    def __init__(self, on_commit: Callable[[str], None]) -> None:
+        """Open a temporary buffer; ``on_commit`` receives its path on commit."""
+        self._path = new_temp_path()
+        self._file: BufferedWriter = Path(self._path).open("wb")  # noqa: SIM115 - closed here
+        self._on_commit = on_commit
+        self._done = False
+
+    def write(self, data: bytes) -> int:
+        """Buffer ``data`` locally, returning the number of bytes written."""
+        return self._file.write(data)
+
+    def tell(self) -> int:
+        """Return the current buffer position."""
+        return self._file.tell()
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        """Seek within the local buffer."""
+        return self._file.seek(offset, whence)
+
+    def flush(self) -> None:
+        """Flush the local buffer."""
+        self._file.flush()
+
+    def writable(self) -> bool:
+        """Return that the buffer supports writing."""
+        return True
+
+    def readable(self) -> bool:
+        """Return that the buffer does not support reading."""
+        return False
+
+    def seekable(self) -> bool:
+        """Return that the local buffer supports seeking."""
+        return True
+
+    @property
+    def closed(self) -> bool:
+        """Whether the buffer has been finalized."""
+        return self._done
+
+    def close(self) -> None:
+        """Commit the buffer with one upload, then remove the temporary file."""
+        if self._done:
+            return
+        self._done = True
+        self._file.close()
+        try:
+            self._on_commit(self._path)
+        finally:
+            with contextlib.suppress(OSError):
+                Path(self._path).unlink()
+
+    def discard(self) -> None:
+        """Discard the buffer without uploading (used on a failed write)."""
+        if self._done:
+            return
+        self._done = True
+        self._file.close()
+        with contextlib.suppress(OSError):
+            Path(self._path).unlink()
+
+    def __enter__(self) -> StagedWriteFile:  # noqa: PYI034 - concrete return for 3.10 compatibility
+        """Enter the context manager."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Commit on a clean exit; discard when the block raised."""
+        if exc_type is None:
+            self.close()
+        else:
+            self.discard()
