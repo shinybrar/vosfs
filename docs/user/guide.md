@@ -106,8 +106,9 @@ write `vos://` URLs directly. Pass the endpoint (and at most one credential) as
 
 === "NumPy"
 
-    Save and load through an fsspec file object. `.npy`, `.npz`, and text
-    (`np.loadtxt`/`np.savetxt`) all round-trip.
+    Save and load through an fsspec file object: `.npy` and `.npz` round-trip,
+    and delimited text is read with `np.loadtxt`. Any NumPy reader or writer
+    that accepts a file object works the same way.
 
     ```python
     import fsspec
