@@ -9,6 +9,8 @@
       "versioning": "default",
       "bump-minor-pre-major": false,
       "bump-patch-for-minor-pre-major": false,
+      "draft": true,
+      "force-tag-creation": true,
       "include-component-in-tag": false,
       "include-v-in-tag": true,
       "pull-request-title-pattern": "chore: release ${version}",

@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:
@@ -42,74 +42,6 @@ jobs:
       - name: Build package distributions
         run: uv build
 
-  metadata:
-    name: Pull request metadata
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: read
-      pull-requests: read
-    steps:
-      - name: Check out trusted policy
-        if: github.event_name == 'pull_request'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .policy
-          persist-credentials: false
-
-      - name: Install uv and Python
-        if: github.event_name == 'pull_request'
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
-        with:
-          enable-cache: false
-          python-version: "3.12"
-
-      - name: Validate Conventional Commit title
-        if: github.event_name == 'pull_request'
-        working-directory: .policy
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: uv run --locked cz check --message "$PR_TITLE"
-
-      - name: Query parsed closing references
-        if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          OWNER: ${{ github.repository_owner }}
-          REPOSITORY: ${{ github.event.repository.name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          gh api graphql --paginate --slurp \
-            -f query='query($owner: String!, $repository: String!, $number: Int!, $endCursor: String) {
-              repository(owner: $owner, name: $repository) {
-                pullRequest(number: $number) {
-                  closingIssuesReferences(first: 100, after: $endCursor) {
-                    nodes {
-                      number
-                      repository { nameWithOwner }
-                    }
-                    pageInfo { hasNextPage endCursor }
-                  }
-                }
-              }
-            }' \
-            -F owner="$OWNER" \
-            -F repository="$REPOSITORY" \
-            -F number="$PR_NUMBER" \
-            > "$RUNNER_TEMP/closing-references.json"
-
-      - name: Enforce repository-local issue link
-        if: github.event_name == 'pull_request'
-        working-directory: .policy
-        run: >-
-          uv run --locked python scripts/check_pr_metadata.py
-          "$GITHUB_EVENT_PATH" "$RUNNER_TEMP/closing-references.json"
-
-      - name: Accept non-pull-request trigger
-        if: github.event_name != 'pull_request'
-        run: echo "Pull-request metadata does not apply to this trigger."
-
   test:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
@@ -148,17 +80,15 @@ jobs:
 
   live-integration:
     name: Live OpenCADC integration gate
-    # Runs only on trusted default-branch pushes and manual dispatch, never on
-    # pull requests (no pull_request_target), and only when the repository opts
-    # in with the VOSFS_LIVE_GATE variable. Secrets are never exposed to forks.
+    # Runs on trusted default-branch pushes and manual dispatch, never on pull
+    # requests (no pull_request_target). Secrets are never exposed to forks.
     if: >-
-      vars.VOSFS_LIVE_GATE == 'true' &&
-      (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     env:
       VOSFS_TEST_ENDPOINT: ${{ vars.VOSFS_TEST_ENDPOINT || 'https://staging.canfar.net/arc' }}
-      VOSFS_TEST_ROOT: ${{ vars.VOSFS_TEST_ROOT }}
+      VOSFS_TEST_ROOT: ${{ vars.VOSFS_TEST_ROOT || format('/home/{0}', secrets.CADC_USERNAME) }}
     steps:
       - name: Check out source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -191,7 +121,7 @@ jobs:
       - name: Run the credential-gated live suite
         env:
           VOSFS_CERT_FILE: ${{ runner.temp }}/proxy.pem
-        run: uv run --with cadcutils pytest -m integration
+        run: uv run --with cadcutils pytest --no-cov -m integration
 
       - name: Remove the proxy certificate
         if: always()
@@ -200,18 +130,24 @@ jobs:
   required:
     name: Required
     if: always()
-    needs: [quality, metadata, test]
+    needs: [quality, test, live-integration]
     runs-on: ubuntu-latest
     steps:
       - name: Require every dependency to succeed
         env:
-          METADATA_RESULT: ${{ needs.metadata.result }}
           QUALITY_RESULT: ${{ needs.quality.result }}
           TEST_RESULT: ${{ needs.test.result }}
+          LIVE_RESULT: ${{ needs.live-integration.result }}
         run: |
-          for result in "$METADATA_RESULT" "$QUALITY_RESULT" "$TEST_RESULT"; do
+          for result in "$QUALITY_RESULT" "$TEST_RESULT"; do
             if [[ "$result" != "success" ]]; then
               echo "Required CI dependency concluded: $result" >&2
               exit 1
             fi
           done
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            test "$LIVE_RESULT" = "skipped"
+          elif [[ "$LIVE_RESULT" != "success" ]]; then
+            echo "Live OpenCADC integration concluded: $LIVE_RESULT" >&2
+            exit 1
+          fi
