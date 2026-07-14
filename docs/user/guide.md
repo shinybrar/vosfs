@@ -16,11 +16,16 @@ OpenCADC VOSpace paths.
 The service is selected only by `endpoint_url`, an absolute OpenCADC service
 base URL. No registry or shortname lookup is performed.
 
+Install `vosfs` first:
+
+```bash
+uv add git+https://github.com/shinybrar/vosfs@main
+```
+
 ```python
 import fsspec
 
 fs = fsspec.filesystem("vos", endpoint_url="https://staging.canfar.net/arc")
-fs.ls("/")
 ```
 
 The apparent authority after the `vos://` protocol marker is part of the
@@ -58,6 +63,26 @@ fs = fsspec.filesystem(
     tokenfile="/run/secrets/vos-token",
 )
 ```
+
+For a CADC proxy certificate, pass an absolute path to the combined
+certificate-chain and private-key PEM file, or set the equivalent environment
+variable before constructing the filesystem:
+
+```bash
+export VOSFS_CERT_FILE=/absolute/path/to/cadcproxy.pem
+```
+
+```python
+fs = fsspec.filesystem(
+    "vos",
+    endpoint_url="https://staging.canfar.net/arc",
+    certfile="/absolute/path/to/cadcproxy.pem",
+)
+```
+
+Do not pass both forms: an explicit credential option ignores all credential
+environment variables. Paths beginning with `~` are not expanded; use an
+absolute path.
 
 ## Reading and writing
 
@@ -343,3 +368,13 @@ precise match is raised as the single public `vosfs.VOSpaceError`.
 
 `aclose()` (async) and `close()` (sync) release every HTTP client, evict the
 instance from fsspec's cache, and make later I/O fail as closed.
+
+Close a filesystem deterministically when its work is finished:
+
+```python
+fs = fsspec.filesystem("vos", endpoint_url="https://staging.canfar.net/arc")
+try:
+    data = fs.cat_file("/project/data.csv")
+finally:
+    fs.close()
+```
