@@ -7,12 +7,11 @@ the policy and configuration together in the same pull request.
 
 ## Ground rules
 
-- Start from a GitHub issue or sub-issue and keep the change within its scope.
 - Work on a branch. Do not push changes directly to `main`.
 - External contributors should fork the repository, push their branch to the
   fork, and open a pull request against this repository. Maintainers and agents
   may branch in a canonical clone.
-- Keep each pull request focused and link it to its issue.
+- Keep each pull request focused.
 - Never bypass hooks with `--no-verify`.
 - Use `uv` for Python versions, environments, dependencies, and project
   commands. Do not maintain a parallel `pip`, Conda, or requirements-file
@@ -76,18 +75,32 @@ uv build
 If a hook changes files, review the changes, stage them, and run the gate again.
 The pull request must pass the same required CI checks before merge.
 
-Human pull requests must close an issue in this repository. The only
-issue-link exceptions are release pull requests authored by the repository
-owner's Release Please PAT on
-`release-please--branches--main--components--vosfs` carrying the
-`autorelease: pending` label, and dependency pull requests from `dependabot[bot]`
-on a `dependabot/` branch. These automations remain subject to the normal title,
-CI, review, and merge requirements.
+### Run the live OpenCADC gate
+
+The live suite mutates OpenCADC staging inside a unique temporary namespace and
+removes that namespace leaves-first. Set an existing writable home container
+and exactly one credential source; never point the test root at a container the
+suite owns or at production data.
+
+```bash
+export VOSFS_CERT_FILE=/absolute/path/to/cadcproxy.pem
+export VOSFS_TEST_ROOT=/home/<cadc-username>
+export VOSFS_TEST_ENDPOINT=https://staging.canfar.net/arc
+uv run pytest --no-cov -m integration
+```
+
+`VOSFS_TEST_ENDPOINT` is optional and defaults to the value above. The test is
+skipped unless both the root and a credential are configured. A failed cleanup
+is itself a test failure and reports the unique `vosfs-it-*` namespace that may
+need manual inspection. `--no-cov` is intentional: the focused live suite does
+not execute enough package branches to satisfy the offline suite's 90% global
+coverage threshold.
 
 Pull-request CI validates code, tests, Markdown, and the strict Zensical build.
-After merge, a separate deployment workflow publishes the validated docs
-artifact to GitHub Pages. Publication supplements PR validation; it never
-replaces or weakens it.
+After successful `main` CI, Release Please dispatches the validated commit to
+the Pages workflow, which publishes it as `dev`. When Release Please creates a
+tag, a separate docs dispatch publishes that exact tag and points `latest` to
+it. Publication supplements PR validation; it never replaces or weakens it.
 
 ## Commit messages
 
@@ -115,6 +128,5 @@ and do not mix unrelated changes.
 ## Open the pull request
 
 The pull request description must explain what changed, why it changed, and how
-it was validated. Link the issue with `Closes #<number>` or the equivalent
-sub-issue reference. Include documentation and lockfile changes when required,
+it was validated. Include documentation and lockfile changes when required,
 then wait for required CI and review before merge.

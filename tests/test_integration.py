@@ -11,6 +11,9 @@ Configuration (environment):
 - ``VOSFS_CERT_FILE`` / ``VOSFS_TOKEN`` / ``VOSFS_TOKEN_FILE`` — one credential.
 - ``VOSFS_TEST_ROOT`` — an existing writable container to create the run
   namespace under (for example ``/home/<user>``).
+
+Run with ``pytest --no-cov -m integration`` so the focused live suite does not
+inherit the offline suite's global coverage threshold.
 """
 
 from __future__ import annotations

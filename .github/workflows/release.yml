@@ -5,12 +5,6 @@ on:
     workflows: [CI]
     types: [completed]
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      release_tag:
-        description: Existing vX.Y.Z release whose artifacts should be rebuilt
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -20,15 +14,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  orchestrate:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main')
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - name: Verify CI validated current main
-        if: github.event_name == 'workflow_run'
+        id: validated
         env:
           GH_TOKEN: ${{ github.token }}
           VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -41,7 +36,6 @@ jobs:
 
       - name: Open or update the release pull request
         id: release
-        if: inputs.release_tag == ''
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
@@ -49,113 +43,38 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      - name: Select released commit
-        id: released
-        if: steps.release.outputs.release_created == 'true' || inputs.release_tag != ''
+      - name: Dispatch code publication
+        if: steps.release.outputs.release_created == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          CREATED_TAG: ${{ steps.release.outputs.tag_name }}
-          CREATED_SHA: ${{ steps.release.outputs.sha }}
-          RECOVERY_TAG: ${{ inputs.release_tag }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
         run: |
-          if [[ -n "$RECOVERY_TAG" ]]; then
-            if [[ ! "$RECOVERY_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "release_tag must be an exact vX.Y.Z tag" >&2
-              exit 1
-            fi
-            gh release view "$RECOVERY_TAG" >/dev/null
-            read -r object_type sha < <(
-              gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RECOVERY_TAG" \
-                --jq '.object | "\(.type) \(.sha)"'
-            )
-            if [[ "$object_type" == "tag" ]]; then
-              sha="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq .object.sha)"
-            fi
-            tag="$RECOVERY_TAG"
-          else
-            sha="$CREATED_SHA"
-            tag="$CREATED_TAG"
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" \
+            -f event_type=release-build \
+            -f "client_payload[tag_name]=$RELEASE_TAG" \
+            -f "client_payload[sha]=$RELEASE_SHA"
 
-      - name: Check out the released commit
-        if: steps.released.outputs.sha != ''
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          ref: ${{ steps.released.outputs.sha }}
-          persist-credentials: false
-
-      - name: Install uv
-        if: steps.released.outputs.sha != ''
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
-        with:
-          enable-cache: false
-
-      - name: Build release distributions
-        if: steps.released.outputs.sha != ''
-        run: |
-          test "$(git rev-parse HEAD)" = "${{ steps.released.outputs.sha }}"
-          uv build
-
-      - name: Verify release distributions
-        if: steps.released.outputs.sha != ''
+      - name: Dispatch dev documentation
+        if: ${{ always() && steps.validated.outcome == 'success' }}
         env:
-          RELEASE_TAG: ${{ steps.released.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          uv run --locked --no-dev python - <<'PY'
-          import glob
-          import os
-          import re
-          import tarfile
-          import zipfile
-          from email.parser import BytesParser
+          gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" \
+            -f event_type=docs-publish \
+            -f "client_payload[target]=dev" \
+            -f "client_payload[sha]=$VALIDATED_SHA"
 
-          tag = os.environ["RELEASE_TAG"]
-          if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag) is None:
-              raise SystemExit(f"invalid release tag: {tag}")
-          expected = {"Name": "vosfs", "Version": tag.removeprefix("v")}
-
-          wheels = glob.glob("dist/*.whl")
-          sdists = glob.glob("dist/*.tar.gz")
-          if len(wheels) != 1 or len(sdists) != 1:
-              raise SystemExit(
-                  f"expected one wheel and one sdist, found {wheels!r} and {sdists!r}"
-              )
-
-          with zipfile.ZipFile(wheels[0]) as archive:
-              names = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
-              if len(names) != 1:
-                  raise SystemExit(f"expected one wheel METADATA file, found {names!r}")
-              wheel_metadata = BytesParser().parsebytes(archive.read(names[0]))
-
-          with tarfile.open(sdists[0], mode="r:gz") as archive:
-              members = [
-                  member
-                  for member in archive.getmembers()
-                  if member.isfile() and member.name.endswith("/PKG-INFO")
-              ]
-              if len(members) != 1:
-                  raise SystemExit(f"expected one sdist PKG-INFO file, found {members!r}")
-              extracted = archive.extractfile(members[0])
-              if extracted is None:
-                  raise SystemExit("could not read sdist PKG-INFO")
-              sdist_metadata = BytesParser().parsebytes(extracted.read())
-
-          for artifact, metadata in (
-              (wheels[0], wheel_metadata),
-              (sdists[0], sdist_metadata),
-          ):
-              actual = {key: metadata.get(key) for key in expected}
-              if actual != expected:
-                  raise SystemExit(
-                      f"{artifact} metadata {actual!r} does not match {expected!r}"
-                  )
-          PY
-
-      - name: Attach distributions to the GitHub Release
-        if: steps.released.outputs.sha != ''
+      - name: Dispatch release documentation
+        if: ${{ always() && steps.release.outputs.release_created == 'true' }}
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-          RELEASE_TAG: ${{ steps.released.outputs.tag }}
-        run: gh release upload "$RELEASE_TAG" dist/*.whl dist/*.tar.gz --clobber
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" \
+            -f event_type=docs-publish \
+            -f "client_payload[target]=release" \
+            -f "client_payload[tag_name]=$RELEASE_TAG" \
+            -f "client_payload[sha]=$RELEASE_SHA"

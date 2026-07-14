@@ -1,12 +1,14 @@
 name: Pages
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
-  release:
-    types: [published]
+  repository_dispatch:
+    types: [docs-publish]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing vX.Y.Z tag whose docs should be republished
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -14,68 +16,65 @@ permissions:
 concurrency:
   group: pages
   cancel-in-progress: false
-  queue: max
 
 jobs:
-  build:
-    name: Build versioned site
-    if: >-
-      github.event_name == 'release' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main')
+  deploy:
     permissions:
-      contents: read
+      contents: write
     runs-on: ubuntu-latest
-    outputs:
-      pages-sha: ${{ steps.state.outputs.pages-sha }}
-      validated-sha: ${{ steps.source.outputs.validated-sha }}
     steps:
       - name: Select documentation target
         id: target
         env:
           EVENT_NAME: ${{ github.event_name }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_TAG: ${{ github.event.client_payload.tag_name || inputs.release_tag }}
+          TARGET: ${{ github.event.client_payload.target }}
+          VALIDATED_SHA: ${{ github.event.client_payload.sha }}
         run: |
-          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
-            echo "ref=$VALIDATED_SHA" >> "$GITHUB_OUTPUT"
-            echo "version=dev" >> "$GITHUB_OUTPUT"
-            echo "title=Development" >> "$GITHUB_OUTPUT"
-          else
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$TARGET" == "release" ]]; then
             if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
               echo "release tag must be an exact vX.Y.Z tag" >&2
               exit 1
             fi
             echo "ref=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-            echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
-            echo "title=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check out validated source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ steps.target.outputs.ref }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Verify publication source
-        id: source
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
-            current_main="$(git ls-remote origin refs/heads/main | cut -f1)"
-            if [[ "$VALIDATED_SHA" != "$current_main" ]]; then
-              echo "CI validated $VALIDATED_SHA, but main is now $current_main" >&2
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "version=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          else
+            if [[ "$TARGET" != "dev" ]]; then
+              echo "documentation target must be dev or release" >&2
               exit 1
             fi
-            test "$(git rev-parse HEAD)" = "$VALIDATED_SHA"
-          else
-            test "$(git rev-parse HEAD)" = "$(git rev-parse "$RELEASE_TAG^{commit}")"
+            if [[ ! "$VALIDATED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "dev documentation requires a full commit SHA" >&2
+              exit 1
+            fi
+            echo "ref=$VALIDATED_SHA" >> "$GITHUB_OUTPUT"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "version=dev" >> "$GITHUB_OUTPUT"
           fi
-          echo "validated-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Check out documentation source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.target.outputs.ref }}
+
+      - name: Verify documentation source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ steps.target.outputs.release }}
+          RELEASE_TAG: ${{ steps.target.outputs.version }}
+          VALIDATED_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [[ "$RELEASE" == "true" ]]; then
+            gh release view "$RELEASE_TAG" >/dev/null
+            test "$(git rev-parse HEAD)" = "$(git rev-parse "$RELEASE_TAG^{commit}")"
+            if [[ -n "$VALIDATED_SHA" ]]; then
+              test "$(git rev-parse HEAD)" = "$VALIDATED_SHA"
+            fi
+          else
+            test "$(git rev-parse HEAD)" = "$VALIDATED_SHA"
+          fi
 
       - name: Install uv
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
@@ -88,170 +87,35 @@ jobs:
       - name: Strictly build documentation
         run: uv run --locked zensical build --strict --clean
 
-      - name: Update versioned documentation
+      - name: Publish documentation
         env:
-          EVENT_NAME: ${{ github.event_name }}
+          RELEASE: ${{ steps.target.outputs.release }}
           VERSION: ${{ steps.target.outputs.version }}
-          VERSION_TITLE: ${{ steps.target.outputs.title }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+          if [[ "$RELEASE" == "true" ]]; then
             uv run --locked mike deploy \
               --config-file zensical.toml \
               --remote origin \
               --branch gh-pages \
-              --message "docs(pages): publish dev" \
-              --title "$VERSION_TITLE" \
-              --alias-type redirect \
-              "$VERSION"
-
-            if ! git show gh-pages:versions.json \
-              | jq -e 'any(.[]; .aliases | index("latest"))' >/dev/null; then
-              uv run --locked mike set-default \
-                --config-file zensical.toml \
-                --remote origin \
-                --branch gh-pages \
-                --message "docs(pages): default to dev" \
-                dev
-            fi
+              --update-aliases \
+              "$VERSION" latest
+            uv run --locked mike set-default \
+              --config-file zensical.toml \
+              --remote origin \
+              --branch gh-pages \
+              --push \
+              latest
           else
             uv run --locked mike deploy \
               --config-file zensical.toml \
               --remote origin \
               --branch gh-pages \
-              --message "docs(pages): publish $VERSION" \
-              --title "$VERSION_TITLE" \
-              --alias-type redirect \
-              "$VERSION"
-            highest_version="$(
-              git show gh-pages:versions.json \
-                | jq -r '.[].version | select(test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))' \
-                | sort -t. -k1,1n -k2,2n -k3,3n \
-                | tail -n 1
-            )"
-            test -n "$highest_version"
-            uv run --locked mike alias \
-              --config-file zensical.toml \
-              --remote origin \
-              --branch gh-pages \
-              --message "docs(pages): point latest to $highest_version" \
+              --push \
               --update-aliases \
-              --alias-type redirect \
-              "$highest_version" latest
-            uv run --locked mike set-default \
-              --config-file zensical.toml \
-              --remote origin \
-              --branch gh-pages \
-              --message "docs(pages): default to latest" \
-              latest
+              dev
           fi
 
-      - name: Prepare exact publication state
-        id: state
-        env:
-          VALIDATED_SHA: ${{ steps.source.outputs.validated-sha }}
-        run: |
-          pages_sha="$(git rev-parse gh-pages)"
-          mkdir -p "$RUNNER_TEMP/pages" "$RUNNER_TEMP/pages-state"
-          git bundle create "$RUNNER_TEMP/pages-state/gh-pages.bundle" gh-pages
-          git bundle verify "$RUNNER_TEMP/pages-state/gh-pages.bundle"
-          printf '%s\n' "$pages_sha" > "$RUNNER_TEMP/pages-state/pages.sha"
-          printf '%s\n' "$VALIDATED_SHA" > "$RUNNER_TEMP/pages-state/validated.sha"
-          git archive "$pages_sha" | tar -x -C "$RUNNER_TEMP/pages"
-          echo "pages-sha=$pages_sha" >> "$GITHUB_OUTPUT"
-
-      - name: Upload publication state
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: pages-state
-          path: ${{ runner.temp }}/pages-state
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload exact Pages tree
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-        with:
-          path: ${{ runner.temp }}/pages
-          include-hidden-files: true
-
-  persist:
-    name: Persist generated history
-    needs: build
-    permissions:
-      actions: read
-      contents: write
-    runs-on: ubuntu-latest
-    steps:
-      - name: Verify and persist generated history
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_PAGES_SHA: ${{ needs.build.outputs.pages-sha }}
-          EXPECTED_VALIDATED_SHA: ${{ needs.build.outputs.validated-sha }}
-          GH_TOKEN: ${{ github.token }}
-          GIT_CONFIG_GLOBAL: ${{ runner.temp }}/pages-gitconfig
-        run: |
-          state_dir="$RUNNER_TEMP/pages-state"
-          repository_dir="$RUNNER_TEMP/repository"
-          gh run download "$GITHUB_RUN_ID" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name pages-state \
-            --dir "$state_dir"
-
-          test "$(cat "$state_dir/pages.sha")" = "$EXPECTED_PAGES_SHA"
-          test "$(cat "$state_dir/validated.sha")" = "$EXPECTED_VALIDATED_SHA"
-
-          git init "$repository_dir"
-          cd "$repository_dir"
-          git remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
-          git bundle verify "$state_dir/gh-pages.bundle"
-          bundle_sha="$(git bundle list-heads \
-            "$state_dir/gh-pages.bundle" refs/heads/gh-pages | cut -d' ' -f1)"
-          test "$bundle_sha" = "$EXPECTED_PAGES_SHA"
-          git fetch "$state_dir/gh-pages.bundle" \
-            refs/heads/gh-pages:refs/heads/gh-pages
-          test "$(git rev-parse gh-pages)" = "$EXPECTED_PAGES_SHA"
-
-          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
-            current_main="$(git ls-remote origin refs/heads/main | cut -f1)"
-            if [[ "$EXPECTED_VALIDATED_SHA" != "$current_main" ]]; then
-              echo "main advanced to $current_main during the documentation build" >&2
-              exit 1
-            fi
-          fi
-
-          cleanup_auth() {
-            rm -f "$GIT_CONFIG_GLOBAL"
-            unset GH_TOKEN
-          }
-          trap cleanup_auth EXIT
-          gh auth setup-git --hostname github.com --force
-          git push origin gh-pages
-          remote_sha="$(git ls-remote origin refs/heads/gh-pages | cut -f1)"
-          cleanup_auth
-          trap - EXIT
-          if [[ "$EXPECTED_PAGES_SHA" != "$remote_sha" ]]; then
-            echo "pushed gh-pages $remote_sha does not match $EXPECTED_PAGES_SHA" >&2
-            exit 1
-          fi
-
-  deploy:
-    name: Deploy site
-    needs: [build, persist]
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
-        with:
-          enablement: false
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
+          uv run --locked mike list --config-file zensical.toml
