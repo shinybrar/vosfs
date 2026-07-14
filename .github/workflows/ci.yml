@@ -109,7 +109,7 @@ jobs:
           set -euo pipefail
           umask 077
           netrc="$RUNNER_TEMP/.netrc"
-          printf 'machine ws-cadc.canfar.net login %s password %s\n' \
+          printf 'machine ws.cadc-ccda.hia-iha.nrc-cnrc.gc.ca login %s password %s\n' \
             "$CADC_USERNAME" "$CADC_PASSWORD" > "$netrc"
           chmod 600 "$netrc"
           uv run --with cadcutils cadc-get-cert \
