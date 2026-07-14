@@ -1,5 +1,7 @@
 """Tests for synchronous byte negotiation and credential routing (section 7)."""
 
+import itertools
+
 import httpx
 import pytest
 import respx
@@ -141,6 +143,72 @@ async def test_negotiate_read_returns_endpoint(router: respx.Router) -> None:
         "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
     )
     assert negotiated == NegotiatedEndpoint(endpoint, ANONYMOUS_METHOD)
+    await fs.aclose()
+
+
+async def test_negotiate_follows_transfer_result_redirect(
+    router: respx.Router,
+) -> None:
+    mock_capabilities(router)
+    router.get(NODES_URL).mock(return_value=httpx.Response(200, content=ROOT))
+    details_url = f"{BASE_URL}/transfers/job/results/transferDetails"
+    result_url = f"{BASE_URL}/xfer/job"
+    endpoint = f"{BASE_URL}/files/job"
+    router.post(SYNC_URL).mock(
+        return_value=httpx.Response(303, headers={"Location": details_url}),
+    )
+    router.get(details_url).mock(
+        return_value=httpx.Response(303, headers={"Location": result_url}),
+    )
+    router.get(result_url).mock(
+        return_value=httpx.Response(
+            200, content=_details(endpoint, security_method=CERTIFICATE_METHOD)
+        ),
+    )
+    fs = make_fs(router, asynchronous=True, certfile="/tmp/proxy.pem")  # noqa: S108
+    negotiated = await fs._negotiate(
+        "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
+    )
+    assert negotiated == NegotiatedEndpoint(endpoint, CERTIFICATE_METHOD)
+    await fs.aclose()
+
+
+async def test_negotiate_rejects_redirect_loop(router: respx.Router) -> None:
+    mock_capabilities(router)
+    router.get(NODES_URL).mock(return_value=httpx.Response(200, content=ROOT))
+    location = f"{BASE_URL}/transfers/loop/results/transferDetails"
+    router.post(SYNC_URL).mock(
+        return_value=httpx.Response(303, headers={"Location": location}),
+    )
+    router.get(location).mock(
+        return_value=httpx.Response(303, headers={"Location": location}),
+    )
+    fs = make_fs(router, asynchronous=True)
+    with pytest.raises(OSError, match="redirect loop"):
+        await fs._negotiate(
+            "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
+        )
+    await fs.aclose()
+
+
+async def test_negotiate_rejects_more_than_five_redirects(
+    router: respx.Router,
+) -> None:
+    mock_capabilities(router)
+    router.get(NODES_URL).mock(return_value=httpx.Response(200, content=ROOT))
+    locations = [f"{BASE_URL}/transfers/hop-{index}" for index in range(6)]
+    router.post(SYNC_URL).mock(
+        return_value=httpx.Response(303, headers={"Location": locations[0]}),
+    )
+    for current, following in itertools.pairwise(locations):
+        router.get(current).mock(
+            return_value=httpx.Response(303, headers={"Location": following}),
+        )
+    fs = make_fs(router, asynchronous=True)
+    with pytest.raises(OSError, match="more than five"):
+        await fs._negotiate(
+            "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
+        )
     await fs.aclose()
 
 

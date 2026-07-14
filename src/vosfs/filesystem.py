@@ -310,14 +310,9 @@ class VOSpaceFileSystem(AsyncFileSystem):
 
         Builds a VOSpace 2.1 transfer document with one authority-qualified
         target, POSTs it to the discovered sync binding with redirects disabled,
-        follows the single 303 to the transfer details, and chooses a protocol
-        whose security method is compatible with the configured credential.
-
-        A 303 whose ``Location`` is a direct byte endpoint rather than a
-        transfer-details document is not yet supported: distinguishing the two
-        without consuming a (possibly single-use, possibly large) endpoint needs
-        a streaming discriminator validated against live OpenCADC. It is tracked
-        in issue #63; such a response surfaces as a transfer-details parse error.
+        follows the approved 303 chain to the transfer-details document, and
+        chooses a protocol whose security method is compatible with the
+        configured credential. Redirect loops and more than five hops fail.
         """
         bindings = await self._get_bindings()
         sync_url = bindings.require_sync()
@@ -335,14 +330,30 @@ class VOSpaceFileSystem(AsyncFileSystem):
             base=sync_url,
             sending_bearer=self._credential.method == "token",
         )
-        details = await self._send_to_service(
-            "GET", location, headers=nodes.XML_HEADERS
-        )
-        self._raise_for_status(details, path=path, allowed=(_HTTP_OK,))
-        return negotiate.choose_protocol(
-            negotiate.parse_transfer_details(details.content),
-            self._security_method(),
-        )
+        seen: set[str] = set()
+        for _redirect_count in range(1, 6):
+            if location in seen:
+                msg = "synchronous-transfer redirect loop"
+                raise errors.VOSpaceError(msg)
+            seen.add(location)
+            details = await self._send_to_service(
+                "GET", location, headers=nodes.XML_HEADERS
+            )
+            self._raise_for_status(
+                details, path=path, allowed=(_HTTP_OK, _HTTP_SEE_OTHER)
+            )
+            if details.status_code == _HTTP_OK:
+                return negotiate.choose_protocol(
+                    negotiate.parse_transfer_details(details.content),
+                    self._security_method(),
+                )
+            location = negotiate.validate_redirect(
+                details.headers.get("location"),
+                base=location,
+                sending_bearer=self._credential.method == "token",
+            )
+        msg = "synchronous-transfer negotiation returned more than five redirects"
+        raise errors.VOSpaceError(msg)
 
     def _byte_routing(
         self, endpoint: NegotiatedEndpoint
