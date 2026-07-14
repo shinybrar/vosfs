@@ -114,7 +114,9 @@ jobs:
           chmod 600 "$netrc"
           uv run --with cadcutils cadc-get-cert \
             --netrc-file "$netrc" \
-            --cert-outfile "$RUNNER_TEMP/proxy.pem" > /dev/null 2>&1
+            --cert-filename "$RUNNER_TEMP/proxy.pem" \
+            --days-valid 1 \
+            --quiet
           chmod 600 "$RUNNER_TEMP/proxy.pem"
           rm -f "$netrc"
 
