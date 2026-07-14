@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/shinybrar/vosfs/compare/v0.3.1...v0.3.2) (2026-07-14)
+
+
+### Bug Fixes
+
+* provide repository context to release publisher ([#71](https://github.com/shinybrar/vosfs/issues/71)) ([09a74de](https://github.com/shinybrar/vosfs/commit/09a74de7d02ab6292b34bf63acd8a06d947a30dc))
+
 ## [0.3.1](https://github.com/shinybrar/vosfs/compare/v0.3.0...v0.3.1) (2026-07-14)
 
 
