@@ -100,6 +100,7 @@ jobs:
               --config-file zensical.toml \
               --remote origin \
               --branch gh-pages \
+              --push \
               --update-aliases \
               "$VERSION" latest
             uv run --locked mike set-default \
