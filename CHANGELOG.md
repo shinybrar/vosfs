@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.1](https://github.com/shinybrar/vosfs/compare/v0.3.0...v0.3.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* correct CADC certificate output option ([#68](https://github.com/shinybrar/vosfs/issues/68)) ([6b4beec](https://github.com/shinybrar/vosfs/commit/6b4beec8c1a603a53b586613f682542a79be6ef4))
+* prepare v0.3.1 release ([#67](https://github.com/shinybrar/vosfs/issues/67)) ([72bc2aa](https://github.com/shinybrar/vosfs/commit/72bc2aa39eb18a172ed32f4d719aaf8edb68e6a1))
+* use canonical CADC authentication host ([#69](https://github.com/shinybrar/vosfs/issues/69)) ([0cd3a90](https://github.com/shinybrar/vosfs/commit/0cd3a90b2c027b35757924898c1887eb0ce9b363))
+
 ## [0.3.0](https://github.com/shinybrar/vosfs/compare/v0.2.0...v0.3.0) (2026-07-11)
 
 
