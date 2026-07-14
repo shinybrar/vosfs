@@ -1,6 +1,6 @@
 [project]
 name = "vosfs"
-version = "0.3.2"
+version = "0.3.3"
 description = "An asynchronous fsspec filesystem for the OpenCADC VOSpace profile"
 readme = "README.md"
 authors = [
