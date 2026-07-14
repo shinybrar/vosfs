@@ -19,6 +19,7 @@ jobs:
     steps:
       - name: Validate release dispatch
         env:
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ github.event.client_payload.sha }}
           RELEASE_TAG: ${{ github.event.client_payload.tag_name }}
