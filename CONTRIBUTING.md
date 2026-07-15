@@ -40,7 +40,9 @@ Markdown checks.
   `project.requires-python`. CI tests that full range on Linux and tests the
   newest-minus-two Python release on macOS and Windows. Advance the declared
   minimum and matrix together as Python's five-version support window moves.
-- Keep package code under `src/vosfs/` and add type annotations to public APIs.
+- Keep the `vosfs` package under `src/vosfs/`. Each independently installable
+  workspace member keeps its package under that member's `src/` directory. Add
+  type annotations to public APIs.
 - Use Ruff as the only Python formatter and linter, and ty as the type checker.
 - Add or update pytest tests for observable behavior. Unit tests must be
   deterministic and offline; mark integration tests that require a service.

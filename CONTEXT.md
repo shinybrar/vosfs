@@ -31,6 +31,15 @@ profile lacks the required semantics, no approved client-derived behavior
 supplies them, or the behavior is outside the v0.3.0 product scope.
 _Avoid_: Unimplemented endpoint
 
+**Embedded command library**:
+The separately installable, library-only `fsspec-cli` uv workspace member at
+`src/fsspec-cli`, with its Python package at `src/fsspec-cli/src/fsspec_cli`,
+that owns POSIX-shaped command logic. Its sole stable v1 seam for host tools is
+`App(filesystems).typer_app`, where `filesystems` is a non-empty
+`Mapping[str, AbstractFileSystem]` of live instances configured and owned by the
+host.
+_Avoid_: vosfs CLI, fsspec-cli executable
+
 **Negotiated byte endpoint**:
 The temporary or pre-authorized byte URL returned by `/synctrans` for one
 `pullFromVoSpace` read or `pushToVoSpace` write.
