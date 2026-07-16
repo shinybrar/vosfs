@@ -64,6 +64,10 @@ class App:
             except RuntimeError:
                 pass
             else:
-                typer.echo("ls: cannot run from an active event loop", err=True)
+                typer.echo(
+                    "ls: cannot run from an active event loop",
+                    err=True,
+                    color=True,
+                )
                 raise typer.Exit(1)
             asyncio.run(_run_ls(raw_arguments, self._sources))

@@ -10,8 +10,11 @@ for one command invocation.
 
 The current `ls` slice implements source-free argument preflight, the
 synchronous Typer-to-asyncio boundary, invocation-owned source lifecycle, and
-a one-operand file and directory tracer. Every valid operand awaits `_info`;
-directories then await `_ls(path, detail=False)` and strictly validate, filter,
-and locale-sort immediate child names before writing them. Complete
-several-operand rendering and backend compatibility claims remain future work.
-The package has no console entry point or module executable.
+the locked plain-`ls` behavior for one or more mapped operands. Every valid
+operand awaits `_info`; directories then await `_ls(path, detail=False)` and
+strictly validate, filter, and locale-sort immediate child names. Rendering is
+deterministic across files and directory blocks, while ordinary operand
+failures continue with stable diagnostics and output failures preserve their
+accepted-byte boundary. Backend compatibility claims remain `unverified`
+until their source-form gates run. The package has no console entry point or
+module executable.
