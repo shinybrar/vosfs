@@ -34,7 +34,7 @@ jobs:
         run: uv lock --check
 
       - name: Run all pre-commit hooks
-        run: uv run pre-commit run --all-files
+        run: uv run --all-packages pre-commit run --all-files
 
       - name: Build strict documentation
         run: uv run zensical build --strict --clean
