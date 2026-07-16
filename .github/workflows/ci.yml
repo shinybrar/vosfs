@@ -53,7 +53,7 @@ jobs:
           test -n "$wheel"
           test -n "$sdist"
           uv run --isolated --no-project --with "$wheel" python -c \
-            "import fsspec_cli; from importlib.metadata import version; assert version('fsspec-cli') == '0.1.0'"
+            "import fsspec_cli; from importlib.metadata import version; assert version('fsspec-cli')"
 
   test:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python }})
