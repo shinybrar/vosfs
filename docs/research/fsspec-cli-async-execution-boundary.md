@@ -6,7 +6,7 @@ Researched: 2026-07-15
 
 Question: [shinybrar/vosfs#90](https://github.com/shinybrar/vosfs/issues/90)
 
-Status: **Research complete; three human decisions remain open. No production code is added by this ticket.**
+Status: **Research complete; four human decisions remain open. No production code is added by this ticket.**
 
 ## Source baseline
 
@@ -15,7 +15,7 @@ Status: **Research complete; three human decisions remain open. No production co
 | fsspec | [`2026.6.0` / `a2457004d03e0312f715f90f58873de5ab195a37`](https://github.com/fsspec/filesystem_spec/tree/a2457004d03e0312f715f90f58873de5ab195a37) | Async filesystem contract, sync bridge, and sync-to-async wrapper. |
 | Typer | [`0.27.0` / `60af34b60ab2650a74af32c6ce340c5cfbceb3d8`](https://github.com/fastapi/typer/tree/60af34b60ab2650a74af32c6ce340c5cfbceb3d8) | Locked host-facing command application; this release vendors an adapted Click 8.3.1 core. |
 | Click | [`8.4.2` / `b2e30a175449cfda909ee4fbf4a29a6a071cad53`](https://github.com/pallets/click/tree/b2e30a175449cfda909ee4fbf4a29a6a071cad53) | Upstream reference; its callback and teardown semantics corroborate Typer's vendored core. |
-| CPython | [`3.13.5` / `6cb20a219a860eaf687b2d968b41c480c7461909`](https://github.com/python/cpython/tree/6cb20a219a860eaf687b2d968b41c480c7461909) | `asyncio` runner and nested-loop behavior. |
+| CPython | `3.10.20` through `3.14.6` (pinned sources below) | `asyncio` runner and nested-loop behavior across the supported Python floor and current releases. |
 | `vosfs` | [`3860fcf7d0156a5c6b0c206ca4753443054f699f`](https://github.com/shinybrar/vosfs/tree/3860fcf7d0156a5c6b0c206ca4753443054f699f) | Top-priority native-async filesystem and concrete resource lifecycle. |
 
 The installed local fsspec and Click versions were also inspected. The links above are immutable upstream source evidence.
@@ -49,6 +49,8 @@ The public names such as `info` and `ls` on an async implementation are synchron
 
 The underscore naming means this is a deliberately selected, version-tested fsspec interface, not a universal promise for all `AbstractFileSystem` implementations. The per-command compatibility matrix must retain the exact fsspec version used for each result.
 
+This directly conflicts with the plain-`ls` profile's locked ban on private hooks. fsspec documents its underscore coroutines as the direct async implementation interface, but their spelling is still private by ordinary Python convention. The decision ticket must explicitly supersede or preserve that earlier rule; the research does not silently reinterpret it.
+
 ### 2. Raw Local and Memory are synchronous; the official wrapper uses threads
 
 `AbstractFileSystem` defaults `async_impl=False`. Both `LocalFileSystem` and `MemoryFileSystem` derive directly from it and implement ordinary `def info` and `def ls` methods. ([base flags](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/spec.py#L103-L119), [Local methods](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/local.py#L19-L78), [Memory methods](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/memory.py#L17-L43), [Memory `info`](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/memory.py#L149-L169))
@@ -73,7 +75,7 @@ Typer's vendored context teardown is synchronous: `Context.close` drains a regul
 
 ### 4. Python's normal runner owns one loop and forbids nesting
 
-`asyncio.run` creates a new event loop, finalizes async generators, shuts down the default executor, and closes the loop. It fails when another event loop is already running in the same thread. ([runner implementation](https://github.com/python/cpython/blob/6cb20a219a860eaf687b2d968b41c480c7461909/Lib/asyncio/runners.py#L160-L195), [runner contract](https://github.com/python/cpython/blob/6cb20a219a860eaf687b2d968b41c480c7461909/Doc/library/asyncio-runner.rst#L22-L50))
+`asyncio.run` creates a new event loop, finalizes async generators, shuts down the default executor, and closes the loop. It fails when another event loop is already running in the same thread. The same ownership and same-thread nesting rule is visible in pinned runner sources for [Python 3.10.20](https://github.com/python/cpython/blob/842e987df856a5d4db37933c62a3456930a19092/Lib/asyncio/runners.py#L8-L52), [3.11.15](https://github.com/python/cpython/blob/2340a037f7450e70fccfe411e6531afb4d57a312/Lib/asyncio/runners.py#L21-L100), [3.12.13](https://github.com/python/cpython/blob/3bb231a6a5dc02b95658877318bf61501a7209e9/Lib/asyncio/runners.py#L20-L100), [3.13.14](https://github.com/python/cpython/blob/fd17997c3866d61e0e7bd8201b1d8f35b40a40bd/Lib/asyncio/runners.py#L20-L101), and [3.14.6](https://github.com/python/cpython/blob/c63aec69bd59c55314c06c23f4c22c03de76fe45/Lib/asyncio/runners.py#L21-L105).
 
 `asyncio.Runner` permits several top-level coroutine calls on one owned loop, but `Runner.run` has the same same-thread running-loop prohibition and closes its loop, async generators, and executor when the context exits. ([Runner lifecycle](https://github.com/python/cpython/blob/6cb20a219a860eaf687b2d968b41c480c7461909/Lib/asyncio/runners.py#L20-L94), [Runner close](https://github.com/python/cpython/blob/6cb20a219a860eaf687b2d968b41c480c7461909/Lib/asyncio/runners.py#L64-L79))
 
@@ -98,6 +100,8 @@ fsspec's instance cache can retain filesystem instances after user references di
 The following recommendations are independent of the unresolved runner/lifecycle choice.
 
 ### App construction
+
+The constructor annotation remains the locked non-empty `Mapping[str, AbstractFileSystem]`; `AsyncFileSystem` is an `AbstractFileSystem` subtype. Runtime validation narrows which supplied values are compatible with the async-only application, without changing that injection type. fsspec's documented model says async implementations derive from `AsyncFileSystem`, so this nominal check follows its direct async contract rather than selecting a backend class.
 
 For each supplied mapping value, `App` should validate only generic async shape and mode:
 
@@ -175,6 +179,7 @@ Invocation of that synchronous Typer callback from a thread that already runs an
 1. **Typer boundary:** Does “all CLI work is async” permit one synchronous framework adapter because Typer/Click do not await callbacks? **Recommendation: yes; define async-only as all command orchestration and filesystem I/O beneath that adapter.** If no, `App(filesystems).typer_app` must be replaced or backed by a different async-capable command framework.
 2. **Resource ownership:** Which current lock may change? **Recommendation: preserve host-owned live instances and add an async invocation/lifecycle seam (Option A).** Alternative: transfer disposable instance ownership and replace the plain mapping with factories/context managers plus cleanup (Option B).
 3. **Sync-backend adaptation:** Should raw sync instances be rejected while host-supplied `AsyncFileSystemWrapper(..., asynchronous=True)` instances are accepted and marked `adapted async`? **Recommendation: yes; never auto-wrap.**
+4. **Documented underscore hooks:** May this boundary supersede the plain-`ls` profile's ban on private hooks by treating fsspec's documented `_info`, `_ls`, and later command-specific underscore coroutines as its direct async interface? **Recommendation: yes; keep the exact fsspec version in the compatibility matrix and let real awaited calls prove support.** If no, generic async fsspec command execution has no documented method surface.
 
 These decisions are coupled enough that they should be answered together. Locking only the runner while leaving resource ownership implicit would produce an unusable `vosfs` lifecycle.
 
