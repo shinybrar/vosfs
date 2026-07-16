@@ -28,43 +28,60 @@ class _RecordingFileSystem(AsyncFileSystem):
 
     def __init__(
         self,
-        events: list[tuple[object, ...]],
+        source: "_RecordingSource",
         source_id: int,
-        info_result: object,
-        info_error: BaseException | None,
     ) -> None:
         super().__init__(asynchronous=True)
-        self.events = events
+        self.source = source
         self.source_id = source_id
-        self.info_result = info_result
-        self.info_error = info_error
 
-    async def _info(self, path: str) -> object:
-        self.events.append(
+    async def _info(self, path: str, **kwargs: object) -> object:
+        del kwargs
+        self.source.events.append(
             ("info", self.source_id, path, id(asyncio.get_running_loop()))
         )
-        if self.info_error is not None:
-            raise self.info_error
-        return self.info_result
+        if self.source.info_error is not None:
+            raise self.source.info_error
+        return self.source.info_result
 
-    async def _ls(self, *args: object, **kwargs: object) -> NoReturn:
-        del args, kwargs
-        raise AssertionError
+    async def _ls(
+        self,
+        path: str,
+        detail: bool = True,  # noqa: FBT002 - matches the fsspec hook signature.
+        **kwargs: object,
+    ) -> object:
+        del kwargs
+        self.source.events.append(
+            (
+                "ls",
+                self.source_id,
+                path,
+                detail,
+                id(asyncio.get_running_loop()),
+            )
+        )
+        if self.source.ls_error is not None:
+            raise self.source.ls_error
+        return self.source.ls_result
 
 
 class _RecordingSource:
-    def __init__(
+    def __init__(  # noqa: PLR0913 - configurable external-boundary recording fake.
         self,
         events: list[tuple[object, ...]],
         info_result: object = MappingProxyType({"type": "file"}),
         *,
         info_error: BaseException | None = None,
+        ls_result: object = None,
+        ls_error: BaseException | None = None,
         exit_result: object = None,
         exit_error: BaseException | None = None,
     ) -> None:
         self.events = events
         self.info_result = info_result
         self.info_error = info_error
+        self.ls_result = ls_result
+        self.ls_error = ls_error
         self.exit_result = exit_result
         self.exit_error = exit_error
         self.exit_calls: list[tuple[object, object, object]] = []
@@ -87,12 +104,7 @@ class _RecordingContext:
     ) -> None:
         self.source = source
         self.source_id = source_id
-        self.filesystem = _RecordingFileSystem(
-            source.events,
-            source_id,
-            source.info_result,
-            source.info_error,
-        )
+        self.filesystem = _RecordingFileSystem(source, source_id)
 
     async def __aenter__(self) -> _RecordingFileSystem:
         self.source.events.append(

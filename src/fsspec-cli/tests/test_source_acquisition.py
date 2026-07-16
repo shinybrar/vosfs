@@ -198,7 +198,7 @@ def _async_filesystem_with_flag(
 
 @pytest.mark.parametrize(
     "info_result",
-    [None, {}, {"type": 1}, {"type": "directory"}, {"type": "other"}],
+    [None, {}, {"type": 1}, {"type": "other"}],
 )
 def test_ls_rejects_a_non_file_info_result(info_result: object) -> None:
     events: list[tuple[object, ...]] = []
