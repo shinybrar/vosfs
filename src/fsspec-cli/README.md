@@ -8,7 +8,8 @@ Hosts embed its Typer application through the sole behavioral seam,
 `AsyncFilesystemSource`: a callable that returns a fresh async context manager
 for one command invocation.
 
-The current `ls` slice implements only source-free argument preflight and the
-synchronous Typer-to-asyncio boundary. It does not yet enter a source, call a
-filesystem, or render a successful listing. The package has no console entry
-point or module executable.
+The current `ls` slice implements source-free argument preflight, the
+synchronous Typer-to-asyncio boundary, invocation-owned source lifecycle, and
+a files-only tracer. A valid file operand awaits `_info` and writes its exact
+mapped spelling; directory listing and backend compatibility claims remain
+future work. The package has no console entry point or module executable.

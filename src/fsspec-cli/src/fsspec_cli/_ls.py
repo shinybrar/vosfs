@@ -1,18 +1,25 @@
-"""Raw Typer parsing and source-free preflight for ``ls``."""
+"""Raw Typer parsing and async execution for ``ls``."""
 
 from __future__ import annotations
 
 import locale
+import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NoReturn, cast
 
 import typer
 from typer.core import TyperCommand
 
+from ._diagnostics import _render_diagnostic_value
+from ._sources import _SourceInvocation
+
 if TYPE_CHECKING:
     from collections.abc import Collection
 
     from typer._click import Context
+
+    from ._app import AsyncFilesystemSource
 
 _RAW_ARGUMENTS = "fsspec_cli.raw_arguments"
 
@@ -52,15 +59,6 @@ def _shield_help_values(arguments: list[str]) -> list[str]:
 
 def _raw_arguments(ctx: typer.Context) -> tuple[str, ...]:
     return cast("tuple[str, ...]", ctx.meta[_RAW_ARGUMENTS])
-
-
-def _render_diagnostic_value(value: str) -> str:
-    return (
-        value.replace("\\", "\\\\")
-        .replace("\0", "\\0")
-        .replace("\r", "\\r")
-        .replace("\n", "\\n")
-    )
 
 
 def _usage_error(diagnostic: str) -> NoReturn:
@@ -124,6 +122,36 @@ def _preflight(
 
 async def _run_ls(
     raw_arguments: tuple[str, ...],
-    known_names: Collection[str],
+    sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    _preflight(raw_arguments, known_names)
+    request = _preflight(raw_arguments, sources)
+    invocation = _SourceInvocation(sources)
+    files_succeeded = True
+    try:
+        names = dict.fromkeys(operand.name for operand in request.operands)
+        await invocation.acquire(names)
+        if not invocation.failed:
+            files_succeeded = await _trace_files(request, invocation)
+    finally:
+        cleanup_failed = await invocation.close(sys.exc_info())
+    if invocation.failed or not files_succeeded or cleanup_failed:
+        raise typer.Exit(1)
+
+
+async def _trace_files(
+    request: _LsRequest,
+    invocation: _SourceInvocation,
+) -> bool:
+    for operand in request.operands:
+        # fsspec's native async API intentionally exposes underscore coroutines.
+        info = await invocation[operand.name]._info(operand.path)  # noqa: SLF001
+        if not (
+            isinstance(info, Mapping)
+            and isinstance(info.get("type"), str)
+            and info["type"] == "file"
+        ):
+            rendered_operand = _render_diagnostic_value(operand.spelling)
+            typer.echo(f"ls: {rendered_operand}: incompatible result", err=True)
+            return False
+        typer.echo(operand.spelling)
+    return True
