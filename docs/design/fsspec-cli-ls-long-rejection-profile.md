@@ -64,9 +64,9 @@ There is no successful output grammar, fallback to plain output, per-operand
 continuation, or backend capability probe. Adapted async Local, adapted async
 Memory, and native async `vosfs` are all unsupported at the pinned baseline;
 the [viability evidence](../research/fsspec-cli-ls-long-viability.md) records
-why, while the tested command matrix owns exact status and version vocabulary.
-No live long-listing gate is required because rejection completes before source
-entry.
+why, while the [tested command matrix](fsspec-cli-tested-command-matrix.md) owns
+exact status and version vocabulary. No live long-listing gate is required
+because rejection completes before source entry.
 
 ## Rejected alternatives
 

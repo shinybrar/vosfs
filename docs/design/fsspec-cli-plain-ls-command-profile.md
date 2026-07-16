@@ -300,8 +300,8 @@ branches against Local, Memory, and hermetic `VOSpaceFileSystem` instances.
 
 ## 9. Downstream ownership
 
-- [Define the tested command matrix contract](https://github.com/shinybrar/vosfs/issues/81)
-  owns matrix statuses, versions, and hermetic-versus-live evidence rules.
+- [Tested command matrix contract](fsspec-cli-tested-command-matrix.md) owns
+  matrix statuses, versions, and hermetic-versus-live evidence rules.
 - [Strict `ls -l` rejection profile](fsspec-cli-ls-long-rejection-profile.md)
   records why V1 adds no long renderer and keeps whole-invocation preflight
   rejection.

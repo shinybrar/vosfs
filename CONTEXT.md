@@ -54,6 +54,20 @@ Plain `ls` accepts one or more mapped filesystem operands and has no implicit
 current or default filesystem.
 _Avoid_: fsspec URL, protocol URL, mount point, bare path
 
+**Command compatibility profile**:
+The locked observable behavior for one embedded command and option surface,
+independent of backend type. A profile defines the consumed async operations,
+result shapes, output, diagnostics, and exit behavior that tested source forms
+must share.
+_Avoid_: Generic POSIX support, backend-specific command mode
+
+**Tested command matrix**:
+The version-scoped evidence ledger for command compatibility profiles across
+specific native or adapted async filesystem source forms. Missing, stale, or
+incomplete evidence is unverified rather than unsupported, and one command's
+status makes no claim about another command.
+_Avoid_: fsspec compatibility list, runtime capability registry
+
 **Negotiated byte endpoint**:
 The temporary or pre-authorized byte URL returned by `/synctrans` for one
 `pullFromVoSpace` read or `pushToVoSpace` write.
