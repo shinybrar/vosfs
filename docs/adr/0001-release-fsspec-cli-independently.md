@@ -1,5 +1,10 @@
 # Release fsspec-cli independently inside the vosfs workspace
 
+> **Partially superseded by
+> [Own async filesystems per command invocation](./0002-own-async-filesystems-per-invocation.md):**
+> only the live-instance `App(filesystems)` ownership clause is replaced.
+> Independent release and workspace decisions remain accepted.
+
 To support co-development now without coupling future extraction to `vosfs`,
 `fsspec-cli` will be a self-contained uv workspace member at `src/fsspec-cli`
 with its own `pyproject.toml`, `README.md`, `CHANGELOG.md`, `src/fsspec_cli`, and
@@ -8,11 +13,10 @@ with its own `pyproject.toml`, `README.md`, `CHANGELOG.md`, `src/fsspec_cli`, an
 `fsspec-cli-vX.Y.Z` tags so it can release on its own schedule; each GitHub
 Release contains only its wheel and sdist and does not trigger the `vosfs`
 documentation deployment, while `vosfs` keeps its existing `vX.Y.Z` tag lineage
-and versioned-documentation deployment. The library-only distribution's sole
-stable v1 seam is `App(filesystems).typer_app`, where `filesystems` is a
-non-empty `Mapping[str, AbstractFileSystem]` of live, host-configured instances;
-it defines no project script or package-owned shell executable and declares only
-generic `fsspec` and `typer` runtime dependencies, so neither distribution
+and versioned-documentation deployment. The library-only distribution's v1
+integration seam and filesystem lifecycle are defined by the superseding ADR;
+it defines no project script or package-owned shell executable and declares
+only generic `fsspec` and `typer` runtime dependencies, so neither distribution
 depends on the other at runtime.
 
 ## Consequences
@@ -20,7 +24,7 @@ depends on the other at runtime.
 - PyPI publication is deferred because the
   [`fsspec-cli` name](https://pypi.org/project/fsspec-cli/) belongs to an
   unrelated project.
-- VOS hosts install both distributions and inject a configured
-  `VOSpaceFileSystem`; integration tests own VOS compatibility.
+- VOS hosts install both distributions and provide a configured async
+  filesystem source; integration tests own VOS compatibility.
 - CI tests the built `fsspec-cli` wheel in isolation so the shared workspace
   environment cannot hide undeclared dependencies.
