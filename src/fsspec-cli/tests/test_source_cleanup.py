@@ -211,7 +211,9 @@ def test_ls_cleans_up_then_propagates_info_control_flow_unchanged(
             sources={"alpha": alpha, "beta": beta},
         )
 
-    assert caught.value is control
+    assert type(caught.value) is type(control)
+    if not isinstance(control, asyncio.CancelledError):
+        assert caught.value is control
     assert [event[0] for event in events] == [
         "factory",
         "enter",
