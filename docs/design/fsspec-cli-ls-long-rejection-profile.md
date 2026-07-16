@@ -48,66 +48,25 @@ zeroes, question marks, dashes, empty strings, inferred identities, or omitted
 columns. Support must be established through one source-independent consumed
 shape and real version-tested calls, not concrete filesystem branches.
 
-## Option and operand preflight
+## Locked `-l` rejection delta
 
-The existing plain-`ls` preflight contract remains authoritative. In
-particular:
+The plain command's [option preflight](fsspec-cli-plain-ls-command-profile.md#21-option-and-operand-preflight)
+and [exit-status](fsspec-cli-plain-ls-command-profile.md#7-exit-status)
+contracts apply unchanged:
 
-- `-l`, `-ll`, and every grouped short-option token containing `l`, such as
-  `-Al` or `-lA`, report the complete token as unsupported;
-- `--long` is an unsupported GNU extension;
-- unsupported-option preflight occurs before source construction, source entry,
-  yielded-filesystem validation, backend calls, or command output; and
-- after `--`, `-l` is an operand and follows the existing mapped-filesystem
-  operand grammar instead of option handling.
+- `-l`, `-ll`, grouped short-option tokens containing `l`, and `--long` report
+  the complete token as unsupported;
+- rejection emits one diagnostic, writes no stdout, enters no async filesystem
+  source, performs no filesystem operation, and exits `2`; and
+- after `--`, `-l` is an operand and follows mapped-filesystem operand grammar.
 
-Typer's framework-owned `--help` short circuit remains exempt from command
-compatibility behavior.
-
-## Observable rejection contract
-
-For any single- or multiple-operand invocation containing unsupported `-l`, the
-command:
-
-1. writes no stdout;
-2. emits exactly one escaped diagnostic for the first preflight error;
-3. does not call or enter any async filesystem source;
-4. performs no filesystem operation; and
-5. exits `2`.
-
-Examples:
-
-```text
-$ ls -l memory:/docs
-ls: -l: unsupported option
-```
-
-```text
-$ ls -Al local:/tmp vos:/science
-ls: -Al: unsupported option
-```
-
-```text
-$ ls -- -l
-ls: -l: invalid mapped filesystem operand
-```
-
-The command never falls back to plain output, continues per operand, prints a
-header or `total` line, or probes whether one selected filesystem could produce
-an approximation. This is source-independent command-interface rejection, not
-a runtime backend incompatibility.
-
-## Initial compatibility result
-
-| Filesystem form | `ls -l` result | Reason |
-| --- | --- | --- |
-| Adapted async Local | Unsupported | Reduced base-stat rows still lack allocation totals, authoritative alternate-access state, correct link rows, and device information. |
-| Adapted async Memory | Unsupported | Mode, link count, owner, group, directory modification time, and allocation totals are absent. |
-| Native async `vosfs` | Unsupported | Mode, link count, owning group, allocation totals, and unconditional size and modification-time facts are absent. |
-
-The tested command matrix owns exact status vocabulary, backend versions, and
-evidence gates. Because rejection completes before source entry, no live
-long-listing gate is required.
+There is no successful output grammar, fallback to plain output, per-operand
+continuation, or backend capability probe. Adapted async Local, adapted async
+Memory, and native async `vosfs` are all unsupported at the pinned baseline;
+the [viability evidence](../research/fsspec-cli-ls-long-viability.md) records
+why, while the tested command matrix owns exact status and version vocabulary.
+No live long-listing gate is required because rejection completes before source
+entry.
 
 ## Rejected alternatives
 
