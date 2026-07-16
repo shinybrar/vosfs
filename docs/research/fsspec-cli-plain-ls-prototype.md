@@ -12,7 +12,7 @@ Client baseline: fsspec 2026.6.0
 
 Prototype tip: `057538d4236c801a1c3a6a2d67d404748cd02950`
 
-Status: **Prototype evidence; awaiting human verdict.**
+Status: **Locked verdict; prototype disposed.**
 
 ## Question
 
@@ -20,7 +20,7 @@ Can one Typer handler implement the locked plain-`ls` profile across Local,
 Memory, hermetic `VOSpaceFileSystem`, and one narrow live OpenCADC listing
 without backend-specific command logic?
 
-## Proposed finding
+## Locked finding
 
 Yes, for the tested file-and-directory capability floor. One command handler
 used only the supplied filesystem's public synchronous `info(path)` and, for
@@ -31,9 +31,20 @@ construction, backend-type checks, private hooks, or retry fallbacks.
 This is evidence that a backend-agnostic plain-`ls` client is viable for tested
 fsspec implementations. It is not evidence that every fsspec implementation
 is compatible. Unsupported operations, incompatible result shapes, and the
-configuration fog below remain explicit outcomes.
+remaining interoperability boundaries below remain explicit outcomes.
 
-Human verdict: **Pending.**
+Human verdict: **Locked.** Plain-`ls` semantics are viable for the tested
+synchronous file/directory floor without a universal-fsspec claim. Configured
+filesystem names containing NUL are invalid and production `App` construction
+must reject them.
+
+After the prototype verdict, one additional standing constraint was locked:
+all production CLI orchestration and filesystem calls are async-only. The
+synchronous prototype below remains evidence about command semantics, backend
+result shapes, and the tested compatibility floor. No synchronous prototype
+code is an implementation precursor. [Define the async execution boundary for
+fsspec-cli](https://github.com/shinybrar/vosfs/issues/90) owns event-loop,
+filesystem-instance, and host-embedding behavior before implementation work.
 
 ## Locked public seam
 
@@ -81,7 +92,7 @@ prototype suite contains 88 tests.
 
 ## Commands and observed results
 
-Run the disposable demo:
+Historical disposable demo command:
 
 ```console
 uv run --locked --with typer==0.27.0 \
@@ -90,7 +101,7 @@ guide.md
 notes.txt
 ```
 
-Run all prototype evidence:
+Historical prototype evidence command:
 
 ```console
 uv run --locked --with typer==0.27.0 \
@@ -126,12 +137,11 @@ uv run --locked --with typer==0.27.0 \
 ```
 
 The repository's normal locked environment intentionally has no Typer
-dependency. Its standard coverage gate therefore skips the disposable
-prototype module and still passes:
+dependency. After prototype disposal, its standard coverage gate passes:
 
 ```console
 uv run --locked pytest -q
-405 passed, 51 skipped, 2 deselected, 2 warnings in 6.49s
+405 passed, 50 skipped, 2 deselected, 2 warnings in 11.47s
 Required test coverage of 90.0% reached. Total coverage: 96.98%
 ```
 
@@ -166,7 +176,7 @@ emitted before an output failure stopped stdout.
 
 ### Evidence supports
 
-- A generic synchronous plain-`ls` handler over preconfigured fsspec instances.
+- Backend-agnostic plain-`ls` semantics over preconfigured fsspec instances.
 - Honest compatibility decisions from observed call and result shapes.
 - Local, Memory, and VOS interoperability without command-level backend logic.
 - Stable rejection when a backend cannot supply the locked capability floor.
@@ -174,13 +184,14 @@ emitted before an output failure stopped stdout.
 ### Evidence does not support
 
 - Every existing or future fsspec implementation.
-- Asynchronous filesystem instances.
+- Async execution, event-loop ownership, or async host embedding; the
+  synchronous prototype cannot prove those production requirements.
 - Non-file/non-directory node types.
 - `ls -l`, metadata decoration, recursion, columns, color, or quoting.
 - Filesystem construction, authentication, packaging, or shell installation.
 - Performance or broad live-service guarantees.
 
-### Explicit configuration fog
+### Locked configuration boundary
 
 CPython and macOS cannot apply host `LC_COLLATE` to strings containing embedded
 NUL. The prototype proves diagnostic rendering for one NUL-containing
@@ -189,9 +200,9 @@ ordering that name among two or more configured filesystems. A raw Unicode
 fallback was tested and removed because it would invent non-locale order.
 
 Such a mapped name is already unreachable because explicit operands containing
-NUL fail preflight. A production tracer should reject NUL mapping keys when
-constructing `App`, or the locked profile must define a different ordering
-rule. The prototype does neither without a human decision.
+NUL fail preflight. The human verdict therefore locks NUL-containing mapping
+names as invalid; production `App` construction must reject them before
+command execution.
 
 ### Local root caveat
 
@@ -202,26 +213,26 @@ literal mapped-root behavior.
 
 ### Fog transferred to later Wayfinder questions
 
+- Async execution and host embedding: [issue #90](https://github.com/shinybrar/vosfs/issues/90)
 - Tested-status vocabulary and version policy: [issue #81](https://github.com/shinybrar/vosfs/issues/81)
 - Long-format profiles: [issue #82](https://github.com/shinybrar/vosfs/issues/82)
 - Production tracer sequencing: [issue #83](https://github.com/shinybrar/vosfs/issues/83)
 
-## Human handoff and prototype disposal
+## Verdict and prototype disposal
 
-Artifacts awaiting review:
+Deleted prototype-only artifacts:
 
 - `prototypes/fsspec_cli_plain_ls.py`
 - `prototypes/fsspec_cli_plain_ls_demo.py`
 - `prototypes/README.md`
 - `tests/test_fsspec_cli_plain_ls_prototype.py`
 
-Proposed verdict: **viable for the tested synchronous file/directory floor,
-with no universal-fsspec claim and with NUL-containing mapping keys unsupported
-unless a later contract defines them.**
+Locked verdict: **viable semantics for the tested synchronous file/directory
+floor, with no universal-fsspec claim; NUL-containing mapping names are
+invalid; all production CLI work is async-only.**
 
-After the verdict is locked, all prototype-only code and tests are deleted.
-This report retains the evidence; no production CLI implementation is added by
-issue #80.
+All prototype-only code and tests were deleted after the verdict. This report
+retains the evidence; no production CLI implementation was added by issue #80.
 
 ## Evidence links
 
