@@ -6,3 +6,4 @@ All notable changes to `fsspec-cli` are documented in this file.
 
 - Establish the independent package and workspace boundary.
 - Add the embedded Typer boundary and source-free `ls` preflight contract.
+- Add invocation-owned async source lifecycle and the one-file `ls` tracer.

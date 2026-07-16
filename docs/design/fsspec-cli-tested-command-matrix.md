@@ -194,9 +194,9 @@ When classifying a gate result:
 
 ## 8. Initial matrix and first-release target
 
-Before the production tracer exists, every cell is `unverified`. Prototype
-research informs the locked profiles but is not evidence for a production
-package that has not been built.
+Until qualifying source-form gates exist, every cell remains `unverified`.
+The narrow production tracer and prototype research do not qualify as
+backend-specific evidence on their own.
 
 | Command profile | Scope | Source form | Current status | Required status for `fsspec-cli` 0.1.0 | Required gates | Evidence |
 | --- | --- | --- | --- | --- | --- | --- |

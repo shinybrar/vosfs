@@ -1,4 +1,4 @@
-"""Tests for the public embedded-command application seam."""
+"""Construction and preflight tests for the public embedded-command seam."""
 
 import asyncio
 from typing import NoReturn

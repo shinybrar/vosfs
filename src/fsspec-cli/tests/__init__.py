@@ -1,0 +1,1 @@
+"""fsspec-cli tests."""
