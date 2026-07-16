@@ -40,6 +40,13 @@ that owns POSIX-shaped command logic. Its sole stable v1 seam for host tools is
 host.
 _Avoid_: vosfs CLI, fsspec-cli executable
 
+**Mapped filesystem operand**:
+An explicit `name:/path` command argument whose name selects one filesystem
+from the embedded command library's configured mapping. Plain `ls` accepts one
+or more mapped filesystem operands and has no implicit current or default
+filesystem.
+_Avoid_: fsspec URL, protocol URL, mount point, bare path
+
 **Negotiated byte endpoint**:
 The temporary or pre-authorized byte URL returned by `/synctrans` for one
 `pullFromVoSpace` read or `pushToVoSpace` write.
