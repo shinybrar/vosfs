@@ -127,16 +127,15 @@ async def _run_ls(
 ) -> None:
     request = _preflight(raw_arguments, sources)
     invocation = _SourceInvocation(sources)
-    filesystems = None
-    files_succeeded = True
+    succeeded = False
     try:
         names = dict.fromkeys(operand.name for operand in request.operands)
         filesystems = await invocation.acquire(names)
         if filesystems is not None:
-            files_succeeded = await _trace_files(request, filesystems)
+            succeeded = await _trace_files(request, filesystems)
     finally:
         cleanup_failed = await invocation.close(sys.exc_info())
-    if filesystems is None or not files_succeeded or cleanup_failed:
+    if not succeeded or cleanup_failed:
         raise typer.Exit(1)
 
 
