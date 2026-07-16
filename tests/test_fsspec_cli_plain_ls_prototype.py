@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 from fsspec import AbstractFileSystem
+from fsspec.implementations.local import LocalFileSystem
 from fsspec.implementations.memory import MemoryFileSystem
 
 pytest.importorskip("typer")
@@ -152,3 +153,48 @@ def test_ls_sorts_backend_children_with_current_c_locale() -> None:
         ("info", "/docs", {}),
         ("ls", "/docs", {"detail": False}),
     ]
+
+
+def test_ls_groups_cross_filesystem_file_before_directory(tmp_path: Any) -> None:
+    local_directory = tmp_path / "docs"
+    local_directory.mkdir()
+    (local_directory / "z.txt").write_bytes(b"z")
+    (local_directory / "a.txt").write_bytes(b"a")
+    local_filesystem = RecordingFileSystem(
+        LocalFileSystem(skip_instance_cache=True),
+        skip_instance_cache=True,
+    )
+    directory_operand = f"local:{local_directory}"
+
+    memory_filesystem = MemoryFileSystem(skip_instance_cache=True)
+    memory_namespace = f"/issue80-slice5-{uuid4().hex}"
+    memory_file = f"{memory_namespace}/guide.md"
+    memory_filesystem.makedirs(memory_namespace)
+    memory_filesystem.pipe_file(memory_file, b"guide")
+    memory_recording = RecordingFileSystem(
+        memory_filesystem,
+        skip_instance_cache=True,
+    )
+    file_operand = f"memory:{memory_file}"
+
+    try:
+        result = CliRunner().invoke(
+            App(
+                {
+                    "local": local_filesystem,
+                    "memory": memory_recording,
+                }
+            ).typer_app,
+            ["ls", directory_operand, file_operand],
+        )
+    finally:
+        memory_filesystem.rm(memory_namespace, recursive=True)
+
+    assert result.exit_code == 0
+    assert result.stdout == (f"{file_operand}\n\n{directory_operand}:\na.txt\nz.txt\n")
+    assert result.stderr == ""
+    assert local_filesystem.calls == [
+        ("info", str(local_directory), {}),
+        ("ls", str(local_directory), {"detail": False}),
+    ]
+    assert memory_recording.calls == [("info", memory_file, {})]

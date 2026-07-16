@@ -31,21 +31,46 @@ class App:
             """Create the prototype command group."""
 
         @self.typer_app.command("ls")
-        def _ls(operand: str) -> None:
-            """List one mapped directory through public fsspec methods."""
-            name, path = operand.split(":", 1)
-            filesystem = filesystems[name]
-            entry = filesystem.info(path)
-            if entry["type"] == "file":
-                typer.echo(operand)
+        def _ls(operands: list[str]) -> None:
+            """List mapped files and directories through public fsspec methods."""
+            file_results: list[str] = []
+            directory_results: list[tuple[str, list[str]]] = []
+
+            for operand in operands:
+                name, path = operand.split(":", 1)
+                filesystem = filesystems[name]
+                entry = filesystem.info(path)
+                if entry["type"] == "file":
+                    file_results.append(operand)
+                    continue
+                basenames = [
+                    posixpath.basename(child)
+                    for child in filesystem.ls(path, detail=False)
+                    if not posixpath.basename(child).startswith(".")
+                ]
+                directory_results.append(
+                    (
+                        operand,
+                        sorted(
+                            basenames,
+                            key=lambda child: (locale.strxfrm(child), child),
+                        ),
+                    )
+                )
+
+            if len(operands) == 1:
+                if file_results:
+                    typer.echo(file_results[0])
+                    return
+                for basename in directory_results[0][1]:
+                    typer.echo(basename)
                 return
-            basenames = [
-                posixpath.basename(child)
-                for child in filesystem.ls(path, detail=False)
-                if not posixpath.basename(child).startswith(".")
-            ]
-            for basename in sorted(
-                basenames,
-                key=lambda name: (locale.strxfrm(name), name),
-            ):
-                typer.echo(basename)
+
+            blocks: list[str] = []
+            if file_results:
+                blocks.append("\n".join(file_results))
+            blocks.extend(
+                "\n".join((f"{operand}:", *basenames))
+                for operand, basenames in directory_results
+            )
+            typer.echo("\n\n".join(blocks))
