@@ -27,3 +27,6 @@ diagnostics, and exit behavior. The canonical row-scoped matrix records current
 classifications and immutable evidence. Release-candidate readiness still
 requires the isolated-wheel command-matrix gate. Native `vosfs` remains
 `unverified` until the live OpenCADC gate supplements its hermetic evidence.
+The live observation harness captures only classification, package, platform,
+source-mode, call-shape, cleanup, commit, and immutable-run metadata; it never
+publishes directory entries or credential material.

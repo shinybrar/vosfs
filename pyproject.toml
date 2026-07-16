@@ -41,6 +41,9 @@ dev = [
     "zarr>=3 ; python_full_version >= '3.11'",
     "zensical>=0.0.50",
 ]
+live = [
+    "cadcutils>=1.6.2",
+]
 
 [tool.pytest]
 addopts = [

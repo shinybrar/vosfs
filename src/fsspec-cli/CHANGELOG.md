@@ -14,3 +14,5 @@ All notable changes to `fsspec-cli` are documented in this file.
   pending.
 - Require every supported CI leg to test the built wheel outside the workspace,
   with `vosfs` installed only as a separate integration wheel.
+- Add a sanitized live OpenCADC plain-`ls` observation harness with truthful
+  `pass`, `fail`, and `unverified` classifications.
