@@ -200,13 +200,52 @@ backend-specific evidence on their own.
 
 | Command profile | Scope | Source form | Current status | Required status for `fsspec-cli` 0.1.0 | Required gates | Evidence |
 | --- | --- | --- | --- | --- | --- | --- |
-| [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `local / adapted async` | `unverified` | `pass` | Hermetic | — |
-| [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `memory / adapted async` | `unverified` | `pass` | Hermetic | — |
+| [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29525392759](#h-2026-07-16-29525392759) |
+| [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29525392759](#h-2026-07-16-29525392759) |
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `vosfs / native async` | `unverified` | `pass` | Hermetic and live OpenCADC | — |
-| [`ls -l` strict rejection](fsspec-cli-ls-long-rejection-profile.md) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | — |
+| [`ls -l` strict rejection](fsspec-cli-ls-long-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-16-29525392759](#h-2026-07-16-29525392759) |
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.
+
+### H-2026-07-16-29525392759
+
+This hermetic pull-request matrix observed `fsspec-cli` 0.1.0 at
+[commit `c7c476f2f073e15e463bda779a619109a4a842b1`](https://github.com/shinybrar/vosfs/commit/c7c476f2f073e15e463bda779a619109a4a842b1)
+with fsspec 2026.6.0, Typer 0.27.0, and vosfs 0.3.3. The complete resolved
+dependency set is recoverable from the
+[commit-pinned `uv.lock`](https://github.com/shinybrar/vosfs/blob/c7c476f2f073e15e463bda779a619109a4a842b1/uv.lock).
+
+The run exercised adapted async Local and Memory sources through the
+production `App` seam. Its negative `ls -l` case completed during command
+preflight without entering a source. The mocked VOS case exercised the native
+async source form, but that observation is incomplete for the VOS matrix row
+because the required live OpenCADC gate is absent; the row therefore remains
+`unverified` with an evidence cell of `—`.
+
+The gate ran from 2026-07-16T18:47:29Z through 2026-07-16T18:49:01Z in
+[GitHub Actions run 29525392759](https://github.com/shinybrar/vosfs/actions/runs/29525392759).
+Every leg used runner 2.335.1:
+
+| Python | Operating system | Runner image | Image version | Provisioner version | Immutable job |
+| --- | --- | --- | --- | --- | --- |
+| 3.10.20 | Ubuntu 24.04.4 LTS | `ubuntu-24.04` | `20260714.240.1` | `20260707.563` | [87712449662](https://github.com/shinybrar/vosfs/actions/runs/29525392759/job/87712449662) |
+| 3.11.15 | Ubuntu 24.04.4 LTS | `ubuntu-24.04` | `20260714.240.1` | `20260707.563` | [87712449679](https://github.com/shinybrar/vosfs/actions/runs/29525392759/job/87712449679) |
+| 3.12.3 | Ubuntu 24.04.4 LTS | `ubuntu-24.04` | `20260714.240.1` | `20260707.563` | [87712449711](https://github.com/shinybrar/vosfs/actions/runs/29525392759/job/87712449711) |
+| 3.13.14 | Ubuntu 24.04.4 LTS | `ubuntu-24.04` | `20260714.240.1` | `20260707.563` | [87712449685](https://github.com/shinybrar/vosfs/actions/runs/29525392759/job/87712449685) |
+| 3.14.6 | Ubuntu 24.04.4 LTS | `ubuntu-24.04` | `20260714.240.1` | `20260707.563` | [87712449720](https://github.com/shinybrar/vosfs/actions/runs/29525392759/job/87712449720) |
+| 3.12.10 | Microsoft Windows Server 2025, 10.0.26100 Datacenter | `windows-2025-vs2026` | `20260714.173.1` | `20260707.563` | [87712449677](https://github.com/shinybrar/vosfs/actions/runs/29525392759/job/87712449677) |
+| 3.12.10 | macOS 26.4, build 25E246 | `macos-26-arm64` | `20260630.0213.1` | `20260624.560` | [87712449708](https://github.com/shinybrar/vosfs/actions/runs/29525392759/job/87712449708) |
+
+The executable evidence is the commit-pinned
+[Local and Memory command matrix](https://github.com/shinybrar/vosfs/blob/c7c476f2f073e15e463bda779a619109a4a842b1/src/fsspec-cli/tests/test_command_matrix.py)
+and
+[mocked VOS command matrix](https://github.com/shinybrar/vosfs/blob/c7c476f2f073e15e463bda779a619109a4a842b1/src/fsspec-cli/tests/test_vosfs_command_matrix.py).
+This run did not execute the command matrix against an isolated built wheel
+and therefore does not complete the release-candidate gate in Section 9. Issue
+[#105](https://github.com/shinybrar/vosfs/issues/105) adds that evidence; it
+does not change these command classifications unless the isolated run
+contradicts them.
 
 ## 9. CI and release policy
 

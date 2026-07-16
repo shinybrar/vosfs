@@ -9,3 +9,6 @@ All notable changes to `fsspec-cli` are documented in this file.
 - Add invocation-owned async source lifecycle and the one-file `ls` tracer.
 - Add strict async directory listing, hidden-name selection, and runtime categories.
 - Add deterministic multi-operand rendering, failure continuation, and output-failure handling.
+- Add hermetic matrix probes for adapted Local, adapted Memory, native `vosfs`,
+  and strict `ls -l` rejection while complete compatibility evidence remains
+  pending.

@@ -18,3 +18,12 @@ failures continue with stable diagnostics and output failures preserve their
 accepted-byte boundary. Backend compatibility claims remain `unverified`
 until their source-form gates run. The package has no console entry point or
 module executable.
+
+Package-owned hermetic probes now exercise adapted Local, adapted Memory, and
+native async `vosfs` sources through that same public seam. They block name
+resolution and high-level connection attempts, give `vosfs` a strict mocked
+transport, and verify lifecycle, awaited calls, raw result shapes, output,
+diagnostics, and exit behavior. The canonical row-scoped matrix records current
+classifications and immutable evidence. Release-candidate readiness still
+requires the isolated-wheel command-matrix gate. Native `vosfs` remains
+`unverified` until the live OpenCADC gate supplements its hermetic evidence.

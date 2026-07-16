@@ -23,8 +23,13 @@ source-include = ["CHANGELOG.md", "tests/**"]
 
 [dependency-groups]
 dev = [
+    "httpx>=0.27",
     "pytest>=9.1.1",
+    "vosfs",
 ]
+
+[tool.uv.sources]
+vosfs = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -494,7 +494,9 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "httpx" },
     { name = "pytest" },
+    { name = "vosfs" },
 ]
 
 [package.metadata]
@@ -504,7 +506,11 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.1.1" }]
+dev = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "vosfs", editable = "." },
+]
 
 [[package]]
 name = "ghp-import"
