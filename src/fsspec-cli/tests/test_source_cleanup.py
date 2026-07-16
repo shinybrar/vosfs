@@ -1,13 +1,41 @@
 """Source cleanup and control-flow tests through the public seam."""
 
 import asyncio
+from collections.abc import Iterable
 from typing import NoReturn
 
 import pytest
+import typer
 from fsspec_cli import App
 from typer.testing import CliRunner
 
 from ._support import _invoke_ls, _RecordingSource, _source_must_not_run
+
+
+def _fail_diagnostic_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    failures: Iterable[BaseException],
+    events: list[tuple[object, ...]] | None = None,
+) -> list[object]:
+    diagnostics: list[object] = []
+    remaining_failures = iter(failures)
+    real_echo = typer.echo
+
+    def failing_echo(
+        message: object = None,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        if kwargs.get("err") is not True:
+            real_echo(message, *args, **kwargs)
+            return
+        diagnostics.append(message)
+        if events is not None:
+            events.append(("diagnostic", message))
+        raise next(remaining_failures)
+
+    monkeypatch.setattr(typer, "echo", failing_echo)
+    return diagnostics
 
 
 def test_ls_reports_every_source_exit_failure_in_reverse_order() -> None:
@@ -28,6 +56,84 @@ def test_ls_reports_every_source_exit_failure_in_reverse_order() -> None:
     )
     assert len(alpha.exit_calls) == 1
     assert len(beta.exit_calls) == 1
+
+
+def test_ls_finishes_cleanup_before_a_diagnostic_write_can_fail(
+    monkeypatch,
+) -> None:
+    events: list[tuple[object, ...]] = []
+    primary = SystemExit(7)
+    diagnostic_control = _ControlFlow("diagnostic stop")
+    alpha = _RecordingSource(
+        events,
+        info_error=primary,
+        exit_error=OSError("alpha exit"),
+    )
+    beta = _RecordingSource(events, exit_error=RuntimeError("beta exit"))
+    diagnostics = _fail_diagnostic_writes(
+        monkeypatch,
+        (diagnostic_control, diagnostic_control),
+        events,
+    )
+    result = _invoke_ls(
+        ["alpha:/one", "beta:/two"],
+        sources={"alpha": alpha, "beta": beta},
+    )
+
+    assert result.exception is primary
+    assert result.exit_code == 7
+    assert len(alpha.exit_calls) == len(beta.exit_calls) == 1
+    assert diagnostics == [
+        "ls: beta: source exit failure (RuntimeError): beta exit",
+        "ls: alpha: source exit failure (OSError): alpha exit",
+    ]
+    assert [event[0] for event in events][-4:] == [
+        "exit",
+        "exit",
+        "diagnostic",
+        "diagnostic",
+    ]
+
+
+def test_ls_propagates_first_diagnostic_control_after_every_render(
+    monkeypatch,
+) -> None:
+    events: list[tuple[object, ...]] = []
+    first_control = _ControlFlow("first diagnostic")
+    later_control = _ControlFlow("later diagnostic")
+    controls = iter((first_control, later_control))
+    alpha = _RecordingSource(events, exit_error=OSError("alpha exit"))
+    beta = _RecordingSource(events, exit_error=RuntimeError("beta exit"))
+    diagnostics = _fail_diagnostic_writes(monkeypatch, controls)
+    with pytest.raises(_ControlFlow) as caught:
+        _invoke_ls(
+            ["alpha:/one", "beta:/two"],
+            sources={"alpha": alpha, "beta": beta},
+        )
+
+    assert caught.value is first_control
+    assert len(alpha.exit_calls) == len(beta.exit_calls) == 1
+    assert len(diagnostics) == 2
+
+
+def test_ls_treats_ordinary_diagnostic_write_failures_as_status_one(
+    monkeypatch,
+) -> None:
+    events: list[tuple[object, ...]] = []
+    alpha = _RecordingSource(events, exit_error=OSError("alpha exit"))
+    beta = _RecordingSource(events, exit_error=RuntimeError("beta exit"))
+    diagnostics = _fail_diagnostic_writes(
+        monkeypatch,
+        (RuntimeError("diagnostic write"), RuntimeError("diagnostic write")),
+    )
+    result = _invoke_ls(
+        ["alpha:/one", "beta:/two"],
+        sources={"alpha": alpha, "beta": beta},
+    )
+
+    assert result.exit_code == 1
+    assert len(alpha.exit_calls) == len(beta.exit_calls) == 1
+    assert len(diagnostics) == 2
 
 
 def test_ls_renders_source_names_and_empty_exception_messages() -> None:

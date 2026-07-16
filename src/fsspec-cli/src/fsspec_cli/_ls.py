@@ -17,6 +17,7 @@ from ._sources import _SourceInvocation
 if TYPE_CHECKING:
     from collections.abc import Collection
 
+    from fsspec.asyn import AsyncFileSystem
     from typer._click import Context
 
     from ._app import AsyncFilesystemSource
@@ -126,25 +127,26 @@ async def _run_ls(
 ) -> None:
     request = _preflight(raw_arguments, sources)
     invocation = _SourceInvocation(sources)
+    filesystems = None
     files_succeeded = True
     try:
         names = dict.fromkeys(operand.name for operand in request.operands)
-        await invocation.acquire(names)
-        if not invocation.failed:
-            files_succeeded = await _trace_files(request, invocation)
+        filesystems = await invocation.acquire(names)
+        if filesystems is not None:
+            files_succeeded = await _trace_files(request, filesystems)
     finally:
         cleanup_failed = await invocation.close(sys.exc_info())
-    if invocation.failed or not files_succeeded or cleanup_failed:
+    if filesystems is None or not files_succeeded or cleanup_failed:
         raise typer.Exit(1)
 
 
 async def _trace_files(
     request: _LsRequest,
-    invocation: _SourceInvocation,
+    filesystems: Mapping[str, AsyncFileSystem],
 ) -> bool:
     for operand in request.operands:
         # fsspec's native async API intentionally exposes underscore coroutines.
-        info = await invocation[operand.name]._info(operand.path)  # noqa: SLF001
+        info = await filesystems[operand.name]._info(operand.path)  # noqa: SLF001
         if not (
             isinstance(info, Mapping)
             and isinstance(info.get("type"), str)

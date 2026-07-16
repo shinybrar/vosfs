@@ -37,6 +37,23 @@ def _source_exception(name: str, stage: str, error: Exception) -> None:
     )
 
 
+def _render_exit_failures(
+    failures: Iterable[tuple[str, Exception]],
+    *,
+    preserve_control: bool,
+) -> BaseException | None:
+    render_control = None
+    for name, error in failures:
+        try:
+            _source_exception(name, "exit", error)
+        except Exception:  # noqa: BLE001, PERF203, S110 - attempt every diagnostic.
+            pass
+        except BaseException as error:  # noqa: BLE001 - preserve control flow.
+            if not preserve_control and render_control is None:
+                render_control = error
+    return render_control
+
+
 class _SourceInvocation:
     """Acquire, expose, and release sources for one command invocation."""
 
@@ -45,22 +62,21 @@ class _SourceInvocation:
         self._entered: list[
             tuple[str, AbstractAsyncContextManager[AbstractFileSystem]]
         ] = []
-        self._filesystems: dict[str, AsyncFileSystem] = {}
         self._failure_exc_info: _ExcInfo = _EMPTY_EXC_INFO
-        self.failed = False
 
-    def __getitem__(self, name: str) -> AsyncFileSystem:
-        return self._filesystems[name]
-
-    async def acquire(self, names: Iterable[str]) -> None:
+    async def acquire(
+        self,
+        names: Iterable[str],
+    ) -> Mapping[str, AsyncFileSystem] | None:
         """Acquire distinct mapped names sequentially in the given order."""
+        filesystems: dict[str, AsyncFileSystem] = {}
         for name in names:
             try:
                 manager = self._sources[name]()
             except Exception as error:  # noqa: BLE001 - classify source failures.
                 _source_exception(name, "factory", error)
                 self._remember_failure(error)
-                return
+                return None
 
             if not (
                 isinstance(manager, AbstractAsyncContextManager)
@@ -74,15 +90,14 @@ class _SourceInvocation:
                     "async context manager",
                     err=True,
                 )
-                self.failed = True
-                return
+                return None
 
             try:
                 filesystem = await manager.__aenter__()
             except Exception as error:  # noqa: BLE001 - classify source failures.
                 _source_exception(name, "entry", error)
                 self._remember_failure(error)
-                return
+                return None
 
             self._entered.append((name, manager))
             if not (
@@ -96,12 +111,11 @@ class _SourceInvocation:
                     "async filesystem",
                     err=True,
                 )
-                self.failed = True
-                return
-            self._filesystems[name] = filesystem
+                return None
+            filesystems[name] = filesystem
+        return filesystems
 
     def _remember_failure(self, error: Exception) -> None:
-        self.failed = True
         self._failure_exc_info = (type(error), error, error.__traceback__)
 
     async def close(self, active_exc_info: _ExcInfo) -> bool:
@@ -118,19 +132,28 @@ class _SourceInvocation:
             else None
         )
         cleanup_control = None
-        cleanup_failed = False
+        exit_failures: list[tuple[str, Exception]] = []
         entered, self._entered = self._entered, []
 
         for name, manager in reversed(entered):
             try:
                 await manager.__aexit__(*exit_exc_info)
             except Exception as error:  # noqa: BLE001, PERF203 - every exit runs.
-                _source_exception(name, "exit", error)
-                cleanup_failed = True
+                exit_failures.append((name, error))
             except BaseException as error:  # noqa: BLE001 - preserve control flow.
                 if primary_control is None and cleanup_control is None:
                     cleanup_control = error
 
-        if cleanup_control is not None:
-            raise cleanup_control
-        return cleanup_failed
+        render_control = _render_exit_failures(
+            exit_failures,
+            preserve_control=(
+                primary_control is not None or cleanup_control is not None
+            ),
+        )
+
+        if primary_control is None:
+            if cleanup_control is not None:
+                raise cleanup_control
+            if render_control is not None:
+                raise render_control
+        return bool(exit_failures)
