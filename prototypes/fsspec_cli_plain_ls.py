@@ -8,20 +8,22 @@ production ``fsspec-cli`` implementation.
 from __future__ import annotations
 
 import locale
-import posixpath
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import typer
 from typer.core import TyperCommand
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     import click
     from fsspec import AbstractFileSystem
 
 
 _RAW_ARGV_KEY = "fsspec_cli.raw_argv"
+
+
+class _IncompatibleResultError(Exception):
+    """Mark a backend value that cannot satisfy the command contract."""
 
 
 def _render_diagnostic_value(value: str) -> str:
@@ -53,6 +55,32 @@ def _runtime_failure_category(error: Exception) -> str:
     error_class = _render_diagnostic_value(type(error).__name__)
     message = _render_diagnostic_value(str(error))
     return f"backend failure ({error_class}): {message}"
+
+
+def _entry_type(entry: object) -> str:
+    if not isinstance(entry, Mapping):
+        raise _IncompatibleResultError
+    entry_type = entry.get("type")
+    if not isinstance(entry_type, str) or entry_type not in {"file", "directory"}:
+        raise _IncompatibleResultError
+    return entry_type
+
+
+def _directory_basenames(path: str, children: object) -> list[str]:
+    if not isinstance(children, list):
+        raise _IncompatibleResultError
+
+    comparison_path = path.rstrip("/")
+    prefix = f"{comparison_path}/" if comparison_path else "/"
+    basenames: list[str] = []
+    for child in children:
+        if not isinstance(child, str) or not child.startswith(prefix):
+            raise _IncompatibleResultError
+        basename = child[len(prefix) :]
+        if not basename or "/" in basename or "\0" in basename or "\n" in basename:
+            raise _IncompatibleResultError
+        basenames.append(basename)
+    return basenames
 
 
 def _requests_framework_help(arguments: tuple[str, ...]) -> bool:
@@ -161,12 +189,15 @@ class App:
             for operand, filesystem, path in parsed_operands:
                 try:
                     entry = filesystem.info(path)
-                    if entry["type"] == "file":
+                    if _entry_type(entry) == "file":
                         file_results.append(operand)
                         continue
+                    listed_basenames = _directory_basenames(
+                        path,
+                        filesystem.ls(path, detail=False),
+                    )
                     basenames = []
-                    for child in filesystem.ls(path, detail=False):
-                        basename = posixpath.basename(child)
+                    for basename in listed_basenames:
                         if basename in {".", ".."}:
                             continue
                         if almost_all or not basename.startswith("."):
@@ -180,6 +211,12 @@ class App:
                             ),
                         )
                     )
+                except _IncompatibleResultError:
+                    rendered_operand = _render_diagnostic_value(operand)
+                    runtime_diagnostics.append(
+                        f"ls: {rendered_operand}: incompatible result"
+                    )
+                    continue
                 except Exception as error:  # noqa: BLE001 - required fallback
                     rendered_operand = _render_diagnostic_value(operand)
                     category = _runtime_failure_category(error)

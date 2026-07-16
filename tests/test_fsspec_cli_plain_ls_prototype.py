@@ -579,3 +579,113 @@ def test_ls_maps_runtime_exception_category(
     if operation == "ls":
         expected_calls.append(("ls", path, {"detail": False}))
     assert filesystem.calls == expected_calls
+
+
+@pytest.mark.parametrize(
+    ("path", "operation", "backend_result", "expected_stderr"),
+    [
+        pytest.param(
+            "/problem",
+            "info",
+            [],
+            "ls: scripted:/problem: incompatible result\n",
+            id="info-non-mapping",
+        ),
+        pytest.param(
+            "/problem",
+            "info",
+            {},
+            "ls: scripted:/problem: incompatible result\n",
+            id="info-missing-type",
+        ),
+        pytest.param(
+            "/problem",
+            "info",
+            {"type": 1},
+            "ls: scripted:/problem: incompatible result\n",
+            id="info-non-string-type",
+        ),
+        pytest.param(
+            "/problem",
+            "info",
+            {"type": "link"},
+            "ls: scripted:/problem: incompatible result\n",
+            id="info-unsupported-type",
+        ),
+        pytest.param(
+            "/docs///",
+            "ls",
+            ("/docs/guide.md",),
+            "ls: scripted:/docs///: incompatible result\n",
+            id="ls-non-list",
+        ),
+        pytest.param(
+            "/docs///",
+            "ls",
+            ["/docs/guide.md", 1],
+            "ls: scripted:/docs///: incompatible result\n",
+            id="ls-non-string-child",
+        ),
+        pytest.param(
+            "/docs///",
+            "ls",
+            ["memory:///docs/guide.md"],
+            "ls: scripted:/docs///: incompatible result\n",
+            id="ls-protocol-bearing-child",
+        ),
+        pytest.param(
+            "/docs///",
+            "ls",
+            ["/docs/"],
+            "ls: scripted:/docs///: incompatible result\n",
+            id="ls-empty-suffix",
+        ),
+        pytest.param(
+            "/docs///",
+            "ls",
+            ["/docs/nested/guide.md"],
+            "ls: scripted:/docs///: incompatible result\n",
+            id="ls-nested-child",
+        ),
+        pytest.param(
+            "/docs///",
+            "ls",
+            ["/docs/.hidden\nname"],
+            "ls: scripted:/docs///: incompatible result\n",
+            id="ls-newline-child-before-selection",
+        ),
+        pytest.param(
+            "/docs///",
+            "ls",
+            ["/docs/.hidden\0name"],
+            "ls: scripted:/docs///: incompatible result\n",
+            id="ls-nul-child-before-selection",
+        ),
+    ],
+)
+def test_ls_rejects_incompatible_backend_result(
+    path: str,
+    operation: str,
+    backend_result: object,
+    expected_stderr: str,
+) -> None:
+    info_result = backend_result if operation == "info" else {"type": "directory"}
+    ls_results = {path: backend_result} if operation == "ls" else None
+    filesystem = RuntimeScriptedFileSystem(
+        info_results={path: info_result},
+        ls_results=ls_results,
+        skip_instance_cache=True,
+    )
+
+    result = CliRunner().invoke(
+        App({"scripted": filesystem}).typer_app,
+        ["ls", f"scripted:{path}"],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == expected_stderr
+    expected_calls = [("info", path, {})]
+    if operation == "ls":
+        expected_calls.append(("ls", path, {"detail": False}))
+    assert filesystem.calls == expected_calls
