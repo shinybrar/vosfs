@@ -41,6 +41,20 @@ def _collation_key(value: str) -> tuple[str, str]:
     return transformed, value
 
 
+def _runtime_failure_category(error: Exception) -> str:
+    if isinstance(error, FileNotFoundError):
+        return "not found"
+    if isinstance(error, PermissionError):
+        return "permission denied"
+    if isinstance(error, NotADirectoryError):
+        return "not a directory"
+    if isinstance(error, NotImplementedError):
+        return "unsupported operation"
+    error_class = _render_diagnostic_value(type(error).__name__)
+    message = _render_diagnostic_value(str(error))
+    return f"backend failure ({error_class}): {message}"
+
+
 def _requests_framework_help(arguments: tuple[str, ...]) -> bool:
     for argument in arguments:
         if argument == "--":
@@ -142,33 +156,40 @@ class App:
 
             file_results: list[str] = []
             directory_results: list[tuple[str, list[str]]] = []
+            runtime_diagnostics: list[str] = []
 
             for operand, filesystem, path in parsed_operands:
-                entry = filesystem.info(path)
-                if entry["type"] == "file":
-                    file_results.append(operand)
-                    continue
-                basenames = []
-                for child in filesystem.ls(path, detail=False):
-                    basename = posixpath.basename(child)
-                    if basename in {".", ".."}:
+                try:
+                    entry = filesystem.info(path)
+                    if entry["type"] == "file":
+                        file_results.append(operand)
                         continue
-                    if almost_all or not basename.startswith("."):
-                        basenames.append(basename)
-                directory_results.append(
-                    (
-                        operand,
-                        sorted(
-                            basenames,
-                            key=_collation_key,
-                        ),
+                    basenames = []
+                    for child in filesystem.ls(path, detail=False):
+                        basename = posixpath.basename(child)
+                        if basename in {".", ".."}:
+                            continue
+                        if almost_all or not basename.startswith("."):
+                            basenames.append(basename)
+                    directory_results.append(
+                        (
+                            operand,
+                            sorted(
+                                basenames,
+                                key=_collation_key,
+                            ),
+                        )
                     )
-                )
+                except Exception as error:  # noqa: BLE001 - required fallback
+                    rendered_operand = _render_diagnostic_value(operand)
+                    category = _runtime_failure_category(error)
+                    runtime_diagnostics.append(f"ls: {rendered_operand}: {category}")
+                    continue
 
             file_results.sort(key=_collation_key)
             directory_results.sort(key=lambda result: _collation_key(result[0]))
 
-            if len(operands) == 1:
+            if len(operands) == 1 and not runtime_diagnostics:
                 if file_results:
                     typer.echo(file_results[0])
                     return
@@ -183,4 +204,9 @@ class App:
                 "\n".join((f"{operand}:", *basenames))
                 for operand, basenames in directory_results
             )
-            typer.echo("\n\n".join(blocks))
+            if blocks:
+                typer.echo("\n\n".join(blocks))
+            for diagnostic in runtime_diagnostics:
+                typer.echo(diagnostic, err=True)
+            if runtime_diagnostics:
+                raise typer.Exit(code=1)

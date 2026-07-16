@@ -59,6 +59,41 @@ class ScriptedRecordingFileSystem(AbstractFileSystem):
         return list(self.children)
 
 
+class RuntimeScriptedFileSystem(AbstractFileSystem):
+    protocol = "runtime-scripted"
+
+    def __init__(
+        self,
+        *,
+        info_results: dict[str, object],
+        ls_results: dict[str, object] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.info_results = info_results
+        self.ls_results = ls_results or {}
+        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    @staticmethod
+    def _resolve(value: object) -> Any:
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    def info(self, path: str, **kwargs: Any) -> Any:
+        self.calls.append(("info", path, kwargs))
+        return self._resolve(self.info_results[path])
+
+    def ls(
+        self,
+        path: str,
+        detail: bool = True,  # noqa: FBT002
+        **kwargs: Any,
+    ) -> Any:
+        self.calls.append(("ls", path, {"detail": detail, **kwargs}))
+        return self._resolve(self.ls_results[path])
+
+
 def test_ls_lists_one_memory_directory() -> None:
     filesystem = MemoryFileSystem(skip_instance_cache=True)
     with suppress(FileNotFoundError):
@@ -461,3 +496,86 @@ def test_ls_preserves_colons_in_memory_file_path() -> None:
     assert result.stdout == f"{operand}\n"
     assert result.stderr == ""
     assert filesystem.calls == [("info", file_path, {})]
+
+
+@pytest.mark.parametrize(
+    (
+        "path",
+        "operation",
+        "error",
+        "expected_stderr",
+    ),
+    [
+        pytest.param(
+            "/problem",
+            "info",
+            FileNotFoundError(),
+            "ls: scripted:/problem: not found\n",
+            id="not-found-info",
+        ),
+        pytest.param(
+            "/problem",
+            "ls",
+            PermissionError(),
+            "ls: scripted:/problem: permission denied\n",
+            id="permission-denied-ls",
+        ),
+        pytest.param(
+            "/problem",
+            "info",
+            NotADirectoryError(),
+            "ls: scripted:/problem: not a directory\n",
+            id="not-a-directory-info",
+        ),
+        pytest.param(
+            "/problem",
+            "ls",
+            NotImplementedError(),
+            "ls: scripted:/problem: unsupported operation\n",
+            id="unsupported-operation-ls",
+        ),
+        pytest.param(
+            "/bad\\path\rname",
+            "info",
+            RuntimeError("boom\\x\0y\r\nz"),
+            (
+                "ls: scripted:/bad\\\\path\\rname: "
+                "backend failure (RuntimeError): boom\\\\x\\0y\\r\\nz\n"
+            ),
+            id="fallback-escaping-info",
+        ),
+        pytest.param(
+            "/problem",
+            "info",
+            RuntimeError(),
+            "ls: scripted:/problem: backend failure (RuntimeError): \n",
+            id="fallback-empty-message-info",
+        ),
+    ],
+)
+def test_ls_maps_runtime_exception_category(
+    path: str,
+    operation: str,
+    error: Exception,
+    expected_stderr: str,
+) -> None:
+    info_result: object = error if operation == "info" else {"type": "directory"}
+    ls_results = {path: error} if operation == "ls" else None
+    filesystem = RuntimeScriptedFileSystem(
+        info_results={path: info_result},
+        ls_results=ls_results,
+        skip_instance_cache=True,
+    )
+
+    result = CliRunner().invoke(
+        App({"scripted": filesystem}).typer_app,
+        ["ls", f"scripted:{path}"],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == expected_stderr
+    expected_calls = [("info", path, {})]
+    if operation == "ls":
+        expected_calls.append(("ls", path, {"detail": False}))
+    assert filesystem.calls == expected_calls
