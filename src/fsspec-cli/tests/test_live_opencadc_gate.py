@@ -125,6 +125,9 @@ def test_wrong_operation_path_fails_without_retaining_either_path() -> None:
             ),
             "service_unavailable",
         ),
+        (VOSpaceError("credential rejected", status=401), "authentication"),
+        (VOSpaceError("access denied", status=403), "authentication"),
+        (VOSpaceError("fixture missing", status=404), "setup"),
     ],
 )
 def test_infrastructure_failures_are_unverified_and_always_cleaned(
@@ -297,6 +300,8 @@ def _live_environment(tmp_path) -> dict[str, str]:
         "FSSPEC_CLI_LIVE_VOSFS_WHEEL": str(vosfs_wheel),
         "FSSPEC_CLI_LIVE_COMMIT": "a" * 40,
         "FSSPEC_CLI_LIVE_CI_RUN_ID": "12000",
+        "FSSPEC_CLI_LIVE_LOCK_IDENTITY": f"uv.lock@{'a' * 40}",
+        "FSSPEC_CLI_LIVE_SERVICE_ENVIRONMENT": "OpenCADC staging",
         "VOSFS_CERT_FILE": str(certificate),
         "GITHUB_SERVER_URL": "https://github.com",
         "GITHUB_REPOSITORY": "shinybrar/vosfs",
@@ -322,6 +327,7 @@ def test_execute_emits_only_sanitized_exact_evidence(
         observed_at=datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc),
     )
 
+    assert evidence["schema_version"] == 1
     assert evidence["classification"] == "pass"
     assert evidence["packages"]["fsspec-cli"] == "0.1.0"
     assert set(evidence["packages"]) == {"fsspec-cli", "fsspec", "typer", "vosfs"}
@@ -335,6 +341,8 @@ def test_execute_emits_only_sanitized_exact_evidence(
     }
     assert evidence["observed_at"] == "2026-07-16T20:30:00Z"
     assert evidence["commit"] == "a" * 40
+    assert evidence["lock_identity"] == f"uv.lock@{'a' * 40}"
+    assert evidence["service_environment"] == "OpenCADC staging"
     assert (
         evidence["run_url"] == "https://github.com/shinybrar/vosfs/actions/runs/12345"
     )
@@ -393,6 +401,43 @@ def test_invalid_evidence_url_is_not_rendered_on_setup_failure(tmp_path) -> None
     rendered = json.dumps(evidence, sort_keys=True)
     assert "password-secret" not in rendered
     assert "sensitive-entry-name" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "expected_lock_identity"),
+    [
+        (
+            "FSSPEC_CLI_LIVE_LOCK_IDENTITY",
+            "uv.lock@not-a-full-commit",
+            "unavailable",
+        ),
+        (
+            "FSSPEC_CLI_LIVE_SERVICE_ENVIRONMENT",
+            "OpenCADC staging /sensitive-path",
+            f"uv.lock@{'a' * 40}",
+        ),
+    ],
+)
+def test_invalid_lock_or_service_identity_is_unverified_and_not_rendered(
+    tmp_path,
+    name: str,
+    value: str,
+    expected_lock_identity: str,
+) -> None:
+    environment = _live_environment(tmp_path)
+    environment[name] = value
+
+    evidence = live_gate._execute(
+        environment,
+        installation_check=lambda _configuration: True,
+        observed_at=datetime(2026, 7, 16, tzinfo=timezone.utc),
+    )
+
+    assert evidence["classification"] == "unverified"
+    assert evidence["reason"] == "setup"
+    assert evidence["lock_identity"] == expected_lock_identity
+    assert evidence["service_environment"] == "unverified"
+    assert value not in json.dumps(evidence, sort_keys=True)
 
 
 def test_actions_url_builder_is_strict_for_live_and_ci_runs(tmp_path) -> None:

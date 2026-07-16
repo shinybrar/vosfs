@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
 
 _COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
+_LOCK_IDENTITY_PATTERN = re.compile(r"uv\.lock@[0-9a-f]{40}")
 _REPOSITORY_PATTERN = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _LABEL_PATTERN = re.compile(r"[A-Za-z0-9._ -]{1,100}")
 
@@ -42,6 +43,7 @@ class _SetupError(Exception):
 class _Configuration:
     endpoint: str
     directory: str
+    service_environment: str
     repository_root: Path
     cli_wheel: Path
     vosfs_wheel: Path
@@ -146,6 +148,10 @@ def _inconclusive_reason(error: Exception) -> str | None:
     if isinstance(error, PermissionError):
         reason = "authentication"
     elif isinstance(error, (FileNotFoundError, NotADirectoryError, IsADirectoryError)):
+        reason = "setup"
+    elif isinstance(error, VOSpaceError) and error.status in {401, 403}:
+        reason = "authentication"
+    elif isinstance(error, VOSpaceError) and error.status == 404:
         reason = "setup"
     elif isinstance(error, (ConnectionError, TimeoutError)) or (
         isinstance(error, VOSpaceError)
@@ -311,6 +317,15 @@ def _configuration(environment: Mapping[str, str]) -> _Configuration:
     commit = _required(environment, "FSSPEC_CLI_LIVE_COMMIT")
     if _COMMIT_PATTERN.fullmatch(commit) is None:
         raise _SetupError
+    lock_identity = _required(environment, "FSSPEC_CLI_LIVE_LOCK_IDENTITY")
+    if _LOCK_IDENTITY_PATTERN.fullmatch(lock_identity) is None:
+        raise _SetupError
+    service_environment = _required(
+        environment,
+        "FSSPEC_CLI_LIVE_SERVICE_ENVIRONMENT",
+    )
+    if _LABEL_PATTERN.fullmatch(service_environment) is None:
+        raise _SetupError
     _actions_url(environment, "GITHUB_RUN_ID")
     _actions_url(environment, "FSSPEC_CLI_LIVE_CI_RUN_ID")
 
@@ -329,6 +344,7 @@ def _configuration(environment: Mapping[str, str]) -> _Configuration:
     return _Configuration(
         endpoint=endpoint,
         directory=directory,
+        service_environment=service_environment,
         repository_root=repository_root,
         cli_wheel=_path(
             environment,
@@ -397,6 +413,11 @@ def _safe_commit(environment: Mapping[str, str]) -> str:
     return value if _COMMIT_PATTERN.fullmatch(value) else "unavailable"
 
 
+def _safe_lock_identity(environment: Mapping[str, str]) -> str:
+    value = environment.get("FSSPEC_CLI_LIVE_LOCK_IDENTITY", "")
+    return value if _LOCK_IDENTITY_PATTERN.fullmatch(value) else "unavailable"
+
+
 def _safe_actions_url(environment: Mapping[str, str], run_id_name: str) -> str:
     try:
         return _actions_url(environment, run_id_name)
@@ -426,9 +447,10 @@ def _evidence(
     *,
     observed_at: datetime,
     installation_verified: bool,
-    service_configured: bool,
+    service_environment: str | None,
 ) -> dict[str, object]:
     return {
+        "schema_version": 1,
         "classification": observation.classification,
         "reason": observation.reason,
         "gate_kind": "live OpenCADC",
@@ -452,6 +474,7 @@ def _evidence(
         },
         "observed_at": _format_time(observed_at),
         "commit": _safe_commit(environment),
+        "lock_identity": _safe_lock_identity(environment),
         "run_url": _safe_actions_url(environment, "GITHUB_RUN_ID"),
         "ci_run_id": (
             environment["FSSPEC_CLI_LIVE_CI_RUN_ID"]
@@ -462,7 +485,7 @@ def _evidence(
             environment,
             "FSSPEC_CLI_LIVE_CI_RUN_ID",
         ),
-        "service_environment": "configured" if service_configured else "unverified",
+        "service_environment": service_environment or "unverified",
         "installation": (
             "exact wheels / isolated" if installation_verified else "unverified"
         ),
@@ -504,7 +527,7 @@ def _execute(
             environment,
             observed_at=observation_time,
             installation_verified=False,
-            service_configured=False,
+            service_environment=None,
         )
 
     try:
@@ -517,7 +540,7 @@ def _execute(
             environment,
             observed_at=observation_time,
             installation_verified=False,
-            service_configured=True,
+            service_environment=configuration.service_environment,
         )
 
     factory = filesystem_factory or _native_vosfs_factory(configuration.endpoint)
@@ -527,7 +550,7 @@ def _execute(
         environment,
         observed_at=observation_time,
         installation_verified=True,
-        service_configured=True,
+        service_environment=configuration.service_environment,
     )
 
 
@@ -544,6 +567,7 @@ def main() -> int:
         evidence = _execute(os.environ)
     except BaseException:  # noqa: BLE001 - never print exception or secret data.
         evidence = {
+            "schema_version": 1,
             "classification": "fail",
             "reason": "gate_internal_error",
             "gate_kind": "live OpenCADC",
