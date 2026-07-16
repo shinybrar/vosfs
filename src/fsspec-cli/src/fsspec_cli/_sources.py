@@ -34,6 +34,7 @@ def _source_exception(name: str, stage: str, error: Exception) -> None:
         f"ls: {rendered_name}: source {stage} failure "
         f"({rendered_class}): {rendered_message}",
         err=True,
+        color=True,
     )
 
 
@@ -89,6 +90,7 @@ class _SourceInvocation:
                     f"{rendered_name}: source factory returned incompatible "
                     "async context manager",
                     err=True,
+                    color=True,
                 )
                 return None
 
@@ -110,6 +112,7 @@ class _SourceInvocation:
                     f"ls: {rendered_name}: source yielded incompatible "
                     "async filesystem",
                     err=True,
+                    color=True,
                 )
                 return None
             filesystems[name] = filesystem

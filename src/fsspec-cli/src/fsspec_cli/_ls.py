@@ -44,6 +44,17 @@ class _Failure:
     backend_error: Exception | None = None
 
 
+@dataclass(frozen=True)
+class _FileResult:
+    operand: _MappedOperand
+
+
+@dataclass(frozen=True)
+class _DirectoryResult:
+    operand: _MappedOperand
+    children: tuple[str, ...]
+
+
 class _LsCommand(TyperCommand):
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         ctx.meta[_RAW_ARGUMENTS] = tuple(args)
@@ -69,7 +80,7 @@ def _raw_arguments(ctx: typer.Context) -> tuple[str, ...]:
 
 
 def _usage_error(diagnostic: str) -> NoReturn:
-    typer.echo(diagnostic, err=True)
+    typer.echo(diagnostic, err=True, color=True)
     raise typer.Exit(2)
 
 
@@ -134,26 +145,46 @@ async def _run_ls(
     request = _preflight(raw_arguments, sources)
     invocation = _SourceInvocation(sources)
     succeeded = False
-    failure = None
+    failures: tuple[_Failure, ...] = ()
+    output_error: Exception | None = None
     try:
         names = dict.fromkeys(operand.name for operand in request.operands)
         filesystems = await invocation.acquire(names)
         if filesystems is not None:
-            failure = await _trace_operands(request, filesystems)
-            if failure is None:
-                succeeded = True
-            else:
+            successes, failures = await _trace_operands(request, filesystems)
+            output = _format_successes(
+                successes,
+                multiple_operands=len(request.operands) > 1,
+            )
+            for failure in failures:
                 _render_failure(failure)
+            if output:
+                try:
+                    typer.echo(output, nl=False, color=True)
+                except BrokenPipeError as error:
+                    output_error = error
+                except Exception as error:  # noqa: BLE001 - output boundary.
+                    output_error = error
+                    _render_output_failure(error)
+            succeeded = not failures and output_error is None
     finally:
         active_exc_info = sys.exc_info()
-        backend_error = failure.backend_error if failure is not None else None
-        if backend_error is not None and (
+        backend_error = next(
+            (
+                failure.backend_error
+                for failure in failures
+                if failure.backend_error is not None
+            ),
+            None,
+        )
+        command_error = backend_error if backend_error is not None else output_error
+        if command_error is not None and (
             active_exc_info[1] is None or isinstance(active_exc_info[1], Exception)
         ):
             active_exc_info = (
-                type(backend_error),
-                backend_error,
-                backend_error.__traceback__,
+                type(command_error),
+                command_error,
+                command_error.__traceback__,
             )
         cleanup_failed = await invocation.close(active_exc_info)
     if not succeeded or cleanup_failed:
@@ -163,7 +194,12 @@ async def _run_ls(
 async def _trace_operands(
     request: _LsRequest,
     filesystems: Mapping[str, AsyncFileSystem],
-) -> _Failure | None:
+) -> tuple[
+    tuple[_FileResult | _DirectoryResult, ...],
+    tuple[_Failure, ...],
+]:
+    successes: list[_FileResult | _DirectoryResult] = []
+    failures = []
     for operand in request.operands:
         result = await _read_operand(
             operand,
@@ -171,11 +207,10 @@ async def _trace_operands(
             include_almost_all=request.include_almost_all,
         )
         if isinstance(result, _Failure):
-            return result
-
-        for line in result:
-            typer.echo(line)
-    return None
+            failures.append(result)
+        else:
+            successes.append(result)
+    return tuple(successes), tuple(failures)
 
 
 async def _read_operand(
@@ -183,7 +218,7 @@ async def _read_operand(
     filesystem: AsyncFileSystem,
     *,
     include_almost_all: bool,
-) -> tuple[str, ...] | _Failure:
+) -> _FileResult | _DirectoryResult | _Failure:
     # fsspec's native async API intentionally exposes underscore coroutines.
     try:
         info = await filesystem._info(operand.path)  # noqa: SLF001
@@ -195,7 +230,7 @@ async def _read_operand(
 
     result_type = info["type"]
     if result_type == "file":
-        return (operand.spelling,)
+        return _FileResult(operand)
     if result_type != "directory":
         return _Failure(operand)
 
@@ -211,7 +246,45 @@ async def _read_operand(
         listing,
         include_almost_all=include_almost_all,
     )
-    return _Failure(operand) if lines is None else lines
+    return _Failure(operand) if lines is None else _DirectoryResult(operand, lines)
+
+
+def _sort_key(result: _FileResult | _DirectoryResult) -> tuple[str, str]:
+    spelling = result.operand.spelling
+    return locale.strxfrm(spelling), spelling
+
+
+def _format_successes(
+    successes: tuple[_FileResult | _DirectoryResult, ...],
+    *,
+    multiple_operands: bool,
+) -> str:
+    if not multiple_operands:
+        if not successes:
+            return ""
+        result = successes[0]
+        lines = (
+            (result.operand.spelling,)
+            if isinstance(result, _FileResult)
+            else result.children
+        )
+        return "\n".join(lines) + "\n" if lines else ""
+
+    files = sorted(
+        (result for result in successes if isinstance(result, _FileResult)),
+        key=_sort_key,
+    )
+    directories = sorted(
+        (result for result in successes if isinstance(result, _DirectoryResult)),
+        key=_sort_key,
+    )
+    blocks: list[tuple[str, ...]] = []
+    if files:
+        blocks.append(tuple(result.operand.spelling for result in files))
+    blocks.extend(
+        (f"{result.operand.spelling}:", *result.children) for result in directories
+    )
+    return "\n\n".join("\n".join(block) for block in blocks) + "\n" if blocks else ""
 
 
 def _directory_lines(
@@ -243,7 +316,7 @@ def _directory_lines(
 
 def _render_operand_diagnostic(operand: _MappedOperand, category: str) -> None:
     rendered_operand = _render_diagnostic_value(operand.spelling)
-    typer.echo(f"ls: {rendered_operand}: {category}", err=True)
+    typer.echo(f"ls: {rendered_operand}: {category}", err=True, color=True)
 
 
 def _render_failure(failure: _Failure) -> None:
@@ -270,3 +343,13 @@ def _render_backend_failure(
         rendered_message = _render_diagnostic_value(str(error))
         category = f"backend failure ({rendered_class}): {rendered_message}"
     _render_operand_diagnostic(operand, category)
+
+
+def _render_output_failure(error: Exception) -> None:
+    rendered_class = _render_diagnostic_value(type(error).__name__)
+    rendered_message = _render_diagnostic_value(str(error))
+    typer.echo(
+        f"ls: output: output failure ({rendered_class}): {rendered_message}",
+        err=True,
+        color=True,
+    )

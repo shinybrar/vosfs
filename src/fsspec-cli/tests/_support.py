@@ -1,6 +1,7 @@
 """Recording filesystem sources for public-seam command tests."""
 
 import asyncio
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import NoReturn
 
@@ -40,6 +41,11 @@ class _RecordingFileSystem(AsyncFileSystem):
         self.source.events.append(
             ("info", self.source_id, path, id(asyncio.get_running_loop()))
         )
+        if path in self.source.info_by_path:
+            scripted = self.source.info_by_path[path]
+            if isinstance(scripted, BaseException):
+                raise scripted
+            return scripted
         if self.source.info_error is not None:
             raise self.source.info_error
         return self.source.info_result
@@ -60,6 +66,11 @@ class _RecordingFileSystem(AsyncFileSystem):
                 id(asyncio.get_running_loop()),
             )
         )
+        if path in self.source.ls_by_path:
+            scripted = self.source.ls_by_path[path]
+            if isinstance(scripted, BaseException):
+                raise scripted
+            return scripted
         if self.source.ls_error is not None:
             raise self.source.ls_error
         return self.source.ls_result
@@ -76,6 +87,8 @@ class _RecordingSource:
         ls_error: BaseException | None = None,
         exit_result: object = None,
         exit_error: BaseException | None = None,
+        info_by_path: Mapping[str, object] | None = None,
+        ls_by_path: Mapping[str, object] | None = None,
     ) -> None:
         self.events = events
         self.info_result = info_result
@@ -84,6 +97,8 @@ class _RecordingSource:
         self.ls_error = ls_error
         self.exit_result = exit_result
         self.exit_error = exit_error
+        self.info_by_path = info_by_path or {}
+        self.ls_by_path = ls_by_path or {}
         self.exit_calls: list[tuple[object, object, object]] = []
         self.contexts: list[_RecordingContext] = []
         self.call_count = 0
