@@ -34,17 +34,24 @@ _Avoid_: Unimplemented endpoint
 **Embedded command library**:
 The separately installable, library-only `fsspec-cli` uv workspace member at
 `src/fsspec-cli`, with its Python package at `src/fsspec-cli/src/fsspec_cli`,
-that owns POSIX-shaped command logic. Its sole stable v1 seam for host tools is
-`App(filesystems).typer_app`, where `filesystems` is a non-empty
-`Mapping[str, AbstractFileSystem]` of live instances configured and owned by the
-host.
+that turns named async filesystem sources into POSIX-shaped Typer commands. Its
+sole stable v1 seam for host tools is `App(sources).typer_app`; it owns each
+yielded filesystem only for one command invocation, while hosts own source
+configuration and cleanup declaration.
 _Avoid_: vosfs CLI, fsspec-cli executable
 
+**Async filesystem source**:
+A host-configured async context-manager factory that yields one
+`AbstractFileSystem` for a command invocation. The embedded command library
+enters and exits the source on the invocation loop, making the yielded
+filesystem invocation-owned.
+_Avoid_: Live filesystem instance, backend constructor, process-wide filesystem
+
 **Mapped filesystem operand**:
-An explicit `name:/path` command argument whose name selects one filesystem
-from the embedded command library's configured mapping. Plain `ls` accepts one
-or more mapped filesystem operands and has no implicit current or default
-filesystem.
+An explicit `name:/path` command argument whose name selects one async
+filesystem source from the embedded command library's configured mapping.
+Plain `ls` accepts one or more mapped filesystem operands and has no implicit
+current or default filesystem.
 _Avoid_: fsspec URL, protocol URL, mount point, bare path
 
 **Negotiated byte endpoint**:

@@ -2,7 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-Status: **Locked command semantics; async execution boundary pending**
+Status: **Locked command semantics and async execution contract**
 
 Question: [Define the plain `ls` command profile](https://github.com/shinybrar/vosfs/issues/79)
 
@@ -15,10 +15,11 @@ orchestration and filesystem calls as async-only. The synchronous operations
 named below remain evidence for observable semantics and backend result shapes;
 they are not an allowed production execution strategy.
 
-[Define the async execution boundary for fsspec-cli](https://github.com/shinybrar/vosfs/issues/90)
-must translate these semantics into the async event-loop and host-embedding
-contract before implementation. This constraint supersedes synchronous call
-wording for production; every other command-semantic requirement remains
+[Issue #90](https://github.com/shinybrar/vosfs/issues/90) established the async
+constraints. [Issue #92](https://github.com/shinybrar/vosfs/issues/92) resolved
+them through the invocation-owned source contract recorded in
+[ADR 0002](../adr/0002-own-async-filesystems-per-invocation.md). Production
+uses `App(sources).typer_app`; every other command-semantic requirement remains
 locked.
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**,
@@ -36,9 +37,9 @@ It covers the no-option command and `-A`:
 ls [-A] [--] name:/path...
 ```
 
-The command operates only on live filesystem instances supplied through
-`App(filesystems).typer_app`. It does not construct filesystems, authenticate,
-or branch on backend type.
+The command operates only on invocation-owned filesystems yielded by configured
+async filesystem sources through `App(sources).typer_app`. It does not own
+source configuration or authentication and does not branch on backend type.
 
 The supported surface is deliberately smaller than POSIX Issue 8:
 
@@ -56,7 +57,7 @@ this profile.
 A mapped filesystem operand has the exact form `<name>:/<path>`.
 
 - `name` MUST be non-empty, MUST NOT contain `:`, and MUST exactly match one
-  key in the configured filesystem mapping.
+  key in the configured source mapping.
 - `App` construction MUST reject any configured mapping name containing NUL;
   such a name MUST NOT reach command preflight or locale sorting.
 - The path portion MUST begin with `/`. `name:/` selects filesystem root.
@@ -82,7 +83,8 @@ local:tmp                invalid: path has no leading slash
 
 ### 2.1 Option and operand preflight
 
-Before any backend call or command output, the command MUST validate:
+Before any source factory call, context entry, backend call, or command output,
+the command MUST validate:
 
 1. option syntax;
 2. the presence of at least one operand;
@@ -96,10 +98,10 @@ behavior. Every other command option, including `-h`, `-a`, and `-l`, is
 unsupported.
 
 The first preflight error in argument order MUST produce one diagnostic and
-exit `2`. No backend call and no stdout output may precede it. An unknown-name
-diagnostic MUST include every configured name in locale-sorted order. These are
-the exact preflight diagnostics, before the diagnostic rendering defined in
-Section 6:
+exit `2`. No source may be entered, no backend call made, and no stdout output
+written before it. An unknown-name diagnostic MUST include every configured
+name in locale-sorted order. These are the exact preflight diagnostics, before
+the diagnostic rendering defined in Section 6:
 
 | Condition | Diagnostic |
 | --- | --- |
@@ -119,16 +121,15 @@ one-record-per-line rule, consistent with POSIX Issue 8 future direction.
 
 ## 3. Backend operation semantics
 
-Production code MUST NOT invoke fsspec's synchronous facades. Issue #90 owns
-the exact async calls and event-loop boundary. Whatever async interface it
-selects MUST preserve this observable operation sequence for every
-preflight-valid operand: query the selected filesystem's `info(path)` semantics
-first, then apply the result rules below.
+Production code MUST NOT invoke fsspec's synchronous facades. For every
+preflight-valid operand, it MUST await the selected filesystem's
+version-tested, documented `_info(path)` coroutine first, then apply the result
+rules below.
 
 - `type == "file"`: the operand is a non-directory result. The command MUST
   NOT call `ls` for it.
-- `type == "directory"`: the command MUST perform the async equivalent of
-  `ls(path, detail=False)` explicitly.
+- `type == "directory"`: the command MUST await `_ls(path, detail=False)`
+  explicitly.
 - Any other or missing `type` is an incompatible result. The command MUST NOT
   guess file, directory, device, or link behavior.
 
@@ -154,9 +155,11 @@ unguaranteed `ls(file)` behavior. It also deliberately supports fewer
 non-directory types than POSIX: Local special files and `vosfs` LinkNodes can
 be incompatible rather than misrepresented.
 
-The command MUST NOT use private hooks, `exists`, `isfile`, `isdir`, a static
-capability registry, backend-type checks, retry fallbacks, or fabricated
-results. `NotImplementedError` from a real selected async operation is runtime
+The command MUST NOT use underscore hooks other than the version-tested,
+documented `_info` and `_ls` coroutines required by this profile. It also MUST
+NOT use public synchronous filesystem facades, `exists`, `isfile`, `isdir`, a
+static capability registry, backend-type checks, retry fallbacks, or fabricated
+results. `NotImplementedError` from a real awaited operation is runtime
 evidence that the operation is unsupported.
 
 ## 4. Selection and sorting
@@ -276,9 +279,9 @@ message, and rendering rules, then exits `1`.
 | `1` | A backend, incompatible-result, or output-write failure occurred. |
 | `2` | Usage, option, mapped-operand, or mapped-name preflight failed. |
 
-## 8. Acceptance handoff to issue #80
+## 8. Historical acceptance evidence from issue #80
 
-The prototype MUST exercise the same command handler without backend-type
+The disposed prototype exercised the same command handler without backend-type
 branches against Local, Memory, and hermetic `VOSpaceFileSystem` instances.
 
 | Area | Required evidence |
@@ -302,8 +305,9 @@ branches against Local, Memory, and hermetic `VOSpaceFileSystem` instances.
 - [Sequence the `fsspec-cli` tracer implementation backlog](https://github.com/shinybrar/vosfs/issues/83)
   owns production package slices, dependencies, CI, and release ordering.
 
-Issue #79 adds no CLI implementation. Consequently it has no executable TDD
-cycle; issue #80 owns the throwaway public-seam prototype.
+Issues #79 and #80 added no production CLI implementation. The prototype was
+disposed after recording its evidence; later production tickets own executable
+TDD cycles.
 
 ## Primary evidence
 

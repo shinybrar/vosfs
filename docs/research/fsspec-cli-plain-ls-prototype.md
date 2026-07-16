@@ -26,7 +26,9 @@ Yes, for the tested file-and-directory capability floor. One command handler
 used only the supplied filesystem's public synchronous `info(path)` and, for
 directories, `ls(path, detail=False)`. It produced the locked behavior across
 Local, Memory, hermetic VOS, and the live VOS observation without filesystem
-construction, backend-type checks, private hooks, or retry fallbacks.
+construction, backend-type checks, private hooks, or retry fallbacks. This was
+the synchronous prototype surface; production directly awaits the documented
+fsspec underscore coroutines selected later by issue #92.
 
 This is evidence that a backend-agnostic plain-`ls` client is viable for tested
 fsspec implementations. It is not evidence that every fsspec implementation
@@ -39,18 +41,21 @@ synchronous prototype below remains evidence about command semantics, backend
 result shapes, and the tested compatibility floor. No synchronous prototype
 code is an implementation precursor. [Define the async execution boundary for
 fsspec-cli](https://github.com/shinybrar/vosfs/issues/90) owns event-loop,
-filesystem-instance, and host-embedding behavior before implementation work.
+filesystem-instance, and host-embedding evidence. [Issue #92](https://github.com/shinybrar/vosfs/issues/92)
+and [ADR 0002](../adr/0002-own-async-filesystems-per-invocation.md)
+subsequently lock the production contract.
 
-## Locked public seam
+## Superseded prototype seam
 
 ```python
 App(filesystems: Mapping[str, AbstractFileSystem]).typer_app
 ```
 
-The host constructs and authenticates one or more live filesystem instances.
-The command handler resolves `<name>:/<path>` through that mapping and never
-branches on filesystem type. A host Typer application can mount the returned
-app with `add_typer`; no console script or shell-installable surface was added.
+The disposed prototype used host-owned live filesystem instances; production
+injection and ownership are superseded by
+[ADR 0002](../adr/0002-own-async-filesystems-per-invocation.md). A host Typer
+application can still mount the returned app with `add_typer`; no console script
+or shell-installable surface was added.
 
 The prototype preserves raw command arguments so the handler owns `-A`, `--`,
 unsupported-option diagnostics, and multiple operands while exact `--help`
@@ -201,7 +206,9 @@ literal mapped-root behavior.
 
 ### Fog transferred to later Wayfinder questions
 
-- Async execution and host embedding: [issue #90](https://github.com/shinybrar/vosfs/issues/90)
+- Async execution evidence: [issue #90](https://github.com/shinybrar/vosfs/issues/90)
+- Async host and lifecycle contract: [issue #92](https://github.com/shinybrar/vosfs/issues/92)
+- Source lifecycle failure behavior: [issue #94](https://github.com/shinybrar/vosfs/issues/94)
 - Tested-status vocabulary and version policy: [issue #81](https://github.com/shinybrar/vosfs/issues/81)
 - Long-format profiles: [issue #82](https://github.com/shinybrar/vosfs/issues/82)
 - Production tracer sequencing: [issue #83](https://github.com/shinybrar/vosfs/issues/83)
