@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import errno
 import locale
+import os
+import select
+import subprocess
+import sys
+import time
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -18,8 +25,9 @@ from prototypes.fsspec_cli_plain_ls import App
 from typer.testing import CliRunner
 from vospace_sim import VOSpaceSim
 
-if TYPE_CHECKING:
-    from pathlib import Path
+if os.name == "posix":
+    import pty
+    import termios
 
 
 class RecordingFileSystem(AbstractFileSystem):
@@ -1189,3 +1197,225 @@ def test_ls_sorts_with_controlled_swedish_locale_without_changing_it() -> None:
         ("info", "/docs", {}),
         ("ls", "/docs", {"detail": False}),
     ]
+
+
+_SUBPROCESS_TIMEOUT = 10.0
+_SUBPROCESS_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SUBPROCESS_EXPECTED_STDOUT = b"a.txt\nz.txt\n"
+_SUBPROCESS_OUTPUT_ERROR = b"ls: output: output failure (OSError): disk\\\\bad\\nline\n"
+_SUBPROCESS_SOURCE = r"""
+import io
+import sys
+
+from fsspec.implementations.memory import MemoryFileSystem
+from prototypes.fsspec_cli_plain_ls import App
+
+
+class PrefixThenFailure(io.TextIOBase):
+    def __init__(self, accepted_characters: int) -> None:
+        self.remaining = accepted_characters
+
+    @property
+    def encoding(self) -> str:
+        return sys.__stdout__.encoding or "utf-8"
+
+    @property
+    def errors(self) -> str:
+        return sys.__stdout__.errors or "strict"
+
+    def writable(self) -> bool:
+        return True
+
+    def isatty(self) -> bool:
+        return False
+
+    def write(self, value: str) -> int:
+        if not isinstance(value, str):
+            raise TypeError
+        accepted = min(self.remaining, len(value))
+        if accepted:
+            sys.__stdout__.write(value[:accepted])
+            sys.__stdout__.flush()
+            self.remaining -= accepted
+        if accepted != len(value):
+            raise OSError("disk\\bad\nline")
+        return len(value)
+
+    def flush(self) -> None:
+        sys.__stdout__.flush()
+
+
+mode = sys.argv.pop(1)
+filesystem = MemoryFileSystem(skip_instance_cache=True)
+filesystem.makedirs("/docs")
+filesystem.pipe_file("/docs/z.txt", b"z")
+filesystem.pipe_file("/docs/a.txt", b"a")
+
+if mode == "fail":
+    sys.stdout = PrefixThenFailure(0)
+elif mode == "prefix":
+    sys.stdout = PrefixThenFailure(len("a.txt\n"))
+elif mode != "normal":
+    raise RuntimeError(f"unknown child mode: {mode}")
+
+App({"memory": filesystem}).typer_app()
+"""
+
+
+def _subprocess_command(mode: str) -> list[str]:
+    return [
+        sys.executable,
+        "-c",
+        _SUBPROCESS_SOURCE,
+        mode,
+        "ls",
+        "memory:/docs",
+    ]
+
+
+def _subprocess_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUNBUFFERED": "1",
+        }
+    )
+    return environment
+
+
+def _run_redirected_subprocess(mode: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(  # noqa: S603 - fixed interpreter and inline test child
+        _subprocess_command(mode),
+        cwd=_SUBPROCESS_REPO_ROOT,
+        env=_subprocess_environment(),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=_SUBPROCESS_TIMEOUT,
+        check=False,
+    )
+
+
+def _run_pty_subprocess() -> tuple[int, bytes, bytes]:  # noqa: C901, PLR0912
+    if os.name != "posix":
+        pytest.skip("PTY evidence requires POSIX")
+    if not hasattr(termios, "ONLCR") or not hasattr(termios, "ECHO"):
+        pytest.skip("required terminal flags unavailable")
+
+    command = _subprocess_command("normal")
+    master_fd, slave_fd = pty.openpty()
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        attributes = termios.tcgetattr(slave_fd)
+        attributes[1] &= ~termios.ONLCR
+        attributes[3] &= ~termios.ECHO
+        termios.tcsetattr(slave_fd, termios.TCSANOW, attributes)
+
+        process = subprocess.Popen(  # noqa: S603 - fixed test child command
+            command,
+            cwd=_SUBPROCESS_REPO_ROOT,
+            env=_subprocess_environment(),
+            stdin=subprocess.DEVNULL,
+            stdout=slave_fd,
+            stderr=subprocess.PIPE,
+        )
+        os.close(slave_fd)
+        slave_fd = -1
+
+        deadline = time.monotonic() + _SUBPROCESS_TIMEOUT
+        chunks: list[bytes] = []
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, _SUBPROCESS_TIMEOUT)
+            readable, _, _ = select.select(
+                [master_fd],
+                [],
+                [],
+                min(0.05, remaining),
+            )
+            if readable:
+                try:
+                    chunk = os.read(master_fd, 65536)
+                except OSError as error:
+                    if error.errno == errno.EIO:
+                        break
+                    raise
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            elif process.poll() is not None:
+                break
+
+        remaining = max(0.001, deadline - time.monotonic())
+        _, stderr = process.communicate(timeout=remaining)
+        return process.returncode, b"".join(chunks), stderr
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.communicate()
+        for descriptor in (master_fd, slave_fd):
+            if descriptor >= 0:
+                with suppress(OSError):
+                    os.close(descriptor)
+
+
+def test_public_seam_redirected_output() -> None:
+    result = _run_redirected_subprocess("normal")
+
+    assert result.returncode == 0
+    assert result.stdout == _SUBPROCESS_EXPECTED_STDOUT
+    assert result.stderr == b""
+
+
+def test_public_seam_tty_matches_redirected_output() -> None:
+    redirected = _run_redirected_subprocess("normal")
+    returncode, stdout, stderr = _run_pty_subprocess()
+
+    assert returncode == redirected.returncode == 0
+    assert stdout == redirected.stdout == _SUBPROCESS_EXPECTED_STDOUT
+    assert stderr == redirected.stderr == b""
+
+
+def test_public_seam_broken_pipe_is_silent_runtime_failure() -> None:
+    if os.name != "posix":
+        pytest.skip("closed-reader pipe evidence requires POSIX")
+
+    read_fd, write_fd = os.pipe()
+    os.close(read_fd)
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed test child command
+            _subprocess_command("normal"),
+            cwd=_SUBPROCESS_REPO_ROOT,
+            env=_subprocess_environment(),
+            stdin=subprocess.DEVNULL,
+            stdout=write_fd,
+            stderr=subprocess.PIPE,
+            timeout=_SUBPROCESS_TIMEOUT,
+            check=False,
+        )
+    finally:
+        os.close(write_fd)
+
+    assert result.returncode == 1
+    assert result.stderr == b""
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_stdout"),
+    [
+        pytest.param("fail", b"", id="nothing-accepted"),
+        pytest.param("prefix", b"a.txt\n", id="accepted-prefix-preserved"),
+    ],
+)
+def test_public_seam_reports_stdout_oserror(
+    mode: str,
+    expected_stdout: bytes,
+) -> None:
+    result = _run_redirected_subprocess(mode)
+
+    assert result.returncode == 1
+    assert result.stdout == expected_stdout
+    assert result.stderr == _SUBPROCESS_OUTPUT_ERROR

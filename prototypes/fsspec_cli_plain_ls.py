@@ -35,6 +35,21 @@ def _render_diagnostic_value(value: str) -> str:
     )
 
 
+def _write_stdout(value: str) -> None:
+    try:
+        typer.echo(value)
+    except BrokenPipeError:
+        raise
+    except Exception as error:  # noqa: BLE001 - required output fallback
+        error_class = _render_diagnostic_value(type(error).__name__)
+        message = _render_diagnostic_value(str(error))
+        typer.echo(
+            f"ls: output: output failure ({error_class}): {message}",
+            err=True,
+        )
+        raise typer.Exit(code=1) from None
+
+
 def _collation_key(value: str) -> tuple[str, str]:
     try:
         transformed = locale.strxfrm(value)
@@ -226,10 +241,10 @@ class App:
 
             if len(operands) == 1 and not runtime_diagnostics:
                 if file_results:
-                    typer.echo(file_results[0])
+                    _write_stdout(file_results[0])
                     return
                 for basename in directory_results[0][1]:
-                    typer.echo(basename)
+                    _write_stdout(basename)
                 return
 
             blocks: list[str] = []
@@ -240,7 +255,7 @@ class App:
                 for operand, basenames in directory_results
             )
             if blocks:
-                typer.echo("\n\n".join(blocks))
+                _write_stdout("\n\n".join(blocks))
             for diagnostic in runtime_diagnostics:
                 typer.echo(diagnostic, err=True)
             if runtime_diagnostics:
