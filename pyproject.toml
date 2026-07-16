@@ -17,13 +17,13 @@ dependencies = [
 vos = "vosfs:VOSpaceFileSystem"
 
 [build-system]
-requires = ["uv_build>=0.11.28,<0.12.0"]
+requires = ["uv_build>=0.11.29,<0.12.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
     "commitizen>=4.16.4,<5",
-    "dask[dataframe]>=2024",
+    "dask[dataframe]>=2026.7.1",
     "lxml>=5",
     "mike @ git+https://github.com/squidfunk/mike.git@2d4ad799442f4592db8ad53b179bfb33db8c69ac",
     "mkdocstrings-python>=2.0.5",
@@ -31,13 +31,13 @@ dev = [
     "pandas>=2",
     "pre-commit>=4.6.0",
     "pyarrow>=15",
-    "pymarkdownlnt>=0.9.38",
+    "pymarkdownlnt>=0.9.39",
     "pytest>=9.1.1",
     "pytest-asyncio>=0.24",
     "pytest-cov>=7.1.0",
     "respx>=0.21",
     "ruff>=0.15.21",
-    "ty>=0.0.58",
+    "ty>=0.0.59",
     "zarr>=3 ; python_full_version >= '3.11'",
     "zensical>=0.0.50",
 ]
