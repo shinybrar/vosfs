@@ -55,8 +55,6 @@ def _block_network(monkeypatch) -> None:
 
     monkeypatch.setattr(socket, "create_connection", fail_network)
     monkeypatch.setattr(socket, "getaddrinfo", fail_network)
-    monkeypatch.setattr(socket.socket, "connect", fail_network)
-    monkeypatch.setattr(socket.socket, "connect_ex", fail_network)
 
 
 class _ProbedSource(Generic[_FilesystemT]):

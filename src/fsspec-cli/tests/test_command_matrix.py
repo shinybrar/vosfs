@@ -1,5 +1,6 @@
 """Hermetic evidence independent of the vosfs integration dependency."""
 
+import socket
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 
@@ -27,6 +28,15 @@ def _populate_local(root: Path) -> None:
     root.mkdir()
     for name in ("notes.txt", ".hidden", "guide.md"):
         (root / name).write_text(name, encoding="utf-8")
+
+
+def test_hermetic_guard_rejects_name_resolution() -> None:
+    with pytest.raises(AssertionError) as caught:
+        socket.getaddrinfo("example.test", 443)
+
+    assert str(caught.value) == (
+        "hermetic command-matrix tests prohibit network access"
+    )
 
 
 def _local_command_path(root: Path) -> str:
