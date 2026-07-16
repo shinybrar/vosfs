@@ -2,15 +2,26 @@
 
 import asyncio
 from typing import NoReturn
+from unittest.mock import Mock
 
 import pytest
 import typer
 from fsspec_cli import App, AsyncFilesystemSource
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 
 def _source_must_not_run() -> NoReturn:
     raise AssertionError
+
+
+def _invoke_ls(
+    arguments: list[str],
+    *,
+    sources: dict[str, AsyncFilesystemSource] | None = None,
+) -> Result:
+    if sources is None:
+        sources = {"memory": _source_must_not_run}
+    return CliRunner().invoke(App(sources).typer_app, ["ls", *arguments])
 
 
 def test_app_rejects_an_empty_source_mapping() -> None:
@@ -41,10 +52,7 @@ def test_public_exports_are_app_and_the_source_type() -> None:
 
 
 def test_ls_rejects_a_missing_mapped_filesystem_operand() -> None:
-    result = CliRunner().invoke(
-        App({"memory": _source_must_not_run}).typer_app,
-        ["ls"],
-    )
+    result = _invoke_ls([])
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -53,47 +61,31 @@ def test_ls_rejects_a_missing_mapped_filesystem_operand() -> None:
 
 def test_ls_refuses_an_active_same_thread_event_loop(monkeypatch) -> None:
     real_run = asyncio.run
-    run_calls = 0
-
-    def recording_run(coroutine):
-        nonlocal run_calls
-        run_calls += 1
-        return real_run(coroutine)
+    recording_run = Mock(wraps=real_run)
 
     async def invoke() -> object:
         monkeypatch.setattr(asyncio, "run", recording_run)
-        return CliRunner().invoke(
-            App({"memory": _source_must_not_run}).typer_app,
-            ["ls", "memory:/docs"],
-        )
+        return _invoke_ls(["memory:/docs"])
 
     result = real_run(invoke())
 
     assert result.exit_code == 1
     assert result.stdout == ""
     assert result.stderr == "ls: cannot run from an active event loop\n"
-    assert run_calls == 0
+    assert recording_run.call_count == 0
 
 
 def test_ls_starts_exactly_one_command_coroutine_with_asyncio_run(
     monkeypatch,
 ) -> None:
     real_run = asyncio.run
-    run_calls = 0
-
-    def recording_run(coroutine):
-        nonlocal run_calls
-        run_calls += 1
-        return real_run(coroutine)
+    recording_run = Mock(wraps=real_run)
 
     monkeypatch.setattr(asyncio, "run", recording_run)
-    result = CliRunner().invoke(
-        App({"memory": _source_must_not_run}).typer_app,
-        ["ls"],
-    )
+    result = _invoke_ls([])
 
     assert result.exit_code == 2
-    assert run_calls == 1
+    assert recording_run.call_count == 1
 
 
 @pytest.mark.parametrize(
@@ -101,10 +93,7 @@ def test_ls_starts_exactly_one_command_coroutine_with_asyncio_run(
     ["-l", "-ll", "-Al", "--long", "-a", "--all", "-h", "--help=value"],
 )
 def test_ls_rejects_the_complete_unsupported_option_token(option: str) -> None:
-    result = CliRunner().invoke(
-        App({"memory": _source_must_not_run}).typer_app,
-        ["ls", option, "memory:/docs"],
-    )
+    result = _invoke_ls([option, "memory:/docs"])
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -118,10 +107,7 @@ def test_ls_rejects_the_complete_unsupported_option_token(option: str) -> None:
 def test_ls_accepts_repeated_grouped_and_interspersed_uppercase_a(
     supported_options: list[str],
 ) -> None:
-    result = CliRunner().invoke(
-        App({"memory": _source_must_not_run}).typer_app,
-        ["ls", *supported_options, "-l"],
-    )
+    result = _invoke_ls([*supported_options, "-l"])
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -147,10 +133,7 @@ def test_ls_rejects_malformed_mapped_filesystem_operands(
     arguments: list[str],
     rendered: str,
 ) -> None:
-    result = CliRunner().invoke(
-        App({"memory": _source_must_not_run}).typer_app,
-        ["ls", *arguments],
-    )
+    result = _invoke_ls(arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -158,14 +141,12 @@ def test_ls_rejects_malformed_mapped_filesystem_operands(
 
 
 def test_ls_reports_unknown_names_with_locale_sorted_known_names() -> None:
-    result = CliRunner().invoke(
-        App(
-            {
-                "zeta": _source_must_not_run,
-                "alpha": _source_must_not_run,
-            }
-        ).typer_app,
-        ["ls", "other:/docs"],
+    result = _invoke_ls(
+        ["other:/docs"],
+        sources={
+            "zeta": _source_must_not_run,
+            "alpha": _source_must_not_run,
+        },
     )
 
     assert result.exit_code == 2
@@ -189,9 +170,9 @@ def test_app_snapshots_its_source_mapping_once() -> None:
 
 
 def test_ls_escapes_each_known_name_in_an_unknown_name_diagnostic() -> None:
-    result = CliRunner().invoke(
-        App({"known\\name\r": _source_must_not_run}).typer_app,
-        ["ls", "other:/docs"],
+    result = _invoke_ls(
+        ["other:/docs"],
+        sources={"known\\name\r": _source_must_not_run},
     )
 
     assert result.exit_code == 2
@@ -205,10 +186,7 @@ def test_ls_escapes_each_known_name_in_an_unknown_name_diagnostic() -> None:
 def test_ls_reports_a_missing_operand_after_supported_option_syntax(
     arguments: list[str],
 ) -> None:
-    result = CliRunner().invoke(
-        App({"memory": _source_must_not_run}).typer_app,
-        ["ls", *arguments],
-    )
+    result = _invoke_ls(arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -230,10 +208,7 @@ def test_ls_reports_only_the_first_preflight_error_in_argument_order(
     arguments: list[str],
     diagnostic: str,
 ) -> None:
-    result = CliRunner().invoke(
-        App({"memory": _source_must_not_run}).typer_app,
-        ["ls", *arguments],
-    )
+    result = _invoke_ls(arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -242,10 +217,7 @@ def test_ls_reports_only_the_first_preflight_error_in_argument_order(
 
 @pytest.mark.parametrize("arguments", [["--help"], ["-l", "--help"]])
 def test_ls_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
-    result = CliRunner().invoke(
-        App({"memory": _source_must_not_run}).typer_app,
-        ["ls", *arguments],
-    )
+    result = _invoke_ls(arguments)
 
     assert result.exit_code == 0
     assert "Usage:" in result.stdout
@@ -256,10 +228,7 @@ def test_ls_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
 def test_ls_treats_help_tokens_after_the_option_delimiter_as_operands(
     operand: str,
 ) -> None:
-    result = CliRunner().invoke(
-        App({"memory": _source_must_not_run}).typer_app,
-        ["ls", "--", operand],
-    )
+    result = _invoke_ls(["--", operand])
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -285,10 +254,7 @@ def test_ls_preserves_preflight_when_mounted_below_a_parent_typer_app() -> None:
 
 def test_active_loop_refusal_precedes_command_preflight() -> None:
     async def invoke() -> object:
-        return CliRunner().invoke(
-            App({"memory": _source_must_not_run}).typer_app,
-            ["ls", "-l"],
-        )
+        return _invoke_ls(["-l"])
 
     result = asyncio.run(invoke())
 
@@ -298,10 +264,7 @@ def test_active_loop_refusal_precedes_command_preflight() -> None:
 
 
 def test_ls_renders_all_diagnostic_control_characters_in_order() -> None:
-    result = CliRunner().invoke(
-        App({"memory": _source_must_not_run}).typer_app,
-        ["ls", "memory:/bad\\\0\r\n"],
-    )
+    result = _invoke_ls(["memory:/bad\\\0\r\n"])
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -322,10 +285,7 @@ def test_ls_renders_all_diagnostic_control_characters_in_order() -> None:
 def test_ls_accepts_locked_operand_grammar_before_a_later_error(
     valid_prefix: list[str],
 ) -> None:
-    result = CliRunner().invoke(
-        App({"memory": _source_must_not_run}).typer_app,
-        ["ls", *valid_prefix, "bad"],
-    )
+    result = _invoke_ls([*valid_prefix, "bad"])
 
     assert result.exit_code == 2
     assert result.stdout == ""
