@@ -707,7 +707,7 @@ def test_ls_escapes_configured_names_in_unknown_filesystem_diagnostic() -> None:
     try:
         locale.setlocale(locale.LC_COLLATE, "C")
         result = CliRunner().invoke(
-            App({"a\nname": first, "b\0name": second}).typer_app,
+            App({"a\nname": first, "b\\name": second}).typer_app,
             ["ls", "unknown:/x"],
         )
     finally:
@@ -716,10 +716,24 @@ def test_ls_escapes_configured_names_in_unknown_filesystem_diagnostic() -> None:
     assert result.exit_code == 2
     assert result.stdout == ""
     assert result.stderr == (
-        "ls: unknown:/x: unknown filesystem (known: a\\nname, b\\0name)\n"
+        "ls: unknown:/x: unknown filesystem (known: a\\nname, b\\\\name)\n"
     )
     assert first.calls == []
     assert second.calls == []
+
+
+def test_ls_escapes_single_nul_configured_name_without_relative_sorting() -> None:
+    filesystem = ScriptedRecordingFileSystem([], skip_instance_cache=True)
+
+    result = CliRunner().invoke(
+        App({"nul\0name": filesystem}).typer_app,
+        ["ls", "unknown:/x"],
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == ("ls: unknown:/x: unknown filesystem (known: nul\\0name)\n")
+    assert filesystem.calls == []
 
 
 def test_ls_preserves_colons_in_memory_file_path() -> None:

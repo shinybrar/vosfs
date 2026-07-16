@@ -51,11 +51,7 @@ def _write_stdout(value: str) -> None:
 
 
 def _collation_key(value: str) -> tuple[str, str]:
-    try:
-        transformed = locale.strxfrm(value)
-    except ValueError:
-        transformed = value
-    return transformed, value
+    return locale.strxfrm(value), value
 
 
 def _runtime_failure_category(error: Exception) -> str:
@@ -176,12 +172,11 @@ class App:
                     )
                     raise typer.Exit(code=2)
                 if name not in filesystems:
+                    configured_names = list(filesystems)
+                    if len(configured_names) > 1:
+                        configured_names.sort(key=_collation_key)
                     known_names = ", ".join(
-                        _render_diagnostic_value(known)
-                        for known in sorted(
-                            filesystems,
-                            key=_collation_key,
-                        )
+                        _render_diagnostic_value(known) for known in configured_names
                     )
                     typer.echo(
                         f"ls: {rendered_argument}: unknown filesystem "
