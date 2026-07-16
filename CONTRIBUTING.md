@@ -70,8 +70,10 @@ the complete local gate:
 uv lock --check
 uv run pre-commit run --all-files
 uv run pytest
+uv run --package fsspec-cli pytest src/fsspec-cli/tests
 uv run zensical build --strict --clean
-uv build
+uv build --package vosfs
+uv build --package fsspec-cli
 ```
 
 If a hook changes files, review the changes, stage them, and run the gate again.

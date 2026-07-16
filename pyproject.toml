@@ -99,6 +99,9 @@ docstring-code-format = true
 [tool.ty.src]
 exclude = ["tests/"]
 
+[tool.uv.workspace]
+members = ["src/fsspec-cli"]
+
 [tool.commitizen]
 name = "cz_customize"
 

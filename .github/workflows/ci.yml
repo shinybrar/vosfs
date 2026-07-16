@@ -39,8 +39,21 @@ jobs:
       - name: Build strict documentation
         run: uv run zensical build --strict --clean
 
-      - name: Build package distributions
-        run: uv build
+      - name: Build vosfs distributions
+        run: uv build --package vosfs --out-dir dist/vosfs
+
+      - name: Build fsspec-cli distributions
+        run: uv build --package fsspec-cli --out-dir dist/fsspec-cli
+
+      - name: Verify the fsspec-cli wheel in isolation
+        run: |
+          set -euo pipefail
+          wheel="$(find dist/fsspec-cli -maxdepth 1 -type f -name 'fsspec_cli-*.whl' -print -quit)"
+          sdist="$(find dist/fsspec-cli -maxdepth 1 -type f -name 'fsspec_cli-*.tar.gz' -print -quit)"
+          test -n "$wheel"
+          test -n "$sdist"
+          uv run --isolated --no-project --with "$wheel" python -c \
+            "import fsspec_cli; from importlib.metadata import version; assert version('fsspec-cli') == '0.1.0'"
 
   test:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python }})
@@ -77,6 +90,9 @@ jobs:
 
       - name: Run deterministic offline tests
         run: uv run pytest
+
+      - name: Run fsspec-cli package tests
+        run: uv run --package fsspec-cli pytest src/fsspec-cli/tests
 
   live-integration:
     name: Live OpenCADC integration gate
