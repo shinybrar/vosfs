@@ -1,4 +1,4 @@
-# Acquire every command source before filesystem work
+# Acquire every referenced async filesystem source before filesystem work
 
 Status: Accepted
 
