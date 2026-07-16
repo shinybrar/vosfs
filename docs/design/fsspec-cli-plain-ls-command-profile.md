@@ -159,10 +159,6 @@ capability registry, backend-type checks, retry fallbacks, or fabricated
 results. `NotImplementedError` from a real selected async operation is runtime
 evidence that the operation is unsupported.
 
-The disposed issue #80 prototype exercised the same result-shape rules through
-public synchronous `info(path)` and `ls(path, detail=False)` calls. Those calls
-are historical evidence only, not an allowed production execution path.
-
 ## 4. Selection and sorting
 
 Without `-A`, directory results whose displayed basename begins with `.` MUST

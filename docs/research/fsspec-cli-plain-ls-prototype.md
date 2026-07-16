@@ -33,11 +33,6 @@ fsspec implementations. It is not evidence that every fsspec implementation
 is compatible. Unsupported operations, incompatible result shapes, and the
 remaining interoperability boundaries below remain explicit outcomes.
 
-Human verdict: **Locked.** Plain-`ls` semantics are viable for the tested
-synchronous file/directory floor without a universal-fsspec claim. Configured
-filesystem names containing NUL are invalid and production `App` construction
-must reject them.
-
 After the prototype verdict, one additional standing constraint was locked:
 all production CLI orchestration and filesystem calls are async-only. The
 synchronous prototype below remains evidence about command semantics, backend
@@ -173,13 +168,6 @@ escaped output-failure diagnostic. Already-known backend diagnostics were
 emitted before an output failure stopped stdout.
 
 ## Interoperability boundaries and remaining fog
-
-### Evidence supports
-
-- Backend-agnostic plain-`ls` semantics over preconfigured fsspec instances.
-- Honest compatibility decisions from observed call and result shapes.
-- Local, Memory, and VOS interoperability without command-level backend logic.
-- Stable rejection when a backend cannot supply the locked capability floor.
 
 ### Evidence does not support
 
