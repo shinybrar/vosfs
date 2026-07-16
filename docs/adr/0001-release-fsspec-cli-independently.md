@@ -2,7 +2,8 @@
 
 > **Partially superseded by
 > [Own async filesystems per command invocation](./0002-own-async-filesystems-per-invocation.md):**
-> only the live-instance `App(filesystems)` ownership clause is replaced.
+> only the live-instance `App(filesystems)` injection and ownership clauses are
+> replaced.
 > Independent release and workspace decisions remain accepted.
 
 To support co-development now without coupling future extraction to `vosfs`,

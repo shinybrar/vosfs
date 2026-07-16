@@ -51,13 +51,11 @@ subsequently lock the production contract.
 App(filesystems: Mapping[str, AbstractFileSystem]).typer_app
 ```
 
-The disposed prototype used host-owned live filesystem instances. Issue #92
-replaced that production ownership clause with a non-empty mapping of async
-filesystem sources and retained the sole stable Typer seam as
-`App(sources).typer_app`. Each source declares host configuration and cleanup;
-`App` enters, validates, uses, and exits its yielded filesystem on one invocation
-loop. A host Typer application can still mount the returned app with
-`add_typer`; no console script or shell-installable surface was added.
+The disposed prototype used host-owned live filesystem instances; production
+injection and ownership are superseded by
+[ADR 0002](../adr/0002-own-async-filesystems-per-invocation.md). A host Typer
+application can still mount the returned app with `add_typer`; no console script
+or shell-installable surface was added.
 
 The prototype preserves raw command arguments so the handler owns `-A`, `--`,
 unsupported-option diagnostics, and multiple operands while exact `--help`

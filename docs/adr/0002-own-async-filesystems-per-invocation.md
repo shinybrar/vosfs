@@ -39,8 +39,8 @@ invocation loop and awaits `aclose()` from its context-manager exit before that
 loop closes. `fsspec-cli` imports no `vosfs` runtime dependency and owns no VOS
 configuration or authentication behavior.
 
-This decision supersedes only the live-instance ownership clause in
-[Release fsspec-cli independently inside the vosfs workspace](./0001-release-fsspec-cli-independently.md).
+This decision supersedes only the live-instance injection and ownership clauses
+in [Release fsspec-cli independently inside the vosfs workspace](./0001-release-fsspec-cli-independently.md).
 The independent workspace, release, tag, artifact, dependency, publication,
 and sole Typer-seam decisions remain accepted.
 
@@ -51,8 +51,8 @@ and sole Typer-seam decisions remain accepted.
   path unsafe by default.
 - Borrowed and managed catalogs plus pluggable runners are coherent but expose
   speculative v1 seams.
-- A background fsspec sync bridge, nested event loop, or hidden worker violates
-  the async-only direction and obscures resource ownership.
+- A background fsspec sync bridge, nested event loop, or hidden runner thread
+  violates the async-only direction and obscures resource ownership.
 
 ## Consequences
 

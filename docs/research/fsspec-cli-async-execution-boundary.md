@@ -36,12 +36,8 @@ The research found one hard contradiction among the earlier locks:
 Consequently, the old live-instance seam, literal end-to-end async execution,
 host-owned reusable instances, and deterministic resource cleanup could not all
 hold at once. [Issue #92](https://github.com/shinybrar/vosfs/issues/92)
-resolved the contradiction by retaining `App(sources).typer_app` as the sole
-stable v1 seam and replacing live instances with invocation-owned filesystems
-yielded by host-configured async context-manager factories. One zero-logic
-synchronous adapter per concrete Typer command enters one invocation loop; all
-orchestration, filesystem use, and cleanup beneath it are awaited. The normative
-contract is [ADR 0002](../adr/0002-own-async-filesystems-per-invocation.md).
+resolved the contradiction; [ADR 0002](../adr/0002-own-async-filesystems-per-invocation.md)
+is the sole normative host-integration and lifecycle contract.
 
 ## Primary-source facts
 
@@ -111,118 +107,20 @@ that will use and close it.
 
 **Hard consequence:** a Typer callback cannot create a temporary loop, use a host-owned reusable `VOSpaceFileSystem`, close the loop, and leave deterministic cleanup to the host. The host no longer has the owning loop on which to await cleanup. Closing the filesystem inside the callback instead transfers lifecycle ownership to `fsspec-cli` and makes the injected instance unusable for later host work.
 
-## Locked compatibility boundary
+## Decision resolution
 
-The following boundary was locked by issue #92.
-
-### Source mapping and runtime validation
-
-`App` accepts a non-empty `Mapping[str, AsyncFilesystemSource]`. Each source is
-a reusable synchronous callable that returns a fresh async context manager
-yielding one `AbstractFileSystem` for one command invocation. The host owns
-source configuration and cleanup declaration. After complete command preflight,
-`App` enters each required source, validates and uses the yielded filesystem,
-then exits every entered source on the same loop before that loop closes.
-
-For each yielded filesystem, `App` validates only generic async shape and mode:
-
-1. it is an `AsyncFileSystem` instance (and therefore also the already-locked `AbstractFileSystem` type);
-2. `async_impl is True`;
-3. `asynchronous is True`.
-
-For plain `ls`, the required hooks are `_info` and `_ls`. `AsyncFileSystem` supplies coroutine-shaped base hooks, so constructor inspection cannot prove operational support: inherited hooks may still raise `NotImplementedError`. The real awaited call remains capability evidence and maps to the locked per-operand `unsupported operation` result.
-
-An instance with `async_impl=True` but `asynchronous=False` is rejected after
-source entry and before filesystem I/O. Letting it through would permit its
-public synchronous mirrors and fsspec background loop to leak back into
-production behavior. Raw synchronous instances are rejected at the same point.
-
-The validation must not inspect `protocol`, compare a concrete backend class,
-import Local, Memory, or `vosfs`, or maintain a backend capability registry. New
-commands identify their required coroutine hooks and retain real awaited calls,
-result-shape validation, and runtime exceptions as compatibility evidence.
-
-### Native and adapted instances
-
-- A native async implementation is accepted when the generic checks pass.
-- A raw synchronous instance is rejected.
-- A host source may explicitly yield `AsyncFileSystemWrapper(raw_fs, asynchronous=True)`. Once yielded, it is treated exactly like any other async filesystem; `fsspec-cli` does not branch on the wrapper class.
-- `fsspec-cli` should not automatically create that wrapper. The wrapper is experimental, thread-affinity and thread-safety are backend properties, and implicit wrapping would make the library choose those risks for the host.
-- The tested command matrix should distinguish `native async` from `adapted async`; both may be tested, but an adapted result is not evidence of native async support or improved performance.
-
-### Command execution
-
-The async plain-`ls` core should preserve the locked sequence:
-
-```python
-info = await filesystem._info(path)
-if info["type"] == "directory":
-    names = await filesystem._ls(path, detail=False)
-```
-
-This is interface pseudocode, not production implementation. All existing preflight, validation, buffering, continuation, diagnostics, sorting, and output rules remain unchanged. Operand processing remains in argument order unless a later profile explicitly permits concurrency.
-
-The command core must never call a public filesystem operation, `fsspec.asyn.sync`, `sync_wrapper`, `get_loop`, `asyncio.run`, or `Runner.run`. The runner belongs in a zero-command-logic synchronous adapter attached to each concrete Typer command.
+Issue #92 selected the invocation-owned source model from these facts. ADR 0002
+is canonical; the backend implications and implementation handoff below apply
+the research without restating that contract.
 
 ## Backend implications
 
-| Filesystem | Raw instance | Async-compatible form | Research conclusion |
+| Filesystem | Raw instance | Async-compatible form | Research implication |
 | --- | --- | --- | --- |
 | Local | Reject: sync `info`/`ls`, `async_impl=False`. | Host source yielding `AsyncFileSystemWrapper(LocalFileSystem(), asynchronous=True)`. | Plain `ls` remains testable through awaited thread offload. Matrix status must say `adapted async`; wrapper is experimental. |
 | Memory | Reject: sync `info`/`ls`, `async_impl=False`. | Host source yielding `AsyncFileSystemWrapper(MemoryFileSystem(), asynchronous=True)`. | Same boundary as Local. Global in-process store semantics do not become native async semantics. |
 | `vosfs` | Reject default `asynchronous=False`; accept a native source constructing in async mode. | Source constructs `VOSpaceFileSystem(..., asynchronous=True, skip_instance_cache=True)` inside the invocation loop and awaits `aclose()` on exit. | Native async plain `ls` is viable with deterministic same-loop cleanup. |
 | Other fsspec backend | Reject raw sync or wrong-mode instances. | Native async or explicit host-supplied async adapter that passes generic checks. | Compatibility is command-, backend-, and version-tested; never universal. |
-
-## Locked event-loop and lifecycle contract
-
-- Each concrete Typer command has one zero-command-logic synchronous adapter.
-  That adapter checks for an active event loop in its thread and otherwise runs
-  one command coroutine on one owned loop.
-- Complete option and operand preflight occurs before entering any source. The
-  command coroutine then enters, validates, uses, and exits all required sources
-  before returning and before the loop closes.
-- `App(sources).typer_app` remains the sole stable v1 host-integration seam.
-  There is no public async invocation seam, hidden runner thread, nested-loop
-  workaround, or background fsspec sync bridge.
-- Source context exit is the generic cleanup interface. A native VOS source
-  awaits `VOSpaceFileSystem.aclose()` before returning from its exit.
-
-Borrowed live instances, a public async lifecycle seam, a hidden background
-runner, and unclosed instances on a temporary loop were rejected. Source
-factory, context-entry, validation, context-exit, and competing command-failure
-semantics remain a separate command-contract question in
-[issue #94](https://github.com/shinybrar/vosfs/issues/94).
-
-## Running-loop behavior
-
-Ordinary `add_typer` composition remains supported because composition itself
-does not run a loop. Invocation from a normal shell or Click test runner can
-enter the adapter's loop.
-
-Invocation of that synchronous Typer callback from a thread that already runs
-an event loop cannot be made transparently async by `asyncio.run` or
-`Runner.run`. The adapter detects this before creating a coroutine and returns
-one stable configuration diagnostic. The library does not expose a public async
-invocation alternative, apply `nest_asyncio`, start a hidden per-call thread,
-or submit a coroutine back to the caller's own blocked loop.
-
-## Locked decisions
-
-1. **Typer adapter:** one zero-command-logic synchronous adapter per concrete
-   command; all orchestration and filesystem work beneath it is awaited.
-2. **Injection type:** a non-empty `Mapping[str, AsyncFilesystemSource]`, where
-   each source yields one fresh filesystem for one invocation.
-3. **Ownership:** hosts own source configuration and cleanup declaration;
-   `App` owns each yielded filesystem for one invocation on one loop.
-4. **Stable seam:** only `App(sources).typer_app`; an active same-thread loop is
-   a stable configuration diagnostic, not an alternate public invocation path.
-5. **Accepted filesystems:** raw sync and wrong-mode yields are rejected;
-   explicit host wrappers are accepted as `adapted async` and never auto-created.
-6. **Coroutine hooks:** documented, version-tested `_info`, `_ls`, and later
-   command-specific underscore coroutines are the direct async surface.
-7. **Native VOS lifecycle:** construct with `asynchronous=True` and
-   `skip_instance_cache=True` on the invocation loop, then await `aclose()`
-   before that loop closes.
 
 ## Implementation handoff
 
