@@ -12,3 +12,5 @@ All notable changes to `fsspec-cli` are documented in this file.
 - Add hermetic matrix probes for adapted Local, adapted Memory, native `vosfs`,
   and strict `ls -l` rejection while complete compatibility evidence remains
   pending.
+- Require every supported CI leg to test the built wheel outside the workspace,
+  with `vosfs` installed only as a separate integration wheel.
