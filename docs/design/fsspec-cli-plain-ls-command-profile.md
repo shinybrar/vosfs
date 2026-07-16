@@ -49,8 +49,9 @@ The supported surface is deliberately smaller than POSIX Issue 8:
 - terminal output uses the same one-entry-per-line form as redirected output.
 
 Unsupported behavior is rejected rather than emulated. In particular, `-a`,
-`-l`, columns, color, quoting, recursion, and metadata decoration are outside
-this profile.
+columns, color, quoting, recursion, and metadata decoration are outside this
+profile. `-l` remains unsupported under its locked
+[strict rejection profile](fsspec-cli-ls-long-rejection-profile.md).
 
 ## 2. Mapped filesystem operands
 
@@ -300,8 +301,9 @@ branches against Local, Memory, and hermetic `VOSpaceFileSystem` instances.
 
 - [Define the tested command matrix contract](https://github.com/shinybrar/vosfs/issues/81)
   owns matrix statuses, versions, and hermetic-versus-live evidence rules.
-- [Define `ls -l` profiles and incompatibility behavior](https://github.com/shinybrar/vosfs/issues/82)
-  owns every long-listing field and profile.
+- [Strict `ls -l` rejection profile](fsspec-cli-ls-long-rejection-profile.md)
+  records why V1 adds no long renderer and keeps whole-invocation preflight
+  rejection.
 - [Sequence the `fsspec-cli` tracer implementation backlog](https://github.com/shinybrar/vosfs/issues/83)
   owns production package slices, dependencies, CI, and release ordering.
 
@@ -313,5 +315,7 @@ TDD cycles.
 
 - [POSIX Issue 8 `ls`](https://pubs.opengroup.org/onlinepubs/9799919799/utilities/ls.html)
 - [Portable fsspec capability floor for plain `ls`](../research/fsspec-cli-plain-ls-capability-floor.md)
+- [Honest long-listing viability evidence](../research/fsspec-cli-ls-long-viability.md)
+- [Strict `ls -l` rejection profile](fsspec-cli-ls-long-rejection-profile.md)
 - [fsspec 2026.6.0 `AbstractFileSystem.ls`](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/spec.py#L326-L365)
 - [fsspec 2026.6.0 `AbstractFileSystem.info`](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/spec.py#L682-L714)

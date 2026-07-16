@@ -8,7 +8,7 @@ Question: [shinybrar/vosfs#78](https://github.com/shinybrar/vosfs/issues/78)
 
 Client contract: fsspec 2026.6.0
 
-Status: **Decision evidence.** This document measures available metadata. It does not choose the final command profiles or incompatibility behavior owned by issue #82.
+Status: **Decision evidence retained.** Issue #82 selected the [strict rejection profile](../design/fsspec-cli-ls-long-rejection-profile.md); this document remains the metadata evidence for that decision.
 
 ## Answer
 
@@ -19,7 +19,7 @@ No initial backend can implement a complete POSIX Issue 8 `ls -l` from its fsspe
 - Memory has honest name, file/directory type, and logical size. A file has a public `modified()` value, but a directory does not. It has no mode, link count, owner, group, allocated-block, device, or symbolic-link metadata. ([Memory listing and info](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/memory.py#L43-L105), [Memory `info`](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/memory.py#L149-L169), [Memory `modified`](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/memory.py#L241-L253))
 - `vosfs` has honest names and node kinds. Data size and modification time are usable only when the corresponding raw VOSpace properties exist; mode, link count, owning group, allocated blocks, and POSIX permission bits are absent. A LinkNode carries its target, but its exposed size is zero rather than the target-string byte length POSIX assigns to a symbolic link. ([`vosfs` parser and mapping](https://github.com/shinybrar/vosfs/blob/8bc1df60eb4df69eb439480ab3685f275180effc/src/vosfs/nodes.py#L284-L317), [VOSpace 2.1 node semantics](https://www.ivoa.net/documents/VOSpace/20180620/REC-VOSpace-2.1.html#tth_sEc3.1), [POSIX `<sys/stat.h>`](https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/sys_stat.h.html))
 
-The evidence therefore supports reduced, explicitly scoped capability slices—most notably a Local base-stat row for non-link regular files and directories—but not a complete POSIX `-l` profile. Whether any reduced slice should be offered under `ls -l`, and how an invocation is rejected, remain issue #82 decisions.
+The evidence therefore supports reduced, explicitly scoped capability slices—most notably a Local base-stat row for non-link regular files and directories—but not a complete POSIX `-l` profile. Issue #82 rejected exposing those slices under `-l`; V1 keeps the option unsupported and performs no source or backend work.
 
 ## POSIX Issue 8 floor
 
@@ -108,7 +108,7 @@ Modification time is likewise conditional. The parser promotes `core#date` to `m
 
 OpenCADC can serialize an owner display string under `core#creator`, and `vosfs` preserves it for non-link nodes. That is conditional, service-specific owner evidence—not a stable fsspec UID or VOSpace owner field. `groupread`, `groupwrite`, and `publicread` describe access policy; they do not identify one POSIX owning group or encode owner/group/other `rwx` mode bits. ([OpenCADC node serialization](https://github.com/opencadc/vos/blob/cf976ce8141dd3341631b7f3e07aa38443d42f58/cadc-vos/src/main/java/org/opencadc/vospace/io/NodeWriter.java#L325-L372), [VOSpace standard-property meanings](https://www.ivoa.net/documents/VOSpace/20180620/REC-VOSpace-2.1.html#tth_sEcC), [`vosfs` property preservation](https://github.com/shinybrar/vosfs/blob/8bc1df60eb4df69eb439480ab3685f275180effc/src/vosfs/nodes.py#L197-L206))
 
-## Viability evidence handed to issue #82
+## Viability evidence applied by issue #82
 
 These are evidence slices, not selected profiles:
 
@@ -119,7 +119,10 @@ These are evidence slices, not selected profiles:
 | Local base-stat row for non-link regular files/directories | **Viable as a reduced slice:** base ten-character mode, link count, numeric or resolved owner/group, size, mtime, and name. It excludes the ACL suffix, directory `total`, device rows, and symlinks. |
 | Sparse fsspec details | Name, type, and size are the common abstract floor. Memory file mtime and OpenCADC-backed `vosfs` length/date can enrich individual rows conditionally. This is detailed metadata, not the POSIX long-format column contract. |
 
-Issue #82 must decide whether a reduced slice is exposed as an `ls -l` compatibility profile at all, which entry kinds it covers, and how whole-invocation incompatibility is reported. This research does not choose those policies.
+Issue #82 selected strict whole-invocation rejection during option preflight.
+Reduced Local rows, sparse placeholders, variable columns, and silent fallback
+are not `ls -l` profiles. The locked profile records exact diagnostics, exit
+status, and the evidence required to admit `-l` in a future version.
 
 ## Hermetic probes
 
