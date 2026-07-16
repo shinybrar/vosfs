@@ -689,3 +689,52 @@ def test_ls_rejects_incompatible_backend_result(
     if operation == "ls":
         expected_calls.append(("ls", path, {"detail": False}))
     assert filesystem.calls == expected_calls
+
+
+def test_ls_continues_after_failures_without_leaking_partial_operand_output() -> None:
+    filesystem = RuntimeScriptedFileSystem(
+        info_results={
+            "/bad-dir": {"type": "directory"},
+            "/z-file": {"type": "file"},
+            "/missing": FileNotFoundError(),
+            "/good-dir": {"type": "directory"},
+            "/a-file": {"type": "file"},
+        },
+        ls_results={
+            "/bad-dir": [
+                "/bad-dir/should-not-leak.txt",
+                "/bad-dir/nested/invalid.txt",
+            ],
+            "/good-dir": ["/good-dir/z.txt", "/good-dir/a.txt"],
+        },
+        skip_instance_cache=True,
+    )
+
+    result = CliRunner().invoke(
+        App({"scripted": filesystem}).typer_app,
+        [
+            "ls",
+            "scripted:/bad-dir",
+            "scripted:/z-file",
+            "scripted:/missing",
+            "scripted:/good-dir",
+            "scripted:/a-file",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == (
+        "scripted:/a-file\nscripted:/z-file\n\nscripted:/good-dir:\na.txt\nz.txt\n"
+    )
+    assert result.stderr == (
+        "ls: scripted:/bad-dir: incompatible result\nls: scripted:/missing: not found\n"
+    )
+    assert filesystem.calls == [
+        ("info", "/bad-dir", {}),
+        ("ls", "/bad-dir", {"detail": False}),
+        ("info", "/z-file", {}),
+        ("info", "/missing", {}),
+        ("info", "/good-dir", {}),
+        ("ls", "/good-dir", {"detail": False}),
+        ("info", "/a-file", {}),
+    ]
