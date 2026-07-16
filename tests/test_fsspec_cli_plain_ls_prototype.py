@@ -305,3 +305,93 @@ def test_ls_rejects_missing_mapped_filesystem_operand() -> None:
     assert result.stdout == ""
     assert result.stderr == "ls: missing mapped filesystem operand\n"
     assert filesystem.calls == []
+
+
+def test_ls_treats_lone_hyphen_as_malformed_operand() -> None:
+    filesystem = ScriptedRecordingFileSystem([], skip_instance_cache=True)
+
+    result = CliRunner().invoke(
+        App({"memory": filesystem}).typer_app,
+        ["ls", "memory:/valid", "-"],
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == "ls: -: invalid mapped filesystem operand\n"
+    assert filesystem.calls == []
+
+
+@pytest.mark.parametrize(
+    ("malformed_operand", "expected_stderr"),
+    [
+        (
+            "memory:/bad\nname",
+            "ls: memory:/bad\\nname: invalid mapped filesystem operand\n",
+        ),
+        (
+            "mem\0ory:/x",
+            "ls: mem\\0ory:/x: invalid mapped filesystem operand\n",
+        ),
+    ],
+)
+def test_ls_rejects_control_character_operand_during_complete_preflight(
+    malformed_operand: str,
+    expected_stderr: str,
+) -> None:
+    filesystem = ScriptedRecordingFileSystem([], skip_instance_cache=True)
+
+    result = CliRunner().invoke(
+        App({"memory": filesystem}).typer_app,
+        ["ls", "memory:/valid", malformed_operand],
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == expected_stderr
+    assert filesystem.calls == []
+
+
+def test_ls_escapes_configured_names_in_unknown_filesystem_diagnostic() -> None:
+    first = ScriptedRecordingFileSystem([], skip_instance_cache=True)
+    second = ScriptedRecordingFileSystem([], skip_instance_cache=True)
+    previous_locale = locale.setlocale(locale.LC_COLLATE)
+
+    try:
+        locale.setlocale(locale.LC_COLLATE, "C")
+        result = CliRunner().invoke(
+            App({"a\nname": first, "b\0name": second}).typer_app,
+            ["ls", "unknown:/x"],
+        )
+    finally:
+        locale.setlocale(locale.LC_COLLATE, previous_locale)
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == (
+        "ls: unknown:/x: unknown filesystem (known: a\\nname, b\\0name)\n"
+    )
+    assert first.calls == []
+    assert second.calls == []
+
+
+def test_ls_preserves_colons_in_memory_file_path() -> None:
+    backend = MemoryFileSystem(skip_instance_cache=True)
+    namespace = f"/issue80-operand-{uuid4().hex}"
+    file_path = f"{namespace}/a:b:c"
+    backend.makedirs(namespace)
+    backend.pipe_file(file_path, b"colons")
+    filesystem = RecordingFileSystem(backend, skip_instance_cache=True)
+    operand = f"memory:{file_path}"
+
+    try:
+        result = CliRunner().invoke(
+            App({"memory": filesystem}).typer_app,
+            ["ls", operand],
+        )
+    finally:
+        backend.rm(namespace, recursive=True)
+
+    assert result.exit_code == 0
+    assert result.stdout == f"{operand}\n"
+    assert result.stderr == ""
+    assert filesystem.calls == [("info", file_path, {})]

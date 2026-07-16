@@ -24,6 +24,23 @@ if TYPE_CHECKING:
 _RAW_ARGV_KEY = "fsspec_cli.raw_argv"
 
 
+def _render_diagnostic_value(value: str) -> str:
+    return (
+        value.replace("\\", "\\\\")
+        .replace("\0", "\\0")
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+    )
+
+
+def _collation_key(value: str) -> tuple[str, str]:
+    try:
+        transformed = locale.strxfrm(value)
+    except ValueError:
+        transformed = value
+    return transformed, value
+
+
 def _requests_framework_help(arguments: tuple[str, ...]) -> bool:
     for argument in arguments:
         if argument == "--":
@@ -65,7 +82,7 @@ class App:
                 "ignore_unknown_options": True,
             },
         )
-        def _ls(ctx: typer.Context) -> None:  # noqa: C901, PLR0912
+        def _ls(ctx: typer.Context) -> None:  # noqa: C901, PLR0912, PLR0915
             """List mapped files and directories through public fsspec methods."""
             raw_argv = ctx.meta[_RAW_ARGV_KEY]
             options_enabled = True
@@ -75,11 +92,15 @@ class App:
                 if options_enabled and argument == "--":
                     options_enabled = False
                     continue
-                if options_enabled and argument.startswith("-"):
+                if options_enabled and argument != "-" and argument.startswith("-"):
                     if argument[1:] and set(argument[1:]) == {"A"}:
                         almost_all = True
                         continue
-                    typer.echo(f"ls: {argument}: unsupported option", err=True)
+                    rendered_argument = _render_diagnostic_value(argument)
+                    typer.echo(
+                        f"ls: {rendered_argument}: unsupported option",
+                        err=True,
+                    )
                     raise typer.Exit(code=2)
                 operands.append(argument)
 
@@ -89,22 +110,31 @@ class App:
 
             parsed_operands: list[tuple[str, AbstractFileSystem, str]] = []
             for operand in operands:
+                rendered_operand = _render_diagnostic_value(operand)
+                if "\0" in operand or "\n" in operand:
+                    typer.echo(
+                        f"ls: {rendered_operand}: invalid mapped filesystem operand",
+                        err=True,
+                    )
+                    raise typer.Exit(code=2)
                 name, separator, path = operand.partition(":")
                 if not separator or not name or not path.startswith("/"):
                     typer.echo(
-                        f"ls: {operand}: invalid mapped filesystem operand",
+                        f"ls: {rendered_operand}: invalid mapped filesystem operand",
                         err=True,
                     )
                     raise typer.Exit(code=2)
                 if name not in filesystems:
                     known_names = ", ".join(
-                        sorted(
+                        _render_diagnostic_value(known)
+                        for known in sorted(
                             filesystems,
-                            key=lambda known: (locale.strxfrm(known), known),
+                            key=_collation_key,
                         )
                     )
                     typer.echo(
-                        f"ls: {operand}: unknown filesystem (known: {known_names})",
+                        f"ls: {rendered_operand}: unknown filesystem "
+                        f"(known: {known_names})",
                         err=True,
                     )
                     raise typer.Exit(code=2)
@@ -130,7 +160,7 @@ class App:
                         operand,
                         sorted(
                             basenames,
-                            key=lambda child: (locale.strxfrm(child), child),
+                            key=_collation_key,
                         ),
                     )
                 )
