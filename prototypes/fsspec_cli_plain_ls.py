@@ -130,6 +130,7 @@ class App:
             options_enabled = True
             almost_all = False
             operands: list[str] = []
+            parsed_operands: list[tuple[str, AbstractFileSystem, str]] = []
             for argument in raw_argv:
                 if options_enabled and argument == "--":
                     options_enabled = False
@@ -145,24 +146,17 @@ class App:
                     )
                     raise typer.Exit(code=2)
                 operands.append(argument)
-
-            if not operands:
-                typer.echo("ls: missing mapped filesystem operand", err=True)
-                raise typer.Exit(code=2)
-
-            parsed_operands: list[tuple[str, AbstractFileSystem, str]] = []
-            for operand in operands:
-                rendered_operand = _render_diagnostic_value(operand)
-                if "\0" in operand or "\n" in operand:
+                rendered_argument = _render_diagnostic_value(argument)
+                if "\0" in argument or "\n" in argument:
                     typer.echo(
-                        f"ls: {rendered_operand}: invalid mapped filesystem operand",
+                        f"ls: {rendered_argument}: invalid mapped filesystem operand",
                         err=True,
                     )
                     raise typer.Exit(code=2)
-                name, separator, path = operand.partition(":")
+                name, separator, path = argument.partition(":")
                 if not separator or not name or not path.startswith("/"):
                     typer.echo(
-                        f"ls: {rendered_operand}: invalid mapped filesystem operand",
+                        f"ls: {rendered_argument}: invalid mapped filesystem operand",
                         err=True,
                     )
                     raise typer.Exit(code=2)
@@ -175,12 +169,16 @@ class App:
                         )
                     )
                     typer.echo(
-                        f"ls: {rendered_operand}: unknown filesystem "
+                        f"ls: {rendered_argument}: unknown filesystem "
                         f"(known: {known_names})",
                         err=True,
                     )
                     raise typer.Exit(code=2)
-                parsed_operands.append((operand, filesystems[name], path))
+                parsed_operands.append((argument, filesystems[name], path))
+
+            if not operands:
+                typer.echo("ls: missing mapped filesystem operand", err=True)
+                raise typer.Exit(code=2)
 
             file_results: list[str] = []
             directory_results: list[tuple[str, list[str]]] = []

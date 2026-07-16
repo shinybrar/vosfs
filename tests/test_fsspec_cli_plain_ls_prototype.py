@@ -200,6 +200,26 @@ def test_ls_almost_all_selects_backend_dot_entries(
     ]
 
 
+def test_ls_accepts_almost_all_option_after_operand() -> None:
+    filesystem = ScriptedRecordingFileSystem(
+        ["/docs/visible.txt", "/docs/.hidden"],
+        skip_instance_cache=True,
+    )
+
+    result = CliRunner().invoke(
+        App({"scripted": filesystem}).typer_app,
+        ["ls", "scripted:/docs", "-A"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ".hidden\nvisible.txt\n"
+    assert result.stderr == ""
+    assert filesystem.calls == [
+        ("info", "/docs", {}),
+        ("ls", "/docs", {"detail": False}),
+    ]
+
+
 def test_ls_sorts_backend_children_with_current_c_locale() -> None:
     filesystem = ScriptedRecordingFileSystem(
         ["/docs/z.txt", "/docs/m.txt", "/docs/a.txt"],
@@ -337,24 +357,60 @@ def test_ls_sorts_multi_operand_blocks_after_original_order_processing() -> None
     ]
 
 
-def test_ls_rejects_unsupported_option_before_backend_calls() -> None:
-    filesystem = RecordingFileSystem(
-        MemoryFileSystem(skip_instance_cache=True),
-        skip_instance_cache=True,
-    )
+@pytest.mark.parametrize(
+    ("arguments", "expected_stderr"),
+    [
+        pytest.param(
+            ("not-a-mapped-operand", "-l"),
+            ("ls: not-a-mapped-operand: invalid mapped filesystem operand\n"),
+            id="malformed-operand-before-option",
+        ),
+        pytest.param(
+            ("unknown:/path", "-l"),
+            "ls: unknown:/path: unknown filesystem (known: scripted)\n",
+            id="unknown-name-before-option",
+        ),
+    ],
+)
+def test_ls_reports_first_preflight_error_in_argument_order(
+    arguments: tuple[str, ...],
+    expected_stderr: str,
+) -> None:
+    filesystem = ScriptedRecordingFileSystem([], skip_instance_cache=True)
 
     result = CliRunner().invoke(
-        App({"memory": filesystem}).typer_app,
-        ["ls", "-a", "memory:/docs"],
+        App({"scripted": filesystem}).typer_app,
+        ["ls", *arguments],
     )
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert result.stderr == "ls: -a: unsupported option\n"
+    assert result.stderr == expected_stderr
     assert filesystem.calls == []
 
 
-def test_ls_treats_option_like_argument_after_delimiter_as_operand() -> None:
+@pytest.mark.parametrize(
+    ("unsupported_option", "expected_stderr"),
+    [
+        pytest.param("-a", "ls: -a: unsupported option\n", id="almost-all"),
+        pytest.param("-h", "ls: -h: unsupported option\n", id="short-help"),
+        pytest.param("-l", "ls: -l: unsupported option\n", id="long-listing"),
+        pytest.param(
+            "-Al",
+            "ls: -Al: unsupported option\n",
+            id="mixed-group",
+        ),
+        pytest.param(
+            "--help=x",
+            "ls: --help=x: unsupported option\n",
+            id="help-with-value",
+        ),
+    ],
+)
+def test_ls_rejects_unsupported_option_before_backend_calls(
+    unsupported_option: str,
+    expected_stderr: str,
+) -> None:
     filesystem = RecordingFileSystem(
         MemoryFileSystem(skip_instance_cache=True),
         skip_instance_cache=True,
@@ -362,12 +418,102 @@ def test_ls_treats_option_like_argument_after_delimiter_as_operand() -> None:
 
     result = CliRunner().invoke(
         App({"memory": filesystem}).typer_app,
-        ["ls", "--", "-a"],
+        ["ls", unsupported_option, "memory:/docs"],
     )
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert result.stderr == "ls: -a: invalid mapped filesystem operand\n"
+    assert result.stderr == expected_stderr
+    assert filesystem.calls == []
+
+
+@pytest.mark.parametrize(
+    ("operand", "expected_stderr"),
+    [
+        pytest.param(
+            "-a",
+            "ls: -a: invalid mapped filesystem operand\n",
+            id="short-option",
+        ),
+        pytest.param(
+            "--help",
+            "ls: --help: invalid mapped filesystem operand\n",
+            id="framework-help",
+        ),
+    ],
+)
+def test_ls_treats_option_like_argument_after_delimiter_as_operand(
+    operand: str,
+    expected_stderr: str,
+) -> None:
+    filesystem = RecordingFileSystem(
+        MemoryFileSystem(skip_instance_cache=True),
+        skip_instance_cache=True,
+    )
+
+    result = CliRunner().invoke(
+        App({"memory": filesystem}).typer_app,
+        ["ls", "--", operand],
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == expected_stderr
+    assert filesystem.calls == []
+
+
+def test_ls_delegates_exact_help_to_framework_without_backend_calls() -> None:
+    filesystem = ScriptedRecordingFileSystem([], skip_instance_cache=True)
+
+    result = CliRunner().invoke(
+        App({"scripted": filesystem}).typer_app,
+        ["ls", "--help"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    assert filesystem.calls == []
+
+
+@pytest.mark.parametrize(
+    ("operand", "expected_stderr"),
+    [
+        pytest.param(
+            "/bare/path",
+            "ls: /bare/path: invalid mapped filesystem operand\n",
+            id="bare-path",
+        ),
+        pytest.param(
+            "scripted:",
+            "ls: scripted:: invalid mapped filesystem operand\n",
+            id="missing-path",
+        ),
+        pytest.param(
+            "scripted:relative",
+            "ls: scripted:relative: invalid mapped filesystem operand\n",
+            id="relative-path",
+        ),
+        pytest.param(
+            ":/path",
+            "ls: :/path: invalid mapped filesystem operand\n",
+            id="empty-name",
+        ),
+    ],
+)
+def test_ls_rejects_malformed_mapped_filesystem_grammar(
+    operand: str,
+    expected_stderr: str,
+) -> None:
+    filesystem = ScriptedRecordingFileSystem([], skip_instance_cache=True)
+
+    result = CliRunner().invoke(
+        App({"scripted": filesystem}).typer_app,
+        ["ls", operand],
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == expected_stderr
     assert filesystem.calls == []
 
 
@@ -496,6 +642,32 @@ def test_ls_preserves_colons_in_memory_file_path() -> None:
     assert result.stdout == f"{operand}\n"
     assert result.stderr == ""
     assert filesystem.calls == [("info", file_path, {})]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("/docs/./../guide.md", id="dot-segments"),
+        pytest.param("/~/guide.md", id="tilde-segment"),
+        pytest.param("//docs///guide.md///", id="repeated-and-trailing-slashes"),
+    ],
+)
+def test_ls_passes_noncanonical_file_path_spelling_unchanged(path: str) -> None:
+    filesystem = RuntimeScriptedFileSystem(
+        info_results={path: {"type": "file"}},
+        skip_instance_cache=True,
+    )
+    operand = f"scripted:{path}"
+
+    result = CliRunner().invoke(
+        App({"scripted": filesystem}).typer_app,
+        ["ls", operand],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == f"{operand}\n"
+    assert result.stderr == ""
+    assert filesystem.calls == [("info", path, {})]
 
 
 @pytest.mark.parametrize(
