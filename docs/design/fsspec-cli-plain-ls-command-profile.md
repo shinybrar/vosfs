@@ -57,6 +57,8 @@ A mapped filesystem operand has the exact form `<name>:/<path>`.
 
 - `name` MUST be non-empty, MUST NOT contain `:`, and MUST exactly match one
   key in the configured filesystem mapping.
+- `App` construction MUST reject any configured mapping name containing NUL;
+  such a name MUST NOT reach command preflight or locale sorting.
 - The path portion MUST begin with `/`. `name:/` selects filesystem root.
 - Parsing splits on the first `:` only. Later colons belong to the path.
 - The complete path portion, including its leading `/`, MUST be passed to the
