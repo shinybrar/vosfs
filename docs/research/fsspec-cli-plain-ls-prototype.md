@@ -210,7 +210,7 @@ literal mapped-root behavior.
 - Async host and lifecycle contract: [issue #92](https://github.com/shinybrar/vosfs/issues/92)
 - Source lifecycle failure behavior: [issue #94](https://github.com/shinybrar/vosfs/issues/94)
 - Tested-status vocabulary and version policy: [issue #81](https://github.com/shinybrar/vosfs/issues/81)
-- Long-format profiles: [issue #82](https://github.com/shinybrar/vosfs/issues/82)
+- Long-format decision: [strict `ls -l` rejection](../design/fsspec-cli-ls-long-rejection-profile.md)
 - Production tracer sequencing: [issue #83](https://github.com/shinybrar/vosfs/issues/83)
 
 ## Verdict and prototype disposal
