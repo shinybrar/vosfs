@@ -7,6 +7,7 @@ production ``fsspec-cli`` implementation.
 
 from __future__ import annotations
 
+import locale
 import posixpath
 from typing import TYPE_CHECKING
 
@@ -38,5 +39,13 @@ class App:
             if entry["type"] == "file":
                 typer.echo(operand)
                 return
-            for child in filesystem.ls(path, detail=False):
-                typer.echo(posixpath.basename(child))
+            basenames = [
+                posixpath.basename(child)
+                for child in filesystem.ls(path, detail=False)
+                if not posixpath.basename(child).startswith(".")
+            ]
+            for basename in sorted(
+                basenames,
+                key=lambda name: (locale.strxfrm(name), name),
+            ):
+                typer.echo(basename)
