@@ -129,6 +129,42 @@ def test_ls_hides_dot_entries_and_sorts_visible_memory_children() -> None:
     assert result.stderr == ""
 
 
+@pytest.mark.parametrize(
+    ("options", "expected_stdout"),
+    [
+        pytest.param((), "visible.txt\n", id="default"),
+        pytest.param(("-A",), ".hidden\nvisible.txt\n", id="almost-all"),
+        pytest.param(("-AA",), ".hidden\nvisible.txt\n", id="grouped-almost-all"),
+        pytest.param(
+            ("-A", "-A"),
+            ".hidden\nvisible.txt\n",
+            id="repeated-almost-all",
+        ),
+    ],
+)
+def test_ls_almost_all_selects_backend_dot_entries(
+    options: tuple[str, ...],
+    expected_stdout: str,
+) -> None:
+    filesystem = ScriptedRecordingFileSystem(
+        ["/docs/visible.txt", "/docs/..", "/docs/.hidden", "/docs/."],
+        skip_instance_cache=True,
+    )
+
+    result = CliRunner().invoke(
+        App({"scripted": filesystem}).typer_app,
+        ["ls", *options, "scripted:/docs"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == expected_stdout
+    assert result.stderr == ""
+    assert filesystem.calls == [
+        ("info", "/docs", {}),
+        ("ls", "/docs", {"detail": False}),
+    ]
+
+
 def test_ls_sorts_backend_children_with_current_c_locale() -> None:
     filesystem = ScriptedRecordingFileSystem(
         ["/docs/z.txt", "/docs/m.txt", "/docs/a.txt"],

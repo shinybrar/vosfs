@@ -46,7 +46,7 @@ class _RawArgvCommand(TyperCommand):
 class App:
     """Expose the smallest Typer surface needed by prototype slice 1."""
 
-    def __init__(  # noqa: C901
+    def __init__(  # noqa: C901, PLR0915
         self,
         filesystems: Mapping[str, AbstractFileSystem],
     ) -> None:
@@ -69,12 +69,16 @@ class App:
             """List mapped files and directories through public fsspec methods."""
             raw_argv = ctx.meta[_RAW_ARGV_KEY]
             options_enabled = True
+            almost_all = False
             operands: list[str] = []
             for argument in raw_argv:
                 if options_enabled and argument == "--":
                     options_enabled = False
                     continue
                 if options_enabled and argument.startswith("-"):
+                    if argument[1:] and set(argument[1:]) == {"A"}:
+                        almost_all = True
+                        continue
                     typer.echo(f"ls: {argument}: unsupported option", err=True)
                     raise typer.Exit(code=2)
                 operands.append(argument)
@@ -114,11 +118,13 @@ class App:
                 if entry["type"] == "file":
                     file_results.append(operand)
                     continue
-                basenames = [
-                    posixpath.basename(child)
-                    for child in filesystem.ls(path, detail=False)
-                    if not posixpath.basename(child).startswith(".")
-                ]
+                basenames = []
+                for child in filesystem.ls(path, detail=False):
+                    basename = posixpath.basename(child)
+                    if basename in {".", ".."}:
+                        continue
+                    if almost_all or not basename.startswith("."):
+                        basenames.append(basename)
                 directory_results.append(
                     (
                         operand,
