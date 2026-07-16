@@ -51,18 +51,49 @@ def test_ls_rejects_a_missing_mapped_filesystem_operand() -> None:
     assert result.stderr == "ls: missing mapped filesystem operand\n"
 
 
-def test_ls_refuses_an_active_same_thread_event_loop() -> None:
+def test_ls_refuses_an_active_same_thread_event_loop(monkeypatch) -> None:
+    real_run = asyncio.run
+    run_calls = 0
+
+    def recording_run(coroutine):
+        nonlocal run_calls
+        run_calls += 1
+        return real_run(coroutine)
+
     async def invoke() -> object:
+        monkeypatch.setattr(asyncio, "run", recording_run)
         return CliRunner().invoke(
             App({"memory": _source_must_not_run}).typer_app,
             ["ls", "memory:/docs"],
         )
 
-    result = asyncio.run(invoke())
+    result = real_run(invoke())
 
     assert result.exit_code == 1
     assert result.stdout == ""
     assert result.stderr == "ls: cannot run from an active event loop\n"
+    assert run_calls == 0
+
+
+def test_ls_starts_exactly_one_command_coroutine_with_asyncio_run(
+    monkeypatch,
+) -> None:
+    real_run = asyncio.run
+    run_calls = 0
+
+    def recording_run(coroutine):
+        nonlocal run_calls
+        run_calls += 1
+        return real_run(coroutine)
+
+    monkeypatch.setattr(asyncio, "run", recording_run)
+    result = CliRunner().invoke(
+        App({"memory": _source_must_not_run}).typer_app,
+        ["ls"],
+    )
+
+    assert result.exit_code == 2
+    assert run_calls == 1
 
 
 @pytest.mark.parametrize(
