@@ -2,11 +2,24 @@
 
 <!-- pyml disable line-length -->
 
-Status: **Locked contract**
+Status: **Locked command semantics; async execution boundary pending**
 
 Question: [Define the plain `ls` command profile](https://github.com/shinybrar/vosfs/issues/79)
 
 Client baseline: **fsspec 2026.6.0**
+
+## Post-profile async constraint
+
+After the plain-`ls` prototype verdict, the human locked all production CLI
+orchestration and filesystem calls as async-only. The synchronous operations
+named below remain evidence for observable semantics and backend result shapes;
+they are not an allowed production execution strategy.
+
+[Define the async execution boundary for fsspec-cli](https://github.com/shinybrar/vosfs/issues/90)
+must translate these semantics into the async event-loop and host-embedding
+contract before implementation. This constraint supersedes synchronous call
+wording for production; every other command-semantic requirement remains
+locked.
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**,
 and **MAY** are interpreted as described by
@@ -44,6 +57,8 @@ A mapped filesystem operand has the exact form `<name>:/<path>`.
 
 - `name` MUST be non-empty, MUST NOT contain `:`, and MUST exactly match one
   key in the configured filesystem mapping.
+- `App` construction MUST reject any configured mapping name containing NUL;
+  such a name MUST NOT reach command preflight or locale sorting.
 - The path portion MUST begin with `/`. `name:/` selects filesystem root.
 - Parsing splits on the first `:` only. Later colons belong to the path.
 - The complete path portion, including its leading `/`, MUST be passed to the
@@ -102,14 +117,17 @@ An explicit operand containing NUL or newline is also a preflight error. NUL
 is not a POSIX pathname byte; rejecting newline is the profile's chosen
 one-record-per-line rule, consistent with POSIX Issue 8 future direction.
 
-## 3. Backend operation strategy
+## 3. Backend operation semantics
 
-For each preflight-valid operand, the command MUST call the selected
-filesystem's public synchronous `info(path)` first.
+Production code MUST NOT invoke fsspec's synchronous facades. Issue #90 owns
+the exact async calls and event-loop boundary. Whatever async interface it
+selects MUST preserve this observable operation sequence for every
+preflight-valid operand: query the selected filesystem's `info(path)` semantics
+first, then apply the result rules below.
 
 - `type == "file"`: the operand is a non-directory result. The command MUST
   NOT call `ls` for it.
-- `type == "directory"`: the command MUST call
+- `type == "directory"`: the command MUST perform the async equivalent of
   `ls(path, detail=False)` explicitly.
 - Any other or missing `type` is an incompatible result. The command MUST NOT
   guess file, directory, device, or link behavior.
@@ -138,7 +156,7 @@ be incompatible rather than misrepresented.
 
 The command MUST NOT use private hooks, `exists`, `isfile`, `isdir`, a static
 capability registry, backend-type checks, retry fallbacks, or fabricated
-results. `NotImplementedError` from a real selected operation is runtime
+results. `NotImplementedError` from a real selected async operation is runtime
 evidence that the operation is unsupported.
 
 ## 4. Selection and sorting
