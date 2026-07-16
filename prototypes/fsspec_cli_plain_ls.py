@@ -234,6 +234,9 @@ class App:
             file_results.sort(key=_collation_key)
             directory_results.sort(key=lambda result: _collation_key(result[0]))
 
+            for diagnostic in runtime_diagnostics:
+                typer.echo(diagnostic, err=True)
+
             if len(operands) == 1 and not runtime_diagnostics:
                 if file_results:
                     _write_stdout(file_results[0])
@@ -251,7 +254,5 @@ class App:
             )
             if blocks:
                 _write_stdout("\n\n".join(blocks))
-            for diagnostic in runtime_diagnostics:
-                typer.echo(diagnostic, err=True)
             if runtime_diagnostics:
                 raise typer.Exit(code=1)

@@ -1213,6 +1213,118 @@ def test_ls_sorts_with_controlled_swedish_locale_without_changing_it() -> None:
     ]
 
 
+def test_ls_formats_files_only_without_blank_lines() -> None:
+    filesystem = RuntimeScriptedFileSystem(
+        info_results={
+            "/z-file": {"type": "file"},
+            "/a-file": {"type": "file"},
+        },
+        skip_instance_cache=True,
+    )
+
+    result = CliRunner().invoke(
+        App({"scripted": filesystem}).typer_app,
+        ["ls", "scripted:/z-file", "scripted:/a-file"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "scripted:/a-file\nscripted:/z-file\n"
+    assert result.stderr == ""
+    assert filesystem.calls == [
+        ("info", "/z-file", {}),
+        ("info", "/a-file", {}),
+    ]
+
+
+def test_ls_formats_directories_only_without_leading_blank_line() -> None:
+    filesystem = RuntimeScriptedFileSystem(
+        info_results={
+            "/z-dir": {"type": "directory"},
+            "/a-dir": {"type": "directory"},
+        },
+        ls_results={
+            "/z-dir": ["/z-dir/z.txt"],
+            "/a-dir": ["/a-dir/a.txt"],
+        },
+        skip_instance_cache=True,
+    )
+
+    result = CliRunner().invoke(
+        App({"scripted": filesystem}).typer_app,
+        ["ls", "scripted:/z-dir", "scripted:/a-dir"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ("scripted:/a-dir:\na.txt\n\nscripted:/z-dir:\nz.txt\n")
+    assert result.stderr == ""
+
+
+def test_ls_writes_no_stdout_when_every_operand_fails() -> None:
+    filesystem = RuntimeScriptedFileSystem(
+        info_results={
+            "/missing": FileNotFoundError(),
+            "/denied": PermissionError(),
+        },
+        skip_instance_cache=True,
+    )
+
+    result = CliRunner().invoke(
+        App({"scripted": filesystem}).typer_app,
+        ["ls", "scripted:/missing", "scripted:/denied"],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "ls: scripted:/missing: not found\nls: scripted:/denied: permission denied\n"
+    )
+    assert filesystem.calls == [
+        ("info", "/missing", {}),
+        ("info", "/denied", {}),
+    ]
+
+
+def test_ls_validates_trailing_slash_listing_without_changing_backend_path() -> None:
+    path = "/docs///"
+    filesystem = RuntimeScriptedFileSystem(
+        info_results={path: {"type": "directory"}},
+        ls_results={path: ["/docs/guide.md"]},
+        skip_instance_cache=True,
+    )
+
+    result = CliRunner().invoke(
+        App({"scripted": filesystem}).typer_app,
+        ["ls", f"scripted:{path}"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "guide.md\n"
+    assert result.stderr == ""
+    assert filesystem.calls == [
+        ("info", path, {}),
+        ("ls", path, {"detail": False}),
+    ]
+
+
+def test_ls_uses_raw_string_to_break_equal_collation_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    filesystem = ScriptedRecordingFileSystem(
+        ["/docs/z.txt", "/docs/a.txt"],
+        skip_instance_cache=True,
+    )
+    monkeypatch.setattr(locale, "strxfrm", lambda _value: "equal")
+
+    result = CliRunner().invoke(
+        App({"scripted": filesystem}).typer_app,
+        ["ls", "scripted:/docs"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "a.txt\nz.txt\n"
+    assert result.stderr == ""
+
+
 _SUBPROCESS_TIMEOUT = 10.0
 _SUBPROCESS_REPO_ROOT = Path(__file__).resolve().parents[1]
 _SUBPROCESS_EXPECTED_STDOUT = b"a.txt\nz.txt\n"
@@ -1221,6 +1333,7 @@ _SUBPROCESS_SOURCE = r"""
 import io
 import sys
 
+from fsspec import AbstractFileSystem
 from fsspec.implementations.memory import MemoryFileSystem
 from prototypes.fsspec_cli_plain_ls import App
 
@@ -1259,31 +1372,45 @@ class PrefixThenFailure(io.TextIOBase):
         sys.__stdout__.flush()
 
 
+class MissingFileSystem(AbstractFileSystem):
+    protocol = "missing"
+
+    def info(self, path: str, **kwargs: object) -> dict[str, object]:
+        raise FileNotFoundError(path)
+
+
 mode = sys.argv.pop(1)
 filesystem = MemoryFileSystem(skip_instance_cache=True)
 filesystem.makedirs("/docs")
 filesystem.pipe_file("/docs/z.txt", b"z")
 filesystem.pipe_file("/docs/a.txt", b"a")
+filesystems = {"memory": filesystem}
 
 if mode == "fail":
     sys.stdout = PrefixThenFailure(0)
 elif mode == "prefix":
     sys.stdout = PrefixThenFailure(len("a.txt\n"))
+elif mode == "runtime-and-fail":
+    sys.stdout = PrefixThenFailure(0)
+    filesystems["bad"] = MissingFileSystem(skip_instance_cache=True)
 elif mode != "normal":
     raise RuntimeError(f"unknown child mode: {mode}")
 
-App({"memory": filesystem}).typer_app()
+App(filesystems).typer_app()
 """
 
 
 def _subprocess_command(mode: str) -> list[str]:
+    operands = ["memory:/docs"]
+    if mode == "runtime-and-fail":
+        operands.append("bad:/missing")
     return [
         sys.executable,
         "-c",
         _SUBPROCESS_SOURCE,
         mode,
         "ls",
-        "memory:/docs",
+        *operands,
     ]
 
 
@@ -1433,3 +1560,13 @@ def test_public_seam_reports_stdout_oserror(
     assert result.returncode == 1
     assert result.stdout == expected_stdout
     assert result.stderr == _SUBPROCESS_OUTPUT_ERROR
+
+
+def test_output_failure_keeps_already_known_backend_diagnostics() -> None:
+    result = _run_redirected_subprocess("runtime-and-fail")
+
+    assert result.returncode == 1
+    assert result.stdout == b""
+    assert result.stderr == (
+        b"ls: bad:/missing: not found\n" + _SUBPROCESS_OUTPUT_ERROR
+    )
