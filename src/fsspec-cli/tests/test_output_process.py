@@ -15,8 +15,11 @@ if os.name == "posix":
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _TIMEOUT = 5
-_EXPECTED_TTY_STDOUT = b"\x1b[31mred\x1b[0m\n"
-_OUTPUT_ERROR = b"ls: output: output failure (OSError): disk\\\\bad\\nline\n"
+_NATIVE_NEWLINE = os.linesep.encode()
+_EXPECTED_TTY_STDOUT = b"\x1b[31mred\x1b[0m" + _NATIVE_NEWLINE
+_OUTPUT_ERROR = (
+    b"ls: output: output failure (OSError): disk\\\\bad\\nline" + _NATIVE_NEWLINE
+)
 _CHILD_PATH = Path(__file__).with_name("_output_process_child.py")
 
 
@@ -135,7 +138,11 @@ def test_public_seam_tty_matches_redirected_output_verbatim() -> None:
     ("mode", "expected_stdout"),
     [
         pytest.param("fail", b"", id="nothing-accepted"),
-        pytest.param("prefix", b"a.txt\n", id="accepted-prefix-preserved"),
+        pytest.param(
+            "prefix",
+            b"a.txt" + _NATIVE_NEWLINE,
+            id="accepted-prefix-preserved",
+        ),
     ],
 )
 def test_public_seam_reports_other_stdout_failures(
@@ -154,4 +161,6 @@ def test_output_failure_keeps_already_known_backend_diagnostics() -> None:
 
     assert result.returncode == 1
     assert result.stdout == b""
-    assert result.stderr == (b"ls: memory:/missing: not found\n" + _OUTPUT_ERROR)
+    assert result.stderr == (
+        b"ls: memory:/missing: not found" + _NATIVE_NEWLINE + _OUTPUT_ERROR
+    )
