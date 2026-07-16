@@ -1,0 +1,30 @@
+[project]
+name = "fsspec-cli"
+version = "0.1.0"
+description = "Library-only POSIX-shaped commands for async fsspec filesystems"
+readme = "README.md"
+authors = [
+    { name = "Shiny Brar  (he/il)", email = "charanjotbrar@gmail.com" }
+]
+requires-python = ">=3.10"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+dependencies = [
+    "fsspec>=2026.6.0",
+    "typer>=0.27.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+source-include = ["CHANGELOG.md", "tests/**"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

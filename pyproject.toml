@@ -77,7 +77,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = [
+"**/tests/**/*.py" = [
     "ANN",  # Tests are outside the ty gate.
     "D",    # Tests describe behavior through their names.
     "INP001", # Tests do not need to form a Python package.
@@ -98,6 +98,9 @@ docstring-code-format = true
 
 [tool.ty.src]
 exclude = ["tests/"]
+
+[tool.uv.workspace]
+members = ["src/fsspec-cli"]
 
 [tool.commitizen]
 name = "cz_customize"
