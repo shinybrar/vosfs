@@ -147,5 +147,6 @@ The later tracer should prove, test-first:
 This research does not add a console script, construct or authenticate
 filesystems inside `fsspec-cli`, alter `vosfs`, or implement commands. It does
 not claim every fsspec backend is async-compatible. ADR 0002 records the locked
-contract; issues #81, #94, and #83 own matrix policy, lifecycle-failure
-semantics, and production tracer sequencing.
+ownership contract; [ADR 0003](../adr/0003-acquire-command-sources-before-filesystem-work.md)
+records lifecycle-failure semantics. The tested matrix and production tracer
+sequencing remain with their linked Wayfinder tickets.

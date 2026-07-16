@@ -208,7 +208,7 @@ literal mapped-root behavior.
 
 - Async execution evidence: [issue #90](https://github.com/shinybrar/vosfs/issues/90)
 - Async host and lifecycle contract: [issue #92](https://github.com/shinybrar/vosfs/issues/92)
-- Source lifecycle failure behavior: [issue #94](https://github.com/shinybrar/vosfs/issues/94)
+- Source lifecycle failure behavior: [Acquire every command source before filesystem work](../adr/0003-acquire-command-sources-before-filesystem-work.md)
 - Tested-status vocabulary and version policy: [issue #81](https://github.com/shinybrar/vosfs/issues/81)
 - Long-format decision: [strict `ls -l` rejection](../design/fsspec-cli-ls-long-rejection-profile.md)
 - Production tracer sequencing: [issue #83](https://github.com/shinybrar/vosfs/issues/83)

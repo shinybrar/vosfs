@@ -58,8 +58,7 @@ and sole Typer-seam decisions remain accepted.
 
 - Hosts trade cross-invocation filesystem reuse for deterministic same-loop
   creation, use, and cleanup.
-- Source lifecycle failure ordering, diagnostics, and exit precedence belong to
-  [issue #94](https://github.com/shinybrar/vosfs/issues/94) before production
-  sequencing.
+- Source lifecycle failure ordering, diagnostics, and exit precedence follow
+  [Acquire every command source before filesystem work](./0003-acquire-command-sources-before-filesystem-work.md).
 - Exact backend compatibility remains command-, backend-, and version-tested;
   no generic fsspec compatibility claim follows from this lifecycle contract.

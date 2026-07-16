@@ -20,7 +20,8 @@ constraints. [Issue #92](https://github.com/shinybrar/vosfs/issues/92) resolved
 them through the invocation-owned source contract recorded in
 [ADR 0002](../adr/0002-own-async-filesystems-per-invocation.md). Production
 uses `App(sources).typer_app`; every other command-semantic requirement remains
-locked.
+locked. Source acquisition, cleanup, cancellation, and failure precedence
+follow [ADR 0003](../adr/0003-acquire-command-sources-before-filesystem-work.md).
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**,
 and **MAY** are interpreted as described by
@@ -277,7 +278,7 @@ message, and rendering rules, then exits `1`.
 | Status | Meaning |
 | ---: | --- |
 | `0` | Every operand completed successfully. |
-| `1` | A backend, incompatible-result, or output-write failure occurred. |
+| `1` | A source-lifecycle, backend, incompatible-result, or output-write failure occurred. |
 | `2` | Usage, option, mapped-operand, or mapped-name preflight failed. |
 
 ## 8. Historical acceptance evidence from issue #80
