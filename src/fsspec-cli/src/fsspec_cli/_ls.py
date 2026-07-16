@@ -12,6 +12,8 @@ from typer.core import TyperCommand
 if TYPE_CHECKING:
     from collections.abc import Collection
 
+    from typer._click import Context
+
 _RAW_ARGUMENTS = "fsspec_cli.raw_arguments"
 
 
@@ -29,10 +31,9 @@ class _LsRequest:
 
 
 class _LsCommand(TyperCommand):
-    def parse_args(self, ctx: object, args: list[str]) -> list[str]:
-        context = cast("typer.Context", ctx)
-        context.meta[_RAW_ARGUMENTS] = tuple(args)
-        return super().parse_args(context, _shield_help_values(args))
+    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
+        ctx.meta[_RAW_ARGUMENTS] = tuple(args)
+        return super().parse_args(ctx, _shield_help_values(args))
 
 
 def _shield_help_values(arguments: list[str]) -> list[str]:
