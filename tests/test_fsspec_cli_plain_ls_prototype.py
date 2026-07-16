@@ -198,3 +198,74 @@ def test_ls_groups_cross_filesystem_file_before_directory(tmp_path: Any) -> None
         ("ls", str(local_directory), {"detail": False}),
     ]
     assert memory_recording.calls == [("info", memory_file, {})]
+
+
+def test_ls_rejects_unsupported_option_before_backend_calls() -> None:
+    filesystem = RecordingFileSystem(
+        MemoryFileSystem(skip_instance_cache=True),
+        skip_instance_cache=True,
+    )
+
+    result = CliRunner().invoke(
+        App({"memory": filesystem}).typer_app,
+        ["ls", "-a", "memory:/docs"],
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == "ls: -a: unsupported option\n"
+    assert filesystem.calls == []
+
+
+def test_ls_treats_option_like_argument_after_delimiter_as_operand() -> None:
+    filesystem = RecordingFileSystem(
+        MemoryFileSystem(skip_instance_cache=True),
+        skip_instance_cache=True,
+    )
+
+    result = CliRunner().invoke(
+        App({"memory": filesystem}).typer_app,
+        ["ls", "--", "-a"],
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == "ls: -a: invalid mapped filesystem operand\n"
+    assert filesystem.calls == []
+
+
+def test_ls_preflights_unknown_name_before_any_backend_calls() -> None:
+    backend = MemoryFileSystem(skip_instance_cache=True)
+    namespace = f"/issue80-slice8-{uuid4().hex}"
+    backend.makedirs(namespace)
+    filesystem = RecordingFileSystem(backend, skip_instance_cache=True)
+
+    try:
+        result = CliRunner().invoke(
+            App({"memory": filesystem}).typer_app,
+            ["ls", f"memory:{namespace}", "unknown:/x"],
+        )
+    finally:
+        backend.rm(namespace, recursive=True)
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == ("ls: unknown:/x: unknown filesystem (known: memory)\n")
+    assert filesystem.calls == []
+
+
+def test_ls_rejects_missing_mapped_filesystem_operand() -> None:
+    filesystem = RecordingFileSystem(
+        MemoryFileSystem(skip_instance_cache=True),
+        skip_instance_cache=True,
+    )
+
+    result = CliRunner().invoke(
+        App({"memory": filesystem}).typer_app,
+        ["ls"],
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == "ls: missing mapped filesystem operand\n"
+    assert filesystem.calls == []
