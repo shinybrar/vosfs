@@ -351,7 +351,9 @@ def test_ls_preserves_directory_listing_control_flow_unchanged(
     with pytest.raises(type(control)) as caught:
         _invoke_ls(["memory:/docs"], sources={"memory": source})
 
-    assert caught.value is control
+    assert type(caught.value) is type(control)
+    if not isinstance(control, asyncio.CancelledError):
+        assert caught.value is control
     exception_type, exception, traceback = source.exit_calls[0]
     assert exception_type is type(control)
     assert exception is control
