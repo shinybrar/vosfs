@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import locale
 from contextlib import suppress
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import pytest
@@ -11,8 +12,14 @@ from fsspec.implementations.local import LocalFileSystem
 from fsspec.implementations.memory import MemoryFileSystem
 
 pytest.importorskip("typer")
+import typer
+from conftest import make_fs
 from prototypes.fsspec_cli_plain_ls import App
 from typer.testing import CliRunner
+from vospace_sim import VOSpaceSim
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class RecordingFileSystem(AbstractFileSystem):
@@ -92,6 +99,92 @@ class RuntimeScriptedFileSystem(AbstractFileSystem):
     ) -> Any:
         self.calls.append(("ls", path, {"detail": detail, **kwargs}))
         return self._resolve(self.ls_results[path])
+
+
+@dataclass(frozen=True)
+class BackendMatrixCase:
+    name: str
+    filesystem: AbstractFileSystem
+    root_path: str
+
+    def path(self, suffix: str) -> str:
+        if not suffix:
+            return self.root_path
+        if self.root_path == "/":
+            return f"/{suffix}"
+        return f"{self.root_path}/{suffix}"
+
+    def operand(self, suffix: str) -> str:
+        return f"{self.name}:{self.path(suffix)}"
+
+
+def _seed_local_matrix(root: Path) -> None:
+    (root / "docs").mkdir(parents=True)
+    (root / "empty").mkdir()
+    (root / "root.txt").write_bytes(b"root")
+    (root / ".hidden-root").write_bytes(b"hidden")
+    (root / "docs" / "guide.md").write_bytes(b"guide")
+    (root / "docs" / ".hidden").write_bytes(b"hidden")
+
+
+def _seed_memory_matrix(filesystem: MemoryFileSystem) -> None:
+    filesystem.makedirs("/docs")
+    filesystem.makedirs("/empty")
+    filesystem.pipe_file("/root.txt", b"root")
+    filesystem.pipe_file("/.hidden-root", b"hidden")
+    filesystem.pipe_file("/docs/guide.md", b"guide")
+    filesystem.pipe_file("/docs/.hidden", b"hidden")
+
+
+@pytest.fixture(params=("local", "memory", "vos"))
+def backend_matrix_case(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> Any:
+    if request.param == "local":
+        # LocalFileSystem has no chroot option. This temporary directory is its
+        # hermetic dataset root; literal ``local:/`` remains a host-root probe.
+        root = tmp_path / "local-root"
+        root.mkdir()
+        _seed_local_matrix(root)
+        yield BackendMatrixCase(
+            "local",
+            LocalFileSystem(skip_instance_cache=True),
+            str(root),
+        )
+        return
+
+    if request.param == "memory":
+        isolated_type = type(
+            f"Issue80MemoryFileSystem{uuid4().hex}",
+            (MemoryFileSystem,),
+            {"store": {}, "pseudo_dirs": [""]},
+        )
+        filesystem = isolated_type(skip_instance_cache=True)
+        _seed_memory_matrix(filesystem)
+        try:
+            yield BackendMatrixCase("memory", filesystem, "/")
+        finally:
+            filesystem.store.clear()
+            filesystem.pseudo_dirs[:] = [""]
+        return
+
+    router = request.getfixturevalue("router")
+    (
+        VOSpaceSim()
+        .add_container("/docs")
+        .add_container("/empty")
+        .add_file("/root.txt", b"root")
+        .add_file("/.hidden-root", b"hidden")
+        .add_file("/docs/guide.md", b"guide")
+        .add_file("/docs/.hidden", b"hidden")
+        .install(router)
+    )
+    filesystem = make_fs(router, use_listings_cache=False)
+    try:
+        yield BackendMatrixCase("vos", filesystem, "/")
+    finally:
+        filesystem.close()
 
 
 def test_ls_lists_one_memory_directory() -> None:
@@ -909,4 +1002,190 @@ def test_ls_continues_after_failures_without_leaking_partial_operand_output() ->
         ("info", "/good-dir", {}),
         ("ls", "/good-dir", {"detail": False}),
         ("info", "/a-file", {}),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("suffix", "options", "expected_stdout", "is_directory"),
+    [
+        pytest.param(
+            "",
+            (),
+            "docs\nempty\nroot.txt\n",
+            True,
+            id="root",
+        ),
+        pytest.param(
+            "docs",
+            (),
+            "guide.md\n",
+            True,
+            id="nonempty-directory",
+        ),
+        pytest.param(
+            "empty",
+            (),
+            "",
+            True,
+            id="empty-directory",
+        ),
+        pytest.param(
+            "root.txt",
+            (),
+            None,
+            False,
+            id="file",
+        ),
+        pytest.param(
+            "docs/.hidden",
+            (),
+            None,
+            False,
+            id="explicit-dot-file",
+        ),
+        pytest.param(
+            "docs",
+            ("-A",),
+            ".hidden\nguide.md\n",
+            True,
+            id="almost-all",
+        ),
+    ],
+)
+def test_ls_matches_hermetic_backend_matrix(
+    backend_matrix_case: BackendMatrixCase,
+    suffix: str,
+    options: tuple[str, ...],
+    expected_stdout: str | None,
+    is_directory: bool,
+) -> None:
+    recording = RecordingFileSystem(
+        backend_matrix_case.filesystem,
+        skip_instance_cache=True,
+    )
+    path = backend_matrix_case.path(suffix)
+    operand = backend_matrix_case.operand(suffix)
+    expected_stdout = expected_stdout if expected_stdout is not None else f"{operand}\n"
+    previous_locale = locale.setlocale(locale.LC_COLLATE)
+
+    try:
+        locale.setlocale(locale.LC_COLLATE, "C")
+        result = CliRunner().invoke(
+            App({backend_matrix_case.name: recording}).typer_app,
+            ["ls", *options, operand],
+        )
+    finally:
+        locale.setlocale(locale.LC_COLLATE, previous_locale)
+
+    assert result.exit_code == 0
+    assert result.stdout == expected_stdout
+    assert result.stderr == ""
+    expected_calls = [("info", path, {})]
+    if is_directory:
+        expected_calls.append(("ls", path, {"detail": False}))
+    assert recording.calls == expected_calls
+
+
+def _embedded_host(filesystem: AbstractFileSystem) -> typer.Typer:
+    host = typer.Typer(add_completion=False)
+    host.add_typer(
+        App({"memory": filesystem}).typer_app,
+        name="data",
+    )
+    return host
+
+
+def test_ls_runs_unchanged_when_embedded_in_host_typer_app() -> None:
+    filesystem = ScriptedRecordingFileSystem(
+        ["/docs/guide.md"],
+        skip_instance_cache=True,
+    )
+
+    result = CliRunner().invoke(
+        _embedded_host(filesystem),
+        ["data", "ls", "memory:/docs"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "guide.md\n"
+    assert result.stderr == ""
+    assert filesystem.calls == [
+        ("info", "/docs", {}),
+        ("ls", "/docs", {"detail": False}),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected_stderr"),
+    [
+        pytest.param(
+            ("-a", "memory:/docs"),
+            "ls: -a: unsupported option\n",
+            id="unsupported-option",
+        ),
+        pytest.param(
+            ("--", "-a"),
+            "ls: -a: invalid mapped filesystem operand\n",
+            id="delimiter",
+        ),
+    ],
+)
+def test_embedded_ls_preserves_raw_argument_contract(
+    arguments: tuple[str, ...],
+    expected_stderr: str,
+) -> None:
+    filesystem = ScriptedRecordingFileSystem([], skip_instance_cache=True)
+
+    result = CliRunner().invoke(
+        _embedded_host(filesystem),
+        ["data", "ls", *arguments],
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == expected_stderr
+    assert filesystem.calls == []
+
+
+def test_embedded_ls_keeps_framework_help_short_circuit() -> None:
+    filesystem = ScriptedRecordingFileSystem([], skip_instance_cache=True)
+
+    result = CliRunner().invoke(
+        _embedded_host(filesystem),
+        ["data", "ls", "--help"],
+    )
+
+    assert result.exit_code == 0
+    assert "Usage:" in result.stdout
+    assert "data ls" in result.stdout
+    assert result.stderr == ""
+    assert filesystem.calls == []
+
+
+def test_ls_sorts_with_controlled_swedish_locale_without_changing_it() -> None:
+    filesystem = ScriptedRecordingFileSystem(
+        ["/docs/ä.txt", "/docs/å.txt", "/docs/z.txt", "/docs/a.txt"],
+        skip_instance_cache=True,
+    )
+    previous_locale = locale.setlocale(locale.LC_COLLATE)
+
+    try:
+        try:
+            controlled_locale = locale.setlocale(locale.LC_COLLATE, "sv_SE.UTF-8")
+        except locale.Error:
+            pytest.skip("sv_SE.UTF-8 locale is unavailable")
+        result = CliRunner().invoke(
+            App({"scripted": filesystem}).typer_app,
+            ["ls", "scripted:/docs"],
+        )
+        assert locale.setlocale(locale.LC_COLLATE) == controlled_locale
+    finally:
+        locale.setlocale(locale.LC_COLLATE, previous_locale)
+
+    assert result.exit_code == 0
+    assert result.stdout == "a.txt\nz.txt\nå.txt\nä.txt\n"
+    assert result.stderr == ""
+    assert filesystem.calls == [
+        ("info", "/docs", {}),
+        ("ls", "/docs", {"detail": False}),
     ]
