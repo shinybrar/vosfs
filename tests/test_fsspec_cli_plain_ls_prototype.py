@@ -236,6 +236,72 @@ def test_ls_groups_cross_filesystem_file_before_directory(tmp_path: Any) -> None
     assert memory_recording.calls == [("info", memory_file, {})]
 
 
+def test_ls_sorts_multi_operand_blocks_after_original_order_processing() -> None:
+    backend = MemoryFileSystem(skip_instance_cache=True)
+    namespace = f"/issue80-multi-{uuid4().hex}"
+    adir = f"{namespace}/adir"
+    empty = f"{namespace}/empty"
+    zdir = f"{namespace}/zdir"
+    afile = f"{namespace}/afile"
+    zfile = f"{namespace}/zfile"
+    backend.makedirs(adir)
+    backend.makedirs(empty)
+    backend.makedirs(zdir)
+    backend.pipe_file(afile, b"a")
+    backend.pipe_file(zfile, b"z")
+    backend.pipe_file(f"{adir}/b.txt", b"b")
+    backend.pipe_file(f"{adir}/a.txt", b"a")
+    backend.pipe_file(f"{zdir}/z.txt", b"z")
+    filesystem = RecordingFileSystem(backend, skip_instance_cache=True)
+    adir_operand = f"memory:{adir}"
+    empty_operand = f"memory:{empty}"
+    zdir_operand = f"memory:{zdir}"
+    afile_operand = f"memory:{afile}"
+    zfile_operand = f"memory:{zfile}"
+    previous_locale = locale.setlocale(locale.LC_COLLATE)
+
+    try:
+        controlled_locale = locale.setlocale(locale.LC_COLLATE, "C")
+        result = CliRunner().invoke(
+            App({"memory": filesystem}).typer_app,
+            [
+                "ls",
+                zdir_operand,
+                zfile_operand,
+                empty_operand,
+                afile_operand,
+                adir_operand,
+                zfile_operand,
+            ],
+        )
+        assert locale.setlocale(locale.LC_COLLATE) == controlled_locale
+    finally:
+        backend.rm(namespace, recursive=True)
+        locale.setlocale(locale.LC_COLLATE, previous_locale)
+
+    assert result.exit_code == 0
+    assert result.stdout == (
+        f"{afile_operand}\n"
+        f"{zfile_operand}\n"
+        f"{zfile_operand}\n\n"
+        f"{adir_operand}:\na.txt\nb.txt\n\n"
+        f"{empty_operand}:\n\n"
+        f"{zdir_operand}:\nz.txt\n"
+    )
+    assert result.stderr == ""
+    assert filesystem.calls == [
+        ("info", zdir, {}),
+        ("ls", zdir, {"detail": False}),
+        ("info", zfile, {}),
+        ("info", empty, {}),
+        ("ls", empty, {"detail": False}),
+        ("info", afile, {}),
+        ("info", adir, {}),
+        ("ls", adir, {"detail": False}),
+        ("info", zfile, {}),
+    ]
+
+
 def test_ls_rejects_unsupported_option_before_backend_calls() -> None:
     filesystem = RecordingFileSystem(
         MemoryFileSystem(skip_instance_cache=True),

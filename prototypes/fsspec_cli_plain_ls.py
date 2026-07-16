@@ -165,6 +165,9 @@ class App:
                     )
                 )
 
+            file_results.sort(key=_collation_key)
+            directory_results.sort(key=lambda result: _collation_key(result[0]))
+
             if len(operands) == 1:
                 if file_results:
                     typer.echo(file_results[0])
