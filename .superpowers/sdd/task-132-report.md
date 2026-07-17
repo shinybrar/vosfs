@@ -52,8 +52,8 @@ uv build --package fsspec-cli
 
 ## Git
 
-- Commit: (filled after commit)
-- PR: (filled after PR)
+- Commit: `a609f0b` — `feat(fsspec-cli): add base file-only rm`
+- PR: [shinybrar/vosfs#163](https://github.com/shinybrar/vosfs/pull/163)
 
 ## Out of scope honored
 
