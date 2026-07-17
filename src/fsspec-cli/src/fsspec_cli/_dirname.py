@@ -66,6 +66,9 @@ def _preflight(
             rendered = _render_diagnostic_value(argument)
             _usage_error(command, f"{rendered}: unsupported option")
 
+        if len(operands) >= 1:
+            _usage_error(command, "extra operand")
+
         if "\0" in argument:
             rendered = _render_diagnostic_value(argument)
             _usage_error(command, f"{rendered}: invalid operand")
@@ -74,8 +77,6 @@ def _preflight(
 
     if not operands:
         _usage_error(command, "missing operand")
-    if len(operands) > 1:
-        _usage_error(command, "extra operand")
 
     return _DirnameRequest(operand=operands[0])
 

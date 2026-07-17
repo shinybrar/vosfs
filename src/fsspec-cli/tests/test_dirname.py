@@ -4,6 +4,7 @@ from typing import NoReturn
 
 import pytest
 from fsspec_cli import App, AsyncFilesystemSource
+from fsspec_cli._dirname import _posix_dirname_string
 from typer.testing import CliRunner, Result
 
 from ._matrix_support import _block_network
@@ -79,6 +80,9 @@ def _invoke_dirname(
         ("no/slash", "no\n"),
         ("/a", "/\n"),
         ("a/", ".\n"),
+        ("a//b", "a/\n"),
+        ("/a//b", "/a/\n"),
+        ("a///b/", "a//\n"),
     ],
 )
 def test_dirname_applies_the_locked_posix_golden_vectors(
@@ -185,6 +189,48 @@ def test_dirname_reports_only_the_first_preflight_error_in_argument_order() -> N
     assert result.exit_code == 2
     assert result.stdout == ""
     assert result.stderr == "dirname: -l: unsupported option\n"
+
+
+def test_dirname_reports_extra_operand_before_a_later_unsupported_option() -> None:
+    result = _invoke_dirname(["a", "b", "-z"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == "dirname: extra operand\n"
+
+
+def test_dirname_reports_extra_operand_before_nul_in_a_later_operand() -> None:
+    result = _invoke_dirname(["a", "bad\0name"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == "dirname: extra operand\n"
+
+
+@pytest.mark.parametrize(
+    ("operand", "expected"),
+    [
+        ("a", "."),
+        ("a/b", "a"),
+        ("/a/b", "/a"),
+        ("/", "/"),
+        ("///", "/"),
+        ("//", "/"),
+        (".", "."),
+        ("..", "."),
+        ("a/b/", "a"),
+        ("a//b", "a/"),
+        ("/a//b", "/a/"),
+        ("a///b/", "a//"),
+        ("memory:/docs/a.txt", "memory:/docs"),
+        ("dir\nname", "."),
+    ],
+)
+def test_posix_dirname_string_applies_the_locked_algorithm(
+    operand: str,
+    expected: str,
+) -> None:
+    assert _posix_dirname_string(operand) == expected
 
 
 def test_dirname_renders_all_diagnostic_control_characters_in_order() -> None:

@@ -87,7 +87,7 @@ a/b          -> a
 a/b/         -> a
 memory:/x/y  -> memory:/x
 .            -> .
-..           -> ..
+..           -> .
 dir\nname    -> .
 a\n/b        -> a\n
 ```
