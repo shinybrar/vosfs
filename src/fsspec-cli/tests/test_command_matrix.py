@@ -19,6 +19,7 @@ from ._matrix_support import (
     _exercise_mkdir_locked_profile,
     _exercise_mkdir_memory_over_eager_failure,
     _exercise_rmdir_locked_profile,
+    _exercise_unlink_locked_profile,
     _invoke,
     _invoke_ls,
     _ProbedSource,

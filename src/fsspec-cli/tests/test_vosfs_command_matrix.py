@@ -276,7 +276,6 @@ class _RmdirMockTransport(_StrictMockTransport):
         raise AssertionError(message)
 
 
-
 class _UnlinkMockTransport(httpx.MockTransport):
     def __init__(self) -> None:
         self.requests: list[tuple[str, str]] = []

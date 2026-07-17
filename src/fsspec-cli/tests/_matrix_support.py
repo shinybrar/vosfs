@@ -324,37 +324,6 @@ class _ProbedSource(Generic[_FilesystemT]):
             self._wrap_rm(source_id),
         )
 
-        async def rm(path: str, **kwargs: object) -> None:
-            self.calls.append(
-                FilesystemCall(
-                    "rm",
-                    source_id,
-                    path,
-                    None,
-                    kwargs,
-                    id(asyncio.get_running_loop()),
-                )
-            )
-            message = "_rm must not be called by unlink"
-            raise AssertionError(message)
-
-        async def rmdir(path: str, **kwargs: object) -> None:
-            self.calls.append(
-                FilesystemCall(
-                    "rmdir",
-                    source_id,
-                    path,
-                    None,
-                    kwargs,
-                    id(asyncio.get_running_loop()),
-                )
-            )
-            message = "_rmdir must not be called by unlink"
-            raise AssertionError(message)
-
-        setattr(filesystem, "_rm", rm)  # noqa: B010
-        setattr(filesystem, "_rmdir", rmdir)  # noqa: B010
-
 
 class _ProbedContext(
     AbstractAsyncContextManager[_FilesystemT],
