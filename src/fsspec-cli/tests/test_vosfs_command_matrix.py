@@ -18,6 +18,7 @@ from ._matrix_support import (
     _exercise_mkdir_p_locked_profile,
     _exercise_rm_force_profile,
     _exercise_rm_locked_profile,
+    _exercise_rm_verbose_profile,
     _exercise_rmdir_locked_profile,
     _exercise_unlink_locked_profile,
     _invoke_rm,
@@ -661,6 +662,7 @@ def test_native_vosfs_base_rm_profile_uses_only_mocked_transport() -> None:
 
     _exercise_rm_locked_profile("vos", source, "/docs")
     _exercise_rm_force_profile("vos", source, "/docs")
+    _exercise_rm_verbose_profile("vos", source, "/docs")
 
     assert all(isinstance(fs, VOSpaceFileSystem) for fs in source.filesystems)
     assert all(fs.asynchronous is True for fs in source.filesystems)

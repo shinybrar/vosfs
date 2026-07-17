@@ -24,6 +24,7 @@ from ._matrix_support import (
     _exercise_rm_directory_profile,
     _exercise_rm_force_profile,
     _exercise_rm_locked_profile,
+    _exercise_rm_verbose_profile,
     _exercise_rmdir_locked_profile,
     _exercise_unlink_locked_profile,
     _invoke,
@@ -653,6 +654,8 @@ def test_adapted_local_base_rm_profile_uses_native_temporary_storage(
     (root / "notes.txt").write_text("notes.txt", encoding="utf-8")
     _exercise_rm_directory_profile("local", source, path)
     _exercise_rm_force_profile("local", source, path)
+    (Path(path) / "notes.txt").write_text("notes.txt", encoding="utf-8")
+    _exercise_rm_verbose_profile("local", source, path)
 
 
 def test_adapted_local_cp_profile_uses_native_temporary_storage(
@@ -712,6 +715,7 @@ def test_adapted_memory_base_rm_profile_has_isolated_state(
     _exercise_rm_locked_profile("memory", source, "/docs")
     _exercise_rm_directory_profile("memory", source, "/docs")
     _exercise_rm_force_profile("memory", source, "/docs")
+    _exercise_rm_verbose_profile("memory", source, "/docs")
 
 
 def test_adapted_memory_cp_profile_has_isolated_state(
@@ -847,6 +851,28 @@ def test_rm_force_profile_option_rejection_is_source_free() -> None:
         2,
         "",
         "rm: -i: unsupported option\n",
+    )
+    assert source_calls == 0
+
+
+def test_rm_verbose_profile_option_rejection_is_source_free() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke(
+        App({"memory": source_must_not_run}),
+        "rm",
+        ["-v", "-f", "memory:/docs/notes.txt"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "rm: -f: unsupported option\n",
     )
     assert source_calls == 0
 
