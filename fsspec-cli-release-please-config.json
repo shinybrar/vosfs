@@ -1,0 +1,29 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/v17.6.1/schemas/config.json",
+  "label": "autorelease: fsspec-cli pending",
+  "release-label": "autorelease: fsspec-cli tagged",
+  "separate-pull-requests": true,
+  "bootstrap-sha": "fc6936716b580c071b8a57c1a81792ba041de43b",
+  "packages": {
+    "src/fsspec-cli": {
+      "release-type": "python",
+      "package-name": "fsspec-cli",
+      "component": "fsspec-cli",
+      "versioning": "default",
+      "bump-minor-pre-major": false,
+      "bump-patch-for-minor-pre-major": false,
+      "draft": true,
+      "force-tag-creation": true,
+      "include-component-in-tag": true,
+      "include-v-in-tag": true,
+      "pull-request-title-pattern": "chore: release ${component} ${version}",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "/uv.lock",
+          "jsonpath": "$.package[?(@.name.value==\"fsspec-cli\")].version"
+        }
+      ]
+    }
+  }
+}

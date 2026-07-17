@@ -194,16 +194,16 @@ When classifying a gate result:
 
 ## 8. Initial matrix and first-release target
 
-Until qualifying source-form gates exist, every cell remains `unverified`.
-The narrow production tracer and prototype research do not qualify as
-backend-specific evidence on their own.
+Only qualifying source-form gates can change a row from `unverified`. The
+current rows have complete exact-commit evidence for the first-release target;
+Section 9 still requires the release candidate to rerun every required gate.
 
 | Command profile | Scope | Source form | Current status | Required status for `fsspec-cli` 0.1.0 | Required gates | Evidence |
 | --- | --- | --- | --- | --- | --- | --- |
-| [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29525392759](#h-2026-07-16-29525392759) |
-| [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29525392759](#h-2026-07-16-29525392759) |
-| [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `vosfs / native async` | `unverified` | `pass` | Hermetic and live OpenCADC | — |
-| [`ls -l` strict rejection](fsspec-cli-ls-long-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-16-29525392759](#h-2026-07-16-29525392759) |
+| [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
+| [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
+| [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic and live OpenCADC | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110), [L-2026-07-16-29536609626](#l-2026-07-16-29536609626) |
+| [`ls -l` strict rejection](fsspec-cli-ls-long-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.
@@ -246,6 +246,55 @@ and therefore does not complete the release-candidate gate in Section 9. Issue
 [#105](https://github.com/shinybrar/vosfs/issues/105) adds that evidence; it
 does not change these command classifications unless the isolated run
 contradicts them.
+
+### H-2026-07-16-29536484110
+
+This successful exact-commit CI run observed `fsspec-cli` 0.1.0 at
+[commit `8cbbfd8f8940f7f4a2f9ff31ea5a130c9b08270e`](https://github.com/shinybrar/vosfs/commit/8cbbfd8f8940f7f4a2f9ff31ea5a130c9b08270e)
+with fsspec 2026.6.0, Typer 0.27.0, and vosfs 0.3.3. The complete dependency
+set is recoverable from the
+[commit-pinned `uv.lock`](https://github.com/shinybrar/vosfs/blob/8cbbfd8f8940f7f4a2f9ff31ea5a130c9b08270e/uv.lock).
+
+[CI run 29536484110](https://github.com/shinybrar/vosfs/actions/runs/29536484110)
+ran the production command matrix and the built-wheel gate on every supported
+leg. The installed-wheel job built the member wheel and source distribution,
+rebuilt the wheel from the source distribution, installed outside the
+workspace with dependency checks, and exercised the same Local, Memory,
+mocked native-`vosfs`, and source-free rejection contracts.
+
+| Python | Operating system | Runner image | Hermetic job | Installed-wheel job |
+| --- | --- | --- | --- | --- |
+| 3.10.20 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87748922253](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922253) | [87748922139](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922139) |
+| 3.11.15 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87748922153](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922153) | [87748922130](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922130) |
+| 3.12.3 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87748922259](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922259) | [87748922173](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922173) |
+| 3.13.14 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87748922293](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922293) | [87748922187](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922187) |
+| 3.14.6 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87748922306](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922306) | [87748922183](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922183) |
+| 3.12.10 | Windows Server 2025 | `windows-2025-vs2026@20260714.173.1` | [87748922170](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922170) | [87748922198](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922198) |
+| 3.12.10 | macOS 26.4 | `macos-26-arm64@20260630.0213.1` | [87748922260](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922260) | [87748922268](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922268) |
+
+Every leg used runner 2.335.1. Ubuntu and Windows used provisioner
+`20260707.563`; macOS used `20260624.560`. The aggregate
+[Required job](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87749288044)
+passed only after the quality, hermetic, installed-wheel, and repository live
+dependencies completed successfully.
+
+### L-2026-07-16-29536609626
+
+The trusted read-only live gate observed the same
+[`8cbbfd8f8940f7f4a2f9ff31ea5a130c9b08270e`](https://github.com/shinybrar/vosfs/commit/8cbbfd8f8940f7f4a2f9ff31ea5a130c9b08270e)
+build at 2026-07-16T21:35:45Z in OpenCADC staging. It installed exact isolated
+`fsspec-cli` 0.1.0 and `vosfs` 0.3.3 wheels with fsspec 2026.6.0 and Typer
+0.27.0 on Python 3.12.3, then observed one successful native async plain-`ls`
+call with `_info` followed by `_ls(detail=False)`, nonempty valid output, empty
+stderr, and awaited cleanup.
+
+[Live run 29536609626](https://github.com/shinybrar/vosfs/actions/runs/29536609626)
+recorded classification `pass` against exact
+[CI run 29536484110](https://github.com/shinybrar/vosfs/actions/runs/29536484110).
+Its sanitized evidence artifact is
+[`fsspec-cli-live-evidence-8cbbfd8f8940f7f4a2f9ff31ea5a130c9b08270e`](https://github.com/shinybrar/vosfs/actions/runs/29536609626/artifacts/8390767659)
+with digest
+`sha256:246547411d8397722c161ba22c829bf107374d697e49681950315526856bc7df`.
 
 ## 9. CI and release policy
 
