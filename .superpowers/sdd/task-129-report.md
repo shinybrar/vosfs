@@ -7,7 +7,7 @@ path with `_info`, and keeps base mkdir unchanged without `-p`.
 
 ## Implementation
 
-- `_mkdir.py`: parse `-p` / `--parents`; branch to `_makedirs` vs base `_mkdir`.
+- `_mkdir.py`: parse `-p` only (long options rejected); branch to `_makedirs` vs base `_mkdir`.
 - Tests: hermetic unit, matrix (Local/Memory/vosfs), wheel gate includes
   `test_mkdir.py`.
 - Docs: locked `fsspec-cli-mkdir-p-command-profile.md`, matrix rows, README,
