@@ -237,6 +237,7 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Base file-only `rm`](fsspec-cli-base-rm-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29586378872](#h-2026-07-17-29586378872) |
 | [Base file-only `rm`](fsspec-cli-base-rm-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29586378872](#h-2026-07-17-29586378872) |
 | [Base file-only `rm` option rejection](fsspec-cli-base-rm-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29586378872](#h-2026-07-17-29586378872) |
+| [`rm -R`/`-r` recursive rejection](fsspec-cli-rm-recursive-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [`test_rm.py` at `ed022d3`](https://github.com/shinybrar/vosfs/blob/ed022d3de5957c929c8a1836d47c0efc0d45f157/src/fsspec-cli/tests/test_rm.py) |
 | [`rm -f`](fsspec-cli-rm-force-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [`rm -f`](fsspec-cli-rm-force-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [`rm -f`](fsspec-cli-rm-force-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | Hermetic `test_vosfs_command_matrix.py` on this change |

@@ -44,8 +44,9 @@ The supported surface is deliberately smaller than POSIX Issue 8:
 regular-file or non-link identity. Implicit permission-based POSIX prompting
 is unavailable in this profile.
 
-`-d`, `-R`/`-r`, `-v`, `-i`, grouped forms, and long forms remain unsupported
-until their dedicated profiles exist. [`rm -f`](fsspec-cli-rm-force-command-profile.md)
+`-d`, `-v`, `-i`, grouped forms, and long forms remain unsupported until their
+dedicated profiles exist. [`rm -R`/`-r`](fsspec-cli-rm-recursive-rejection-profile.md)
+are locked source-free rejections. [`rm -f`](fsspec-cli-rm-force-command-profile.md)
 is a separate profile.
 
 ## 2. Mapped filesystem operands
