@@ -8,6 +8,11 @@ Question: [Define the tested command matrix contract](https://github.com/shinybr
 
 First release target: **`fsspec-cli` 0.1.0, GitHub Releases only**
 
+Issue #120 catalog reconciliation and later-release verification:
+[`fsspec-cli-issue-120-catalog.md`](fsspec-cli-issue-120-catalog.md),
+[`fsspec-cli-issue-120-claim-evidence-audit.md`](fsspec-cli-issue-120-claim-evidence-audit.md),
+[`fsspec-cli-later-release-verification.md`](fsspec-cli-later-release-verification.md).
+
 ## 1. Purpose
 
 The tested command matrix records exactly which command profile and async

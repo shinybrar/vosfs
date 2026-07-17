@@ -31,6 +31,15 @@ even before `1.0.0`. Both entries create draft GitHub releases with
 workflow and for previous-release discovery instead of waiting for the draft to
 be published.
 
+If a draft exists but the matching `fsspec-cli-vX.Y.Z` tag is absent, the
+Publish workflow fails at checkout and does not resume that failed cut. Recover
+by creating the annotated tag at the release merge commit, building only the
+`fsspec-cli` wheel and sdist from that commit, attaching those assets to the
+draft, and undrafting. See
+`docs/design/fsspec-cli-later-release-verification.md` for the #147 baseline
+recovery record. Never hand-edit versioned changelog entries or couple an
+`fsspec-cli` cut to a vosfs version.
+
 ## Publication
 
 Release Please creates a tagged draft for the package whose release pull

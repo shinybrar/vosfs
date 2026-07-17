@@ -1,7 +1,15 @@
 # fsspec-cli
 
 `fsspec-cli` is a library-only package for composing POSIX-shaped commands
-over host-configured async fsspec filesystems.
+over host-configured async fsspec filesystems. It provides an **Issue 8-aligned
+supported subset** plus a separately named reduced BSD/macOS-shaped `stat`
+profile. It does not claim POSIX, GNU, BSD/macOS, or all-fsspec compatibility.
+
+The complete Issue #120 utility dispositions, claim/evidence audit, and later
+release verification live in the repository design docs:
+`docs/design/fsspec-cli-issue-120-catalog.md`,
+`docs/design/fsspec-cli-issue-120-claim-evidence-audit.md`, and
+`docs/design/fsspec-cli-later-release-verification.md`.
 
 Supported host platforms are Linux and macOS. Other platforms are untested and
 unsupported.
@@ -13,12 +21,12 @@ for one command invocation.
 
 The current command surface covers plain `ls`, source-free `basename string`
 with optional `suffix`, source-free `dirname string`, mapped-file `cat`, verified
-two-operand and multi-source file `cp`, base `mkdir`, parent-creating `mkdir -p`,
-base `rmdir`, base file-only `rm`, XSI `unlink`, and reduced BSD/macOS-shaped
-`stat`. Commands share source-free argument preflight and the synchronous
-Typer-to-asyncio boundary; `ls`, `cat`, `cp`, `mkdir`, `rmdir`, `rm`, `unlink`,
-and `stat` also
-use invocation-owned source lifecycle. Same-source and cross-source `cp -R`
+two-operand, cross-source, and multi-source file `cp`, same-source two-operand
+and multi-file `mv`, base `mkdir`, parent-creating `mkdir -p`, base `rmdir`,
+base file-only `rm`, exact `rm -f` / `rm -d` / `rm -v`, XSI `unlink`, and
+reduced BSD/macOS-shaped `stat`. Commands share source-free argument preflight
+and the synchronous Typer-to-asyncio boundary; `ls`, `cat`, `cp`, `mv`, `mkdir`,
+`rmdir`, `rm`, `unlink`, and `stat` also use invocation-owned source lifecycle. Same-source and cross-source `cp -R`
 remain source-free unsupported; `cp` does not traverse directories. The `basename` slice accepts one or two
 argv tokens, no options, POSIX Issue 8 basename semantics with optional suffix
 removal after base extraction, zero source entry, and deterministic stdout with
