@@ -126,6 +126,8 @@ class _StrictMockTransport(httpx.MockTransport):
             return httpx.Response(409, text="conflict")
         if call == ("PUT", "/arc/nodes/docs/notes.txt/child"):
             return httpx.Response(404, text="not found")
+        if call == ("PUT", "/arc/nodes/docs/absent/child"):
+            return httpx.Response(404, text="not found")
         message = f"unplanned mocked request: {call!r}"
         raise AssertionError(message)
 
@@ -326,6 +328,11 @@ def test_native_vosfs_base_mkdir_profile_uses_only_mocked_transport() -> None:
             ("GET", "/arc/capabilities"),
             ("GET", "/arc/nodes"),
             ("PUT", "/arc/nodes/docs/notes.txt/child"),
+        ],
+        [
+            ("GET", "/arc/capabilities"),
+            ("GET", "/arc/nodes"),
+            ("PUT", "/arc/nodes/docs/absent/child"),
         ],
     ]
     assert all(transport.closed for transport in transports)

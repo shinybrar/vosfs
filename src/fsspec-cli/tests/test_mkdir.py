@@ -82,6 +82,46 @@ def test_mkdir_continues_after_an_earlier_success() -> None:
     ]
 
 
+def test_mkdir_continues_after_an_earlier_failure() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(
+        events,
+        mkdir_by_path={"/docs/bad": FileNotFoundError("missing parent")},
+    )
+
+    result = _invoke_mkdir(
+        ["memory:/docs/bad", "memory:/docs/good"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "mkdir: memory:/docs/bad: not found\n"
+    assert [event[2] for event in events if event[0] == "mkdir"] == [
+        "/docs/bad",
+        "/docs/good",
+    ]
+    assert ("info", 1, "/docs/good") in [
+        (event[0], event[1], event[2]) for event in events if event[0] == "info"
+    ]
+
+
+def test_mkdir_rejects_root_operand_when_it_already_exists() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(
+        events,
+        mkdir_by_path={"/": FileExistsError("/")},
+    )
+
+    result = _invoke_mkdir(["memory:/"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "mkdir: memory:/: file exists\n"
+    assert sum(1 for event in events if event[0] == "mkdir") == 1
+    assert not any(event[0] == "info" for event in events)
+
+
 def test_mkdir_rejects_duplicate_operands_on_the_second_attempt() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
@@ -112,10 +152,10 @@ def test_mkdir_asserts_create_parents_false_at_the_operation_boundary() -> None:
 @pytest.mark.parametrize(
     ("post_info", "category"),
     [
-        ({"type": "file"}, "incompatible result"),
-        ({"type": "link"}, "incompatible result"),
-        (None, "incompatible result"),
-        ({"name": "/docs/new"}, "incompatible result"),
+        ({"type": "file"}, "uncertain state (incompatible result)"),
+        ({"type": "link"}, "uncertain state (incompatible result)"),
+        (None, "uncertain state (incompatible result)"),
+        ({"name": "/docs/new"}, "uncertain state (incompatible result)"),
     ],
 )
 def test_mkdir_rejects_malformed_post_verify_state(
@@ -138,10 +178,11 @@ def test_mkdir_rejects_missing_post_verify_result() -> None:
 
     assert result.exit_code == 1
     assert result.stdout == ""
-    assert result.stderr == "mkdir: memory:/docs/new: incompatible result\n"
+    assert result.stderr == (
+        "mkdir: memory:/docs/new: uncertain state (incompatible result)\n"
+    )
 
 
-@pytest.mark.parametrize("stage", ["mkdir", "info"])
 @pytest.mark.parametrize(
     ("error_factory", "category"),
     [
@@ -157,18 +198,43 @@ def test_mkdir_rejects_missing_post_verify_result() -> None:
         ),
     ],
 )
-def test_mkdir_maps_runtime_failures_to_locked_categories(
-    stage: str,
+def test_mkdir_maps_confirmed_mkdir_failures_to_locked_categories(
+    error_factory: Callable[[], Exception],
+    category: str,
+) -> None:
+    error = error_factory()
+    source = _RecordingSource([], mkdir_error=error)
+
+    result = _invoke_mkdir(["memory:/docs/new"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == f"mkdir: memory:/docs/new: {category}\n"
+
+
+@pytest.mark.parametrize(
+    ("error_factory", "category"),
+    [
+        (FileNotFoundError, "uncertain state (not found)"),
+        (FileExistsError, "uncertain state (file exists)"),
+        (PermissionError, "uncertain state (permission denied)"),
+        (NotADirectoryError, "uncertain state (not a directory)"),
+        (NotImplementedError, "uncertain state (unsupported operation)"),
+        (RuntimeError, "uncertain state (backend failure (RuntimeError): )"),
+        (
+            lambda: RuntimeError("backend\\\0\r\n"),
+            "uncertain state (backend failure (RuntimeError): backend\\\\\\0\\r\\n)",
+        ),
+    ],
+)
+def test_mkdir_maps_post_success_verify_failures_to_uncertain_state(
     error_factory: Callable[[], Exception],
     category: str,
 ) -> None:
     error = error_factory()
     source = _RecordingSource(
         [],
-        mkdir_error=error if stage == "mkdir" else None,
-        post_info_by_path={
-            "/docs/new": error if stage == "info" else {"type": "directory"}
-        },
+        post_info_by_path={"/docs/new": error},
     )
 
     result = _invoke_mkdir(["memory:/docs/new"], sources={"memory": source})
@@ -176,6 +242,15 @@ def test_mkdir_maps_runtime_failures_to_locked_categories(
     assert result.exit_code == 1
     assert result.stdout == ""
     assert result.stderr == f"mkdir: memory:/docs/new: {category}\n"
+
+
+def test_mkdir_help_discloses_source_default_mode_divergence() -> None:
+    result = _invoke_mkdir(["--help"])
+
+    assert result.exit_code == 0
+    assert "source-default creation semantics" in result.stdout
+    assert "POSIX mode or umask" in result.stdout
+    assert result.stderr == ""
 
 
 def test_mkdir_rejects_a_missing_mapped_filesystem_operand() -> None:

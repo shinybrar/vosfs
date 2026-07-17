@@ -41,6 +41,7 @@ class _MkdirRequest:
 class _Failure:
     operand: _MappedOperand
     backend_error: Exception | None = None
+    uncertain: bool = False
 
 
 class _MkdirCommand(TyperCommand):
@@ -189,14 +190,14 @@ async def _create_operand(
 
     try:
         info = await filesystem._info(operand.path)  # noqa: SLF001
-    except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
-        return _Failure(operand, backend_error=error)
+    except Exception as error:  # noqa: BLE001 - post-mutation verify is uncertain.
+        return _Failure(operand, backend_error=error, uncertain=True)
 
     if not isinstance(info, Mapping) or not isinstance(info.get("type"), str):
-        return _Failure(operand)
+        return _Failure(operand, uncertain=True)
 
     if info["type"] != "directory":
-        return _Failure(operand)
+        return _Failure(operand, uncertain=True)
 
     return None
 
@@ -211,30 +212,35 @@ def _render_operand_diagnostic(
     typer.echo(f"{prefix} {rendered_operand}: {category}", err=True, color=True)
 
 
+def _backend_category(error: Exception) -> str:
+    if isinstance(error, FileNotFoundError):
+        return "not found"
+    if isinstance(error, FileExistsError):
+        return "file exists"
+    if isinstance(error, PermissionError):
+        return "permission denied"
+    if isinstance(error, NotADirectoryError):
+        return "not a directory"
+    if isinstance(error, NotImplementedError):
+        return "unsupported operation"
+    rendered_class = _render_diagnostic_value(type(error).__name__)
+    rendered_message = _render_diagnostic_value(str(error))
+    return f"backend failure ({rendered_class}): {rendered_message}"
+
+
 def _render_failure(command: str, failure: _Failure) -> None:
+    if failure.uncertain:
+        if failure.backend_error is None:
+            category = "uncertain state (incompatible result)"
+        else:
+            category = f"uncertain state ({_backend_category(failure.backend_error)})"
+        _render_operand_diagnostic(command, failure.operand, category)
+        return
     if failure.backend_error is None:
         _render_operand_diagnostic(command, failure.operand, "incompatible result")
-    else:
-        _render_backend_failure(command, failure.operand, failure.backend_error)
-
-
-def _render_backend_failure(
-    command: str,
-    operand: _MappedOperand,
-    error: Exception,
-) -> None:
-    if isinstance(error, FileNotFoundError):
-        category = "not found"
-    elif isinstance(error, FileExistsError):
-        category = "file exists"
-    elif isinstance(error, PermissionError):
-        category = "permission denied"
-    elif isinstance(error, NotADirectoryError):
-        category = "not a directory"
-    elif isinstance(error, NotImplementedError):
-        category = "unsupported operation"
-    else:
-        rendered_class = _render_diagnostic_value(type(error).__name__)
-        rendered_message = _render_diagnostic_value(str(error))
-        category = f"backend failure ({rendered_class}): {rendered_message}"
-    _render_operand_diagnostic(command, operand, category)
+        return
+    _render_operand_diagnostic(
+        command,
+        failure.operand,
+        _backend_category(failure.backend_error),
+    )

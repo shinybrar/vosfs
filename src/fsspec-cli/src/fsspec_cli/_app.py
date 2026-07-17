@@ -29,6 +29,11 @@ _BASENAME_COMMAND = "basename"
 _LS_COMMAND = "ls"
 _CAT_COMMAND = "cat"
 _MKDIR_COMMAND = "mkdir"
+_MKDIR_HELP = (
+    "Create directories without implicit parent creation. A passing result "
+    "claims only source-default creation semantics, not POSIX mode or umask "
+    "behavior."
+)
 
 
 def _validate_source_name(name: object) -> None:
@@ -118,6 +123,7 @@ class App:
         @self.typer_app.command(
             _MKDIR_COMMAND,
             cls=_MkdirCommand,
+            help=_MKDIR_HELP,
             context_settings={
                 "allow_extra_args": True,
                 "ignore_unknown_options": True,

@@ -111,13 +111,14 @@ mkdir: <mapped operand>: <stable category>
 
 | Exception or condition | Category |
 | --- | --- |
-| `FileNotFoundError` | `not found` |
-| `FileExistsError` | `file exists` |
-| `PermissionError` | `permission denied` |
-| `NotADirectoryError` | `not a directory` |
-| `NotImplementedError` | `unsupported operation` |
-| Invalid consumed backend shape after `_mkdir` | `incompatible result` |
-| Any other backend exception | `backend failure (<class>): <message>` |
+| Confirmed `_mkdir` `FileNotFoundError` | `not found` |
+| Confirmed `_mkdir` `FileExistsError` | `file exists` |
+| Confirmed `_mkdir` `PermissionError` | `permission denied` |
+| Confirmed `_mkdir` `NotADirectoryError` | `not a directory` |
+| Confirmed `_mkdir` `NotImplementedError` | `unsupported operation` |
+| Confirmed `_mkdir` any other backend exception | `backend failure (<class>): <message>` |
+| Post-success `_info` backend exception | `uncertain state (<confirmed category>)` |
+| Invalid or non-directory `_info` after `_mkdir` returned | `uncertain state (incompatible result)` |
 
 Diagnostic rendering, escaping, cleanup precedence, and source lifecycle rules
 match the plain `ls` profile.

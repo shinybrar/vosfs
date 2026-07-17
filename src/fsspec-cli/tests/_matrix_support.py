@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import sys
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
@@ -442,16 +443,22 @@ def _exercise_mkdir_locked_profile(
     parent_path: str,
     *,
     file_name: str = "notes.txt",
-    parent_file_category: str = "not a directory",
+    parent_file_category: str | None = None,
 ) -> None:
+    if parent_file_category is None:
+        parent_file_category = (
+            "not found" if sys.platform == "win32" else "not a directory"
+        )
     app = App({source_name: source})
     new_dir = f"{parent_path}/subdir"
     file_path = f"{parent_path}/{file_name}"
     parent_file = f"{file_path}/child"
+    missing_parent = f"{parent_path}/absent/child"
 
     success = _invoke_mkdir(app, [f"{source_name}:{new_dir}"])
     exists = _invoke_mkdir(app, [f"{source_name}:{file_path}"])
     parent_fail = _invoke_mkdir(app, [f"{source_name}:{parent_file}"])
+    missing = _invoke_mkdir(app, [f"{source_name}:{missing_parent}"])
 
     assert (success.exit_code, success.stdout, success.stderr) == (0, "", "")
     assert (exists.exit_code, exists.stdout, exists.stderr) == (
@@ -464,7 +471,15 @@ def _exercise_mkdir_locked_profile(
         "",
         f"mkdir: {source_name}:{parent_file}: {parent_file_category}\n",
     )
+    assert (missing.exit_code, missing.stdout, missing.stderr) == (
+        1,
+        "",
+        f"mkdir: {source_name}:{missing_parent}: not found\n",
+    )
     assert [event.stage for event in source.lifecycle] == [
+        "factory",
+        "enter",
+        "exit",
         "factory",
         "enter",
         "exit",
@@ -476,15 +491,67 @@ def _exercise_mkdir_locked_profile(
         "exit",
     ]
     mkdir_calls = [call for call in source.calls if call.operation == "mkdir"]
-    assert len(mkdir_calls) == 3
+    assert len(mkdir_calls) == 4
     assert all(call.create_parents is False for call in mkdir_calls)
-    assert [call.path for call in mkdir_calls] == [new_dir, file_path, parent_file]
+    assert [call.path for call in mkdir_calls] == [
+        new_dir,
+        file_path,
+        parent_file,
+        missing_parent,
+    ]
     verify_calls = [
         call
         for call in source.calls
-        if call.operation == "info" and call.path in {new_dir, file_path, parent_file}
+        if call.operation == "info"
+        and call.path in {new_dir, file_path, parent_file, missing_parent}
     ]
     assert len(verify_calls) == 1
     assert verify_calls[0].path == new_dir
-    assert len(source.errors) == 2
+    assert len(source.errors) == 3
     assert {operation for _source_id, operation, _error in source.errors} == {"mkdir"}
+
+
+def _exercise_mkdir_memory_over_eager_failure(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    parent_path: str,
+    *,
+    file_name: str = "notes.txt",
+) -> None:
+    """Prove Memory contradicts the locked missing-parent rejection gate."""
+    app = App({source_name: source})
+    new_dir = f"{parent_path}/subdir"
+    file_path = f"{parent_path}/{file_name}"
+    parent_file = f"{file_path}/child"
+    missing_parent = f"{parent_path}/absent/child"
+
+    success = _invoke_mkdir(app, [f"{source_name}:{new_dir}"])
+    exists = _invoke_mkdir(app, [f"{source_name}:{file_path}"])
+    parent_fail = _invoke_mkdir(app, [f"{source_name}:{parent_file}"])
+    over_eager = _invoke_mkdir(app, [f"{source_name}:{missing_parent}"])
+
+    assert (success.exit_code, success.stdout, success.stderr) == (0, "", "")
+    assert (exists.exit_code, exists.stdout, exists.stderr) == (
+        1,
+        "",
+        f"mkdir: {source_name}:{file_path}: file exists\n",
+    )
+    assert (parent_fail.exit_code, parent_fail.stdout, parent_fail.stderr) == (
+        1,
+        "",
+        f"mkdir: {source_name}:{parent_file}: not a directory\n",
+    )
+    # create_parents=False still creates the missing parent and child.
+    assert (over_eager.exit_code, over_eager.stdout, over_eager.stderr) == (0, "", "")
+    mkdir_calls = [call for call in source.calls if call.operation == "mkdir"]
+    assert [call.path for call in mkdir_calls] == [
+        new_dir,
+        file_path,
+        parent_file,
+        missing_parent,
+    ]
+    assert all(call.create_parents is False for call in mkdir_calls)
+    assert any(
+        call.operation == "info" and call.path == missing_parent
+        for call in source.calls
+    )
