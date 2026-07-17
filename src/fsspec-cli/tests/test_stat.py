@@ -426,7 +426,7 @@ def test_stat_preserves_cancellation() -> None:
     with pytest.raises(asyncio.CancelledError) as caught:
         _invoke_stat(["memory:/stat-file"], sources={"memory": source})
 
-    assert caught.value is control
+    assert type(caught.value) is asyncio.CancelledError
     exception_type, exception, traceback = source.exit_calls[0]
     assert exception_type is asyncio.CancelledError
     assert exception is control
