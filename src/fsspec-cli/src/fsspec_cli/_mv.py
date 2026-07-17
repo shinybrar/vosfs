@@ -16,6 +16,7 @@ from ._cp import (
     _files_match,
     _remove_temporary,
     _render_failure,
+    _require_directory,
     _require_file_size,
     _resolve_destination,
     _stage_remote,
@@ -169,7 +170,7 @@ async def _confirmed_mv_file(  # noqa: C901, PLR0911, PLR0912
             _remove_temporary(dest_temp)
 
 
-async def _run_mv(  # noqa: C901 - explicit preflight and sequential move branches.
+async def _run_mv(
     command: str,
     raw_arguments: tuple[str, ...],
     sources: MappingType[str, AsyncFilesystemSource],
@@ -183,19 +184,7 @@ async def _run_mv(  # noqa: C901 - explicit preflight and sequential move branch
         if filesystems is not None:
             filesystem = filesystems[requests[0].source.name]
             if requires_directory:
-                try:
-                    destination_info = await filesystem._info(  # noqa: SLF001
-                        requests[0].destination.path
-                    )
-                except Exception as error:  # noqa: BLE001
-                    failure = _CpFailure(requests[0].destination, backend_error=error)
-                else:
-                    if not isinstance(destination_info, Mapping) or (
-                        destination_info.get("type") != "directory"
-                    ):
-                        failure = _CpFailure(
-                            requests[0].destination, category="not a directory"
-                        )
+                failure = await _require_directory(requests[0].destination, filesystem)
             if failure is None:
                 for request in requests:
                     failure = await _confirmed_mv_file(request, filesystem)
