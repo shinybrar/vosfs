@@ -97,12 +97,14 @@ def _configure_stdout(mode: str) -> None:
         sys.stdout = io.TextIOWrapper(_PrefixThenFailure(0), write_through=True)
     elif mode == "prefix":
         sys.stdout = io.TextIOWrapper(_PrefixThenFailure(3), write_through=True)
-    elif mode in {
-        "stdin-leading-prefix",
-        "stdin-middle-prefix",
-        "stdin-trailing-prefix",
-    }:
+    elif mode in {"stdin-leading-prefix", "stdin-middle-prefix"}:
         sys.stdout = io.TextIOWrapper(_PrefixThenFailure(2), write_through=True)
+    elif mode == "stdin-trailing-prefix":
+        # Budget must exceed mapped ``/docs`` payload so failure occurs during stdin.
+        sys.stdout = io.TextIOWrapper(
+            _PrefixThenFailure(len(b"payload") + 2),
+            write_through=True,
+        )
     elif mode == "runtime-and-fail":
         sys.stdout = io.TextIOWrapper(_PrefixThenFailure(0), write_through=True)
     elif mode not in {

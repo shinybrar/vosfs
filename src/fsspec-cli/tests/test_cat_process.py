@@ -201,7 +201,7 @@ def test_public_seam_cat_broken_pipe_during_stdin_at_each_position_is_silent(
             "stdin-trailing-prefix",
             ("memory:/docs", "-"),
             b"tail",
-            b"pa",
+            b"payloadta",
             id="trailing",
         ),
     ],
