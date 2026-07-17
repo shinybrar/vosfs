@@ -8,13 +8,15 @@ Implemented exact awaitable `_mv` same-source file moves with target resolution,
 same-path no-op, destination byte proof, source-absence proof, failure residue,
 cancellation, docs, matrix, and isolated-wheel coverage.
 
-Tests: `uv run --package fsspec-cli pytest src/fsspec-cli/tests` — 779 passed,
+Historical pre-fix checkpoint: `uv run --package fsspec-cli pytest src/fsspec-cli/tests` — 779 passed,
 8 skipped; isolated-wheel gate passed (588 core, 13 vosfs tests).
 
 Self-review: no actionable defects found. Native `vosfs` and adapted source
 matrix rows remain `unverified` until qualifying exact `_mv` evidence exists.
 
 ## Fix pass
+
+Historical fix-pass checkpoint results below precede later spec and standards fixes.
 
 Changes:
 
@@ -38,6 +40,9 @@ Commands and output:
 Standards fix: reverted hand-edited fsspec-cli changelog to origin/main; changelog diff now empty.
 
 ## Spec coverage fix
+
+Authoritative final validation: repository CI passed Quality, Ubuntu/macOS tests, both
+Ubuntu/macOS wheel gates, and Required; live integration remained skipped.
 
 Added direct existing-file replacement, `-i`/`--interactive` source-free
 rejection, cancellation temporary/source-close, and separate source-deletion
