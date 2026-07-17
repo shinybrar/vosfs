@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 
 import pytest
 import typer
@@ -65,11 +66,12 @@ def test_stat_help_matches_locked_usage_and_draft() -> None:
     result = _invoke_stat(["--help"])
 
     assert result.exit_code == 0
-    assert "Usage: stat [--] name:/path..." in result.stdout
+    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
+    assert "Usage: stat [--] name:/path..." in plain_help
     assert "Reduced BSD/macOS-shaped file status over fsspec _info (not POSIX)." in (
-        result.stdout
+        plain_help
     )
-    assert "root stat [OPTIONS]" not in result.stdout
+    assert "root stat [OPTIONS]" not in plain_help
 
 
 def test_stat_renders_one_local_rich_file_line() -> None:
