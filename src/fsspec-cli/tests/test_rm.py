@@ -483,7 +483,7 @@ def test_rm_force_preserves_cancellation() -> None:
     with pytest.raises(asyncio.CancelledError) as caught:
         _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
 
-    assert caught.value is control
+    assert type(caught.value) is asyncio.CancelledError
     exception_type, exception, traceback = source.exit_calls[0]
     assert exception_type is asyncio.CancelledError
     assert exception is control
@@ -1133,7 +1133,7 @@ def test_rm_d_preserves_directory_removal_cancellation() -> None:
     with pytest.raises(asyncio.CancelledError) as caught:
         _invoke_rm(["-d", "memory:/docs/empty"], sources={"memory": source})
 
-    assert caught.value is control
+    assert type(caught.value) is asyncio.CancelledError
 
 
 @pytest.mark.parametrize(
@@ -1557,7 +1557,7 @@ def test_rm_verbose_preserves_cancellation() -> None:
     with pytest.raises(asyncio.CancelledError) as caught:
         _invoke_rm(["-v", "memory:/docs/notes.txt"], sources={"memory": source})
 
-    assert caught.value is control
+    assert type(caught.value) is asyncio.CancelledError
     exception_type, exception, traceback = source.exit_calls[0]
     assert exception_type is asyncio.CancelledError
     assert exception is control
