@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 import tempfile
 from pathlib import Path
@@ -20,18 +21,15 @@ def _invoke_cat(
     arguments: list[str],
     *,
     sources: dict[str, object] | None = None,
+    stdin: bytes | str | None = None,
 ) -> Result:
     if sources is None:
         sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["cat", *arguments])
-
-
-def test_cat_rejects_missing_operand_without_entering_sources() -> None:
-    result = _invoke_cat([])
-
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == "cat: missing mapped filesystem operand\n"
+    return CliRunner().invoke(
+        App(sources).typer_app,
+        ["cat", *arguments],
+        input=stdin,
+    )
 
 
 @pytest.mark.parametrize(
@@ -40,8 +38,6 @@ def test_cat_rejects_missing_operand_without_entering_sources() -> None:
         (["-u", "memory:/file"], "cat: -u: unsupported option\n"),
         (["-A", "memory:/file"], "cat: -A: unsupported option\n"),
         (["--help=x", "memory:/file"], "cat: --help=x: unsupported option\n"),
-        (["-"], "cat: -: unsupported operand\n"),
-        (["--", "-"], "cat: -: unsupported operand\n"),
         (["/bare"], "cat: /bare: invalid mapped filesystem operand\n"),
         (
             ["memory:relative"],
@@ -836,3 +832,559 @@ def test_cat_finally_closes_descriptor_after_two_os_close_failures(monkeypatch) 
     assert closed
     assert [event[0] for event in source.events] == ["factory", "enter", "info", "exit"]
     assert "secret" not in result.stderr
+
+
+def _install_stdin(monkeypatch, handle: object) -> None:
+    monkeypatch.setattr("fsspec_cli._cat._binary_stdin", lambda: handle)
+
+
+class _ShortReadStdin(io.RawIOBase):
+    def __init__(self, payload: bytes, *, chunk: int = 1) -> None:
+        self._payload = payload
+        self._offset = 0
+        self._chunk = chunk
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, size: int = -1) -> bytes:  # type: ignore[override]
+        if self._offset >= len(self._payload):
+            return b""
+        if size is None or size < 0:
+            size = self._chunk
+        size = min(size, self._chunk, len(self._payload) - self._offset)
+        start = self._offset
+        self._offset += size
+        return self._payload[start : self._offset]
+
+
+class _FailingStdin(io.RawIOBase):
+    def __init__(self, *, before: bytes = b"", error: Exception | None = None) -> None:
+        self._before = before
+        self._offset = 0
+        self._error = error if error is not None else OSError("stdin-denied")
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, size: int = -1) -> bytes:  # type: ignore[override]
+        if self._offset < len(self._before):
+            if size is None or size < 0:
+                size = len(self._before) - self._offset
+            chunk = self._before[self._offset : self._offset + size]
+            self._offset += len(chunk)
+            return chunk
+        raise self._error
+
+
+def test_cat_operand_free_reads_binary_stdin_once(monkeypatch) -> None:
+    payload = b"\xff\xfe\0stdin"
+    _install_stdin(monkeypatch, io.BytesIO(payload))
+
+    result = _invoke_cat([])
+
+    assert result.exit_code == 0
+    assert result.stdout_bytes == payload
+    assert result.stderr == ""
+
+
+def test_cat_operand_free_with_empty_stdin(monkeypatch) -> None:
+    _install_stdin(monkeypatch, io.BytesIO(b""))
+
+    result = _invoke_cat([])
+
+    assert result.exit_code == 0
+    assert result.stdout_bytes == b""
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        bytes(range(256)),
+        b"\xff\xfe invalid",
+        b"cr\r lf\n nul\0",
+        b"x" * (1 << 20),
+    ],
+    ids=["all-bytes", "invalid-utf8", "cr-lf-nul", "large"],
+)
+def test_cat_dash_forwards_binary_stdin_verbatim(
+    monkeypatch,
+    payload: bytes,
+) -> None:
+    _install_stdin(monkeypatch, io.BytesIO(payload))
+
+    result = _invoke_cat(["-"])
+
+    assert result.exit_code == 0
+    assert result.stdout_bytes == payload
+    assert result.stderr == ""
+
+
+def test_cat_short_read_stdin_still_emits_all_bytes(monkeypatch) -> None:
+    payload = b"abcdefghij"
+    _install_stdin(monkeypatch, _ShortReadStdin(payload, chunk=3))
+
+    result = _invoke_cat(["-"])
+
+    assert result.exit_code == 0
+    assert result.stdout_bytes == payload
+    assert result.stderr == ""
+
+
+def test_cat_repeated_dash_second_occurrence_sees_eof(monkeypatch) -> None:
+    payload = b"once"
+    handle = io.BytesIO(payload)
+    _install_stdin(monkeypatch, handle)
+
+    result = _invoke_cat(["-", "-"])
+
+    assert result.exit_code == 0
+    assert result.stdout_bytes == payload
+    assert result.stderr == ""
+    assert handle.tell() == len(payload)
+
+
+def test_cat_preserves_file_stdin_file_order(monkeypatch) -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(
+        events,
+        get_file_by_path={"/left": b"L", "/right": b"R"},
+    )
+    _install_stdin(monkeypatch, io.BytesIO(b"S"))
+
+    result = _invoke_cat(
+        ["memory:/left", "-", "memory:/right"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout_bytes == b"LSR"
+    assert result.stderr == ""
+    assert [event[0] for event in events] == [
+        "factory",
+        "enter",
+        "info",
+        "get_file",
+        "info",
+        "get_file",
+        "exit",
+    ]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["-", "memory:/blob"],
+        ["memory:/blob", "-"],
+        ["-", "memory:/blob", "-"],
+    ],
+    ids=["leading", "trailing", "both"],
+)
+def test_cat_acquires_sources_before_any_stdin_read(
+    monkeypatch,
+    arguments: list[str],
+) -> None:
+    events: list[str] = []
+    source = _RecordingSource([], get_file_content=b"F")
+
+    class _OrderingStdin(io.RawIOBase):
+        def readable(self) -> bool:
+            return True
+
+        def read(self, size: int = -1) -> bytes:  # type: ignore[override]
+            del size
+            events.append("stdin")
+            return b""
+
+    def tracking_factory() -> object:
+        events.append("factory")
+        return source()
+
+    _install_stdin(monkeypatch, _OrderingStdin())
+
+    result = _invoke_cat(arguments, sources={"memory": tracking_factory})
+
+    assert result.exit_code == 0
+    assert events[0] == "factory"
+    assert "stdin" in events
+    assert events.index("factory") < events.index("stdin")
+
+
+def test_cat_all_multi_source_context_entries_complete_before_stdin(
+    monkeypatch,
+) -> None:
+    events: list[str] = []
+    alpha = _RecordingSource([], get_file_content=b"A")
+    beta = _RecordingSource([], get_file_content=b"B")
+
+    class _OrderingStdin(io.RawIOBase):
+        def readable(self) -> bool:
+            return True
+
+        def read(self, size: int = -1) -> bytes:  # type: ignore[override]
+            del size
+            events.append("stdin")
+            return b""
+
+    def alpha_factory() -> object:
+        events.append("alpha-factory")
+        return alpha()
+
+    def beta_factory() -> object:
+        events.append("beta-factory")
+        return beta()
+
+    _install_stdin(monkeypatch, _OrderingStdin())
+
+    result = _invoke_cat(
+        ["alpha:/one", "-", "beta:/two"],
+        sources={"alpha": alpha_factory, "beta": beta_factory},
+    )
+
+    assert result.exit_code == 0
+    assert events.index("stdin") > events.index("beta-factory")
+    assert events.index("stdin") > events.index("alpha-factory")
+    assert [event[0] for event in alpha.events] == [
+        "factory",
+        "enter",
+        "info",
+        "get_file",
+        "exit",
+    ]
+    assert [event[0] for event in beta.events] == [
+        "factory",
+        "enter",
+        "info",
+        "get_file",
+        "exit",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "broken_name"),
+    [
+        (["-", "first:/one", "broken:/two"], "broken"),
+        (["first:/one", "-", "broken:/two"], "broken"),
+        (["first:/one", "broken:/two", "-"], "broken"),
+    ],
+    ids=["leading-stdin", "middle-stdin", "trailing-stdin"],
+)
+def test_cat_stdin_untouched_when_later_source_factory_fails(
+    monkeypatch,
+    arguments: list[str],
+    broken_name: str,
+) -> None:
+    events: list[tuple[object, ...]] = []
+    factory_error = ValueError("factory\\\0\r\n")
+    first = _RecordingSource(events, get_file_content=b"F")
+
+    def broken_source() -> NoReturn:
+        raise factory_error
+
+    class _ForbiddenStdin(io.RawIOBase):
+        def readable(self) -> bool:
+            return True
+
+        def read(self, size: int = -1) -> bytes:  # type: ignore[override]
+            del size
+            raise AssertionError
+
+    _install_stdin(monkeypatch, _ForbiddenStdin())
+
+    result = _invoke_cat(
+        arguments,
+        sources={
+            "first": first,
+            broken_name: broken_source,
+            "later": _source_must_not_run,
+        },
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout_bytes == b""
+    assert result.stderr == (
+        f"cat: {broken_name}: source factory failure (ValueError): "
+        "factory\\\\\\0\\r\\n\n"
+    )
+    assert [event[0] for event in events] == ["factory", "enter", "exit"]
+    exception_type, exception, traceback = first.exit_calls[0]
+    assert exception_type is ValueError
+    assert exception is factory_error
+    assert traceback is not None
+
+
+@pytest.mark.parametrize(
+    ("arguments", "broken_name"),
+    [
+        (["-", "first:/one", "broken:/two"], "broken"),
+        (["first:/one", "-", "broken:/two"], "broken"),
+        (["first:/one", "broken:/two", "-"], "broken"),
+    ],
+    ids=["leading-stdin", "middle-stdin", "trailing-stdin"],
+)
+def test_cat_stdin_untouched_when_later_source_entry_fails(
+    monkeypatch,
+    arguments: list[str],
+    broken_name: str,
+) -> None:
+    events: list[tuple[object, ...]] = []
+    entry_error = LookupError("entry\\\0\r\n")
+    first = _RecordingSource(events, get_file_content=b"F")
+
+    class BrokenContext:
+        async def __aenter__(self) -> NoReturn:
+            events.append(("broken-enter", id(asyncio.get_running_loop())))
+            raise entry_error
+
+        async def __aexit__(self, *exc_info: object) -> NoReturn:
+            raise AssertionError
+
+    def broken_source() -> BrokenContext:
+        events.append(("broken-factory",))
+        return BrokenContext()
+
+    class _ForbiddenStdin(io.RawIOBase):
+        def readable(self) -> bool:
+            return True
+
+        def read(self, size: int = -1) -> bytes:  # type: ignore[override]
+            del size
+            raise AssertionError
+
+    _install_stdin(monkeypatch, _ForbiddenStdin())
+
+    result = _invoke_cat(
+        arguments,
+        sources={
+            "first": first,
+            broken_name: broken_source,
+            "later": _source_must_not_run,
+        },
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout_bytes == b""
+    assert result.stderr == (
+        f"cat: {broken_name}: source entry failure (LookupError): entry\\\\\\0\\r\\n\n"
+    )
+    assert [event[0] for event in events] == [
+        "factory",
+        "enter",
+        "broken-factory",
+        "broken-enter",
+        "exit",
+    ]
+    exception_type, exception, traceback = first.exit_calls[0]
+    assert exception_type is LookupError
+    assert exception is entry_error
+    assert traceback is not None
+
+
+@pytest.mark.parametrize(
+    ("arguments", "stdin_payload", "accepted_prefix", "expected_stdout"),
+    [
+        (["-", "memory:/later"], b"stdin-tail", 3, b"std"),
+        (
+            ["memory:/left", "-", "memory:/right"],
+            b"mid",
+            2,
+            b"Lm",
+        ),
+        (["memory:/blob", "-"], b"tail", 2, b"Bt"),
+    ],
+    ids=["leading", "middle", "trailing"],
+)
+def test_cat_stops_on_stdout_failure_during_stdin_at_each_position(
+    monkeypatch,
+    arguments: list[str],
+    stdin_payload: bytes,
+    accepted_prefix: int,
+    expected_stdout: bytes,
+) -> None:
+    temps: list[str] = []
+    payloads = {
+        "/left": b"L",
+        "/right": b"R",
+        "/later": b"SHOULD_NOT",
+        "/blob": b"B",
+    }
+    source = _RecordingSource([], get_file_by_path=payloads)
+    real_mkstemp = tempfile.mkstemp
+
+    def tracking_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        descriptor, path = real_mkstemp(*args, **kwargs)
+        temps.append(path)
+        return descriptor, path
+
+    monkeypatch.setattr(tempfile, "mkstemp", tracking_mkstemp)
+    _install_stdin(monkeypatch, io.BytesIO(stdin_payload))
+    accepted: list[bytes] = []
+
+    class _PrefixStdout:
+        def __init__(self, budget: int) -> None:
+            self._remaining = budget
+
+        def write(self, chunk: bytes) -> int:
+            if not isinstance(chunk, bytes):
+                raise TypeError
+            if self._remaining <= 0:
+                message = "short write"
+                raise OSError(message)
+            written = min(self._remaining, len(chunk))
+            accepted.append(chunk[:written])
+            self._remaining -= written
+            if written != len(chunk):
+                message = "short write"
+                raise OSError(message)
+            return len(chunk)
+
+        def flush(self) -> None:
+            return None
+
+    prefix_stdout = _PrefixStdout(accepted_prefix)
+    monkeypatch.setattr("fsspec_cli._cat._binary_stdout", lambda: prefix_stdout)
+    result = _invoke_cat(arguments, sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert b"".join(accepted) == expected_stdout
+    assert result.stderr == "cat: output: output failure (OSError): short write\n"
+    assert source.events[0][0] == "factory"
+    assert source.events[1][0] == "enter"
+    assert source.events[-1][0] == "exit"
+    assert not any(
+        event[0] == "get_file" and event[2] == "/right" for event in source.events
+    )
+    assert not any(
+        event[0] == "get_file" and event[2] == "/later" for event in source.events
+    )
+    assert all(not Path(path).exists() for path in temps)
+
+
+def test_cat_u_remains_unsupported_without_stdin_or_sources(monkeypatch) -> None:
+    class _ForbiddenStdin(io.RawIOBase):
+        def readable(self) -> bool:
+            return True
+
+        def read(self, size: int = -1) -> bytes:  # type: ignore[override]
+            del size
+            raise AssertionError
+
+    _install_stdin(monkeypatch, _ForbiddenStdin())
+    result = _invoke_cat(["-u"], sources={"memory": _source_must_not_run})
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == "cat: -u: unsupported option\n"
+
+
+def test_cat_continues_after_missing_file_before_and_after_stdin(monkeypatch) -> None:
+    source = _RecordingSource(
+        [],
+        info_by_path={
+            "/missing": FileNotFoundError(),
+            "/ok": {"type": "file"},
+        },
+        get_file_by_path={"/ok": b"OK"},
+    )
+    _install_stdin(monkeypatch, io.BytesIO(b"S"))
+
+    result = _invoke_cat(
+        ["memory:/missing", "-", "memory:/ok", "memory:/missing"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout_bytes == b"SOK"
+    assert result.stderr == (
+        "cat: memory:/missing: not found\ncat: memory:/missing: not found\n"
+    )
+
+
+def test_cat_continues_after_stdin_read_failure(monkeypatch) -> None:
+    source = _RecordingSource([], get_file_content=b"OK")
+    _install_stdin(monkeypatch, _FailingStdin(before=b"S"))
+
+    result = _invoke_cat(
+        ["-", "memory:/blob"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout_bytes == b"SOK"
+    assert result.stderr == "cat: -: staging failure (OSError): stdin-denied\n"
+
+
+def test_cat_stops_on_stdout_failure_during_stdin(monkeypatch) -> None:
+    source = _RecordingSource([], get_file_content=b"SHOULD_NOT")
+    _install_stdin(monkeypatch, io.BytesIO(b"abcdef"))
+    accepted: list[bytes] = []
+
+    class _PrefixStdout:
+        def write(self, chunk: bytes) -> int:
+            if not isinstance(chunk, bytes):
+                raise TypeError
+            accepted.append(chunk[:3])
+            return 3
+
+        def flush(self) -> None:
+            return None
+
+    monkeypatch.setattr("fsspec_cli._cat._binary_stdout", _PrefixStdout)
+    result = _invoke_cat(
+        ["-", "memory:/blob"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert accepted == [b"abc"]
+    assert result.stderr == "cat: output: output failure (OSError): short write\n"
+    assert [event[0] for event in source.events] == ["factory", "enter", "exit"]
+
+
+def test_cat_zero_source_invalid_argv_never_reads_stdin(monkeypatch) -> None:
+    class _ForbiddenStdin(io.RawIOBase):
+        def readable(self) -> bool:
+            return True
+
+        def read(self, size: int = -1) -> bytes:  # type: ignore[override]
+            del size
+            raise AssertionError
+
+    _install_stdin(monkeypatch, _ForbiddenStdin())
+    result = _invoke_cat(["/bare"], sources={"memory": _source_must_not_run})
+
+    assert result.exit_code == 2
+    assert result.stderr == "cat: /bare: invalid mapped filesystem operand\n"
+
+
+@pytest.mark.parametrize(
+    "control",
+    [asyncio.CancelledError(), _ControlFlow("stop")],
+)
+def test_cat_propagates_cancellation_during_stdin_read(
+    monkeypatch,
+    control: BaseException,
+) -> None:
+    class _CancelStdin(io.RawIOBase):
+        def readable(self) -> bool:
+            return True
+
+        def read(self, size: int = -1) -> bytes:  # type: ignore[override]
+            del size
+            raise control
+
+    source = _RecordingSource([], get_file_content=b"OK")
+    _install_stdin(monkeypatch, _CancelStdin())
+
+    with pytest.raises(type(control)) as caught:
+        _invoke_cat(["-", "memory:/blob"], sources={"memory": source})
+
+    assert type(caught.value) is type(control)
+    if not isinstance(control, asyncio.CancelledError):
+        assert caught.value is control
+    assert [event[0] for event in source.events] == ["factory", "enter", "exit"]
+    exception_type, exception, traceback = source.exit_calls[0]
+    assert exception_type is type(control)
+    assert exception is control
+    assert traceback is not None

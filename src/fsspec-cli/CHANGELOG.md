@@ -9,6 +9,8 @@
 * **fsspec-cli:** add source-free `dirname string` lexical command (#125)
 * Add mapped-file `cat` with whole-object `_get_file` staging and bounded
   binary stdout.
+* **fsspec-cli:** add binary stdin and `-` sequencing for `cat`
+  ([#127](https://github.com/shinybrar/vosfs/issues/127))
 * **fsspec-cli:** add base `mkdir` without parent creation ([#128](https://github.com/shinybrar/vosfs/issues/128)).
   Passing results claim only source-default creation semantics, not POSIX mode
   or umask behavior.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import sys
 from contextlib import asynccontextmanager
 from functools import partial
@@ -14,6 +15,14 @@ from fsspec_cli import App
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+_TRACKING_PATH = os.environ.get("FSSPEC_CLI_CAT_PROCESS_TRACKING")
+
+
+def _track(event: str) -> None:
+    if _TRACKING_PATH:
+        with Path(_TRACKING_PATH).open("a", encoding="ascii") as handle:
+            handle.write(f"{event}\n")
 
 
 def _real_stdout() -> BinaryIO:
@@ -37,11 +46,14 @@ class _FileSystem(AsyncFileSystem):
 
     async def _get_file(self, rpath: str, lpath: str, **kwargs: object) -> None:
         del kwargs
+        _track(f"get-file:{rpath}")
         payloads = {
             "/empty": b"",
             "/bytes": bytes(range(256)),
             "/prefix": b"abcdefghij",
             "/docs": b"payload",
+            "/left": b"L",
+            "/right": b"R",
         }
         with Path(lpath).open("wb") as handle:  # noqa: ASYNC230
             handle.write(payloads.get(rpath, b"payload"))
@@ -49,7 +61,11 @@ class _FileSystem(AsyncFileSystem):
 
 @asynccontextmanager
 async def _source(mode: str) -> AsyncIterator[_FileSystem]:
-    yield _FileSystem(mode)
+    _track("source-enter")
+    try:
+        yield _FileSystem(mode)
+    finally:
+        _track("source-exit")
 
 
 class _PrefixThenFailure(io.RawIOBase):
@@ -81,9 +97,27 @@ def _configure_stdout(mode: str) -> None:
         sys.stdout = io.TextIOWrapper(_PrefixThenFailure(0), write_through=True)
     elif mode == "prefix":
         sys.stdout = io.TextIOWrapper(_PrefixThenFailure(3), write_through=True)
+    elif mode in {"stdin-leading-prefix", "stdin-middle-prefix"}:
+        sys.stdout = io.TextIOWrapper(_PrefixThenFailure(2), write_through=True)
+    elif mode == "stdin-trailing-prefix":
+        # Budget must exceed mapped ``/docs`` payload so failure occurs during stdin.
+        sys.stdout = io.TextIOWrapper(
+            _PrefixThenFailure(len(b"payload") + 2),
+            write_through=True,
+        )
     elif mode == "runtime-and-fail":
         sys.stdout = io.TextIOWrapper(_PrefixThenFailure(0), write_through=True)
-    elif mode not in {"normal", "bytes", "empty"}:
+    elif mode not in {
+        "normal",
+        "bytes",
+        "empty",
+        "stdin",
+        "mixed",
+        "repeat-dash",
+        "stdin-leading-broken",
+        "stdin-middle-broken",
+        "stdin-trailing-broken",
+    }:
         msg = f"unknown child mode: {mode}"
         raise RuntimeError(msg)
 
