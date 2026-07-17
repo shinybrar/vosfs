@@ -12,6 +12,8 @@ from fsspec_cli._ls import _preflight as _ls_preflight
 from fsspec_cli._ls import _run_ls
 from fsspec_cli._mkdir import _preflight as _mkdir_preflight
 from fsspec_cli._sources import _SourceInvocation
+from fsspec_cli._stat import _preflight as _stat_preflight
+from fsspec_cli._stat import _run_stat
 
 from ._support import _RecordingSource
 
@@ -32,6 +34,16 @@ def test_ls_preflight_diagnostic_escapes_concrete_command_label(capsys) -> None:
 def test_mkdir_preflight_diagnostic_escapes_concrete_command_label(capsys) -> None:
     with pytest.raises(typer.Exit) as caught:
         _mkdir_preflight(_COMMAND, ("bad",), {"memory"})
+
+    assert caught.value.exit_code == 2
+    assert capsys.readouterr().err == (
+        f"{_RENDERED_COMMAND}: bad: invalid mapped filesystem operand\n"
+    )
+
+
+def test_stat_preflight_diagnostic_escapes_concrete_command_label(capsys) -> None:
+    with pytest.raises(typer.Exit) as caught:
+        _stat_preflight(_COMMAND, ("bad",), {"memory"})
 
     assert caught.value.exit_code == 2
     assert capsys.readouterr().err == (
@@ -177,6 +189,41 @@ def test_cat_output_failure_diagnostic_uses_concrete_command_label(
 
     with pytest.raises(typer.Exit) as caught:
         asyncio.run(_run_cat(_COMMAND, ("memory:/file",), {"memory": source}))
+
+    assert caught.value.exit_code == 1
+    assert capsys.readouterr().err == (
+        f"{_RENDERED_COMMAND}: output: output failure (OSError): write\n"
+    )
+
+
+def test_stat_output_failure_diagnostic_uses_concrete_command_label(
+    monkeypatch,
+    capsys,
+) -> None:
+    output_error = OSError("write")
+    source = _RecordingSource(
+        [],
+        info_result={
+            "name": "/file",
+            "size": 1,
+            "type": "file",
+            "islink": False,
+            "mode": 33188,
+            "nlink": 1,
+            "uid": 0,
+            "gid": 0,
+            "mtime": 0,
+        },
+    )
+
+    def fail_stdout(line: bytes) -> None:
+        del line
+        raise output_error
+
+    monkeypatch.setattr("fsspec_cli._stat._write_line", fail_stdout)
+
+    with pytest.raises(typer.Exit) as caught:
+        asyncio.run(_run_stat(_COMMAND, ("memory:/file",), {"memory": source}))
 
     assert caught.value.exit_code == 1
     assert capsys.readouterr().err == (

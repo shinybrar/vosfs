@@ -496,6 +496,10 @@ def _invoke_cp(app: App, arguments: list[str]) -> Result:
     return _invoke(app, "cp", arguments)
 
 
+def _invoke_stat(app: App, arguments: list[str]) -> Result:
+    return _invoke(app, "stat", arguments)
+
+
 def _exercise_locked_profile(
     source_name: str,
     source: _ProbedSource[_FilesystemT],
@@ -1225,4 +1229,119 @@ def _exercise_multi_source_cp_locked_profile(
     ]
     assert not any(
         call.operation in {"rm", "rm_file", "rmdir"} for call in source.calls
+    )
+
+
+def _expected_stat_line(path: str, info: Mapping[str, object]) -> str:
+    """Build a golden line with stdlib only (not private ``_stat`` helpers)."""
+    import grp
+    import pwd
+    import stat as stat_module
+    import time
+
+    mode = info["mode"]
+    nlink = info["nlink"]
+    uid = info["uid"]
+    gid = info["gid"]
+    size = info["size"]
+    mtime = info["mtime"]
+    assert type(mode) is int
+    assert type(nlink) is int
+    assert type(uid) is int
+    assert type(gid) is int
+    assert type(size) is int
+    assert type(mtime) in {int, float}
+    try:
+        owner = pwd.getpwuid(uid).pw_name
+    except KeyError:
+        owner = str(uid)
+    try:
+        group = grp.getgrgid(gid).gr_name
+    except KeyError:
+        group = str(gid)
+    local = time.localtime(float(mtime))
+    months = (
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+    )
+    stamped = (
+        f"{months[local.tm_mon - 1]} {local.tm_mday:2d} "
+        f"{local.tm_hour:02d}:{local.tm_min:02d}:{local.tm_sec:02d} "
+        f"{local.tm_year}"
+    )
+    return (
+        f"{stat_module.filemode(mode)} {nlink} {owner} {group} "
+        f'{size} "{stamped}" {path}\n'
+    )
+
+
+def _exercise_stat_locked_profile(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    file_path: str,
+    directory_path: str,
+) -> None:
+    app = App({source_name: source})
+    calls_before = len(source.calls)
+    info_before = len(source.info_results)
+    result = _invoke_stat(
+        app,
+        [f"{source_name}:{file_path}", f"{source_name}:{directory_path}"],
+    )
+    recorded: dict[str, object] = {}
+    info_index = info_before
+    for call in source.calls[calls_before:]:
+        if call.operation != "info":
+            continue
+        recorded[call.path] = source.info_results[info_index][1]
+        info_index += 1
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    assert isinstance(recorded[file_path], Mapping)
+    assert isinstance(recorded[directory_path], Mapping)
+    assert result.stdout == (
+        _expected_stat_line(file_path, recorded[file_path])
+        + _expected_stat_line(directory_path, recorded[directory_path])
+    )
+    assert [
+        call.path for call in source.calls[calls_before:] if call.operation == "info"
+    ] == [file_path, directory_path]
+    assert not any(
+        call.operation in {"ls", "rm", "rm_file", "rmdir", "get_file", "cp_file"}
+        for call in source.calls[calls_before:]
+    )
+
+
+def _exercise_stat_incomplete_profile(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    path: str,
+) -> None:
+    app = App({source_name: source})
+    calls_before = len(source.calls)
+    result = _invoke_stat(app, [f"{source_name}:{path}"])
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        f"stat: {source_name}:{path}: incompatible result\n",
+    )
+
+    assert [
+        call.path for call in source.calls[calls_before:] if call.operation == "info"
+    ] == [path]
+    assert not any(
+        call.operation in {"ls", "rm", "rm_file", "rmdir", "get_file", "cp_file"}
+        for call in source.calls[calls_before:]
     )

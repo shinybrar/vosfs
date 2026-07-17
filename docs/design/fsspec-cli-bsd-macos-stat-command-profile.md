@@ -2,7 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-Status: **Locked reduced compatibility profile (research only; no production command yet)**
+Status: **Locked reduced compatibility profile (production command shipped by #146)**
 
 Question: [Define a reduced BSD and macOS stat compatibility profile](https://github.com/shinybrar/vosfs/issues/145)
 
@@ -241,13 +241,11 @@ Canonical matrix rows for planning are recorded in
 until #146 supplies qualifying evidence. Missing evidence stays `unverified`,
 never `pass`.
 
-## 8. README / help / changelog language (drafts for #146)
+## 8. README / help / changelog language
 
-Do not publish these in user docs until the production command exists
-(`CONTRIBUTING.md`: do not document commands that do not exist). Issue #146 MUST
-apply equivalent wording when the command ships.
+Issue #146 ships equivalent wording with the production command.
 
-**README draft (fragment):**
+**README (fragment):**
 
 > Reduced BSD/macOS-shaped `stat` accepts only `stat [--] name:/path...`, awaits
 > `_info` once per operand, and prints one fixed line per successful
@@ -268,12 +266,12 @@ Reduced BSD/macOS-shaped file status over fsspec _info (not POSIX).
 > Add reduced BSD/macOS-shaped `stat` over authoritative `_info` fields. Not
 > POSIX; not full host `stat(1)`.
 
-## 9. T25 implementation frontier (#146)
+## 9. T25 implementation record (#146)
 
-Issue #146 MAY merge production code only after this profile stays locked and
-the merge gate (`fsspec-cli-v0.1.0` / #108) is satisfied per issue text.
+Production command shipped by #146 against this locked profile. The issue-text
+merge gate (`fsspec-cli-v0.1.0` / #108) was a merge gate, not a start blocker.
 
-Required implementation work:
+Completed implementation work:
 
 1. Private `_stat.py` + `App` registration only through `App(sources).typer_app`.
 2. Exact T24 argv; reject every Section 1.1 surface source-free.
@@ -285,7 +283,7 @@ Required implementation work:
 7. README/help/changelog agree with this profile; still never claim POSIX.
 8. No reuse as `ls -l` justification.
 
-Out of scope for T25: `-f` language, JSON, recursion, capacity, GNU blend,
+Out of scope remains: `-f` language, JSON, recursion, capacity, GNU blend,
 backend branches, placeholder metadata, directory traversal.
 
 ## 10. Research deliverable boundary

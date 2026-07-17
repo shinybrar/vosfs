@@ -20,6 +20,7 @@ from ._matrix_support import (
     _exercise_rm_locked_profile,
     _exercise_rm_verbose_profile,
     _exercise_rmdir_locked_profile,
+    _exercise_stat_incomplete_profile,
     _exercise_unlink_locked_profile,
     _invoke_rm,
     _ProbedSource,
@@ -833,3 +834,28 @@ def test_native_vosfs_mv_remains_unverified_without_exact_operation() -> None:
     """No source-form `_mv`; matrix row must remain unverified."""
     assert "_mv" not in VOSpaceFileSystem.__dict__
     assert not inspect.iscoroutinefunction(getattr(VOSpaceFileSystem, "_mv", None))
+
+
+def test_native_vosfs_stat_profile_fails_closed_on_incomplete_info() -> None:
+    transports: list[_UnlinkMockTransport] = []
+
+    def make_filesystem() -> VOSpaceFileSystem:
+        transport = _UnlinkMockTransport()
+        transports.append(transport)
+        return VOSpaceFileSystem(
+            _BASE_URL,
+            transport=transport,
+            asynchronous=True,
+            skip_instance_cache=True,
+            trust_env=False,
+        )
+
+    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+
+    _exercise_stat_incomplete_profile("vos", source, "/docs/notes.txt")
+
+    assert all(isinstance(fs, VOSpaceFileSystem) for fs in source.filesystems)
+    assert all(fs.asynchronous is True for fs in source.filesystems)
+    assert all(fs._pool.closed is True for fs in source.filesystems)
+    assert all(transport.closed for transport in transports)
+    assert any(call.operation == "info" for call in source.calls)
