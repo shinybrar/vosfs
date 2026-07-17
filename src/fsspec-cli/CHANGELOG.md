@@ -23,6 +23,10 @@
   Reuses the unlink confirmed `_rm_file` absence boundary for one or more files;
   force, directory, recursion, verbose, and interactive options remain unsupported.
 
+* **fsspec-cli:** add verified same-source two-operand `cp` ([#137](https://github.com/shinybrar/vosfs/issues/137)).
+  Passing rows prove target resolution, replacement, bytes, diagnostics, cleanup,
+  and partial state only — not POSIX mode, ownership, link identity, or timestamps.
+
 ### Changed
 
 * Parameterize private command orchestration with concrete command labels

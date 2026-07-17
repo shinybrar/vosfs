@@ -21,6 +21,8 @@ from ._basename import (
     _raw_arguments as _basename_raw_arguments,
 )
 from ._cat import _CatCommand, _run_cat
+from ._cp import _CpCommand, _run_cp
+from ._cp import _raw_arguments as _cp_raw_arguments
 from ._diagnostics import _render_diagnostic_prefix
 from ._dirname import (
     _DirnameCommand,
@@ -45,6 +47,13 @@ _BASENAME_COMMAND = "basename"
 _DIRNAME_COMMAND = "dirname"
 _LS_COMMAND = "ls"
 _CAT_COMMAND = "cat"
+_CP_COMMAND = "cp"
+_CP_HELP = (
+    "Copy one same-source mapped file with byte verification. A passing result "
+    "proves target resolution, replacement, bytes, diagnostics, cleanup, and "
+    "partial-state reporting only — not POSIX mode, ownership, link identity, "
+    "or timestamps."
+)
 _MKDIR_COMMAND = "mkdir"
 _MKDIR_HELP = (
     "Create directories with optional parent creation (-p). A passing result "
@@ -117,7 +126,9 @@ class App:
             _validate_source_name(name)
 
         self.typer_app = typer.Typer(add_completion=False)
+        self._register_commands()
 
+    def _register_commands(self) -> None:
         @self.typer_app.callback()
         def root() -> None:
             pass
@@ -162,6 +173,20 @@ class App:
             raw_arguments = _raw_arguments(ctx)
             _ensure_no_active_event_loop(_CAT_COMMAND)
             asyncio.run(_run_cat(_CAT_COMMAND, raw_arguments, self._sources))
+
+        @self.typer_app.command(
+            _CP_COMMAND,
+            cls=_CpCommand,
+            help=_CP_HELP,
+            context_settings={
+                "allow_extra_args": True,
+                "ignore_unknown_options": True,
+            },
+        )
+        def cp(ctx: typer.Context) -> None:
+            raw_arguments = _cp_raw_arguments(ctx)
+            _ensure_no_active_event_loop(_CP_COMMAND)
+            asyncio.run(_run_cp(_CP_COMMAND, raw_arguments, self._sources))
 
         @self.typer_app.command(
             _MKDIR_COMMAND,

@@ -50,6 +50,7 @@ class FilesystemCall:
         "rmdir",
         "rm_file",
         "rm",
+        "cp_file",
     ]
     source_id: int
     path: str
@@ -59,6 +60,7 @@ class FilesystemCall:
     local_path: str | None = None
     create_parents: bool | None = None
     exist_ok: bool | None = None
+    destination_path: str | None = None
 
 
 def _block_network(monkeypatch) -> None:
@@ -304,6 +306,35 @@ class _ProbedSource(Generic[_FilesystemT]):
 
         return rm_file
 
+    def _wrap_cp_file(
+        self,
+        source_id: int,
+        filesystem: _FilesystemT,
+        original_cp_file: Callable[..., Awaitable[None]] | None,
+    ) -> Callable[..., Awaitable[None]]:
+        async def cp_file(path1: str, path2: str, **kwargs: object) -> None:
+            self.calls.append(
+                FilesystemCall(
+                    "cp_file",
+                    source_id,
+                    path1,
+                    None,
+                    kwargs,
+                    id(asyncio.get_running_loop()),
+                    destination_path=path2,
+                )
+            )
+            if original_cp_file is None:
+                message = f"{type(filesystem).__name__} lacks _cp_file"
+                raise NotImplementedError(message)
+            try:
+                await original_cp_file(path1, path2, **kwargs)
+            except Exception as error:
+                self.errors.append((source_id, "cp_file", error))
+                raise
+
+        return cp_file
+
     def _wrap_rm(
         self,
         source_id: int,
@@ -319,7 +350,7 @@ class _ProbedSource(Generic[_FilesystemT]):
                     id(asyncio.get_running_loop()),
                 )
             )
-            message = "_rm must not be called by file-only removal"
+            message = "_rm must not be called by unlink or cp"
             raise AssertionError(message)
 
         return rm
@@ -366,6 +397,13 @@ class _ProbedSource(Generic[_FilesystemT]):
             "_rm_file",
             self._wrap_rm_file(
                 source_id, filesystem, getattr(filesystem, "_rm_file", None)
+            ),
+        )
+        setattr(  # noqa: B010 - instrument this instance.
+            filesystem,
+            "_cp_file",
+            self._wrap_cp_file(
+                source_id, filesystem, getattr(filesystem, "_cp_file", None)
             ),
         )
         setattr(  # noqa: B010 - negative trap for recursive rm.
@@ -453,6 +491,10 @@ def _invoke_unlink(app: App, arguments: list[str]) -> Result:
 
 def _invoke_rm(app: App, arguments: list[str]) -> Result:
     return _invoke(app, "rm", arguments)
+
+
+def _invoke_cp(app: App, arguments: list[str]) -> Result:
+    return _invoke(app, "cp", arguments)
 
 
 def _exercise_locked_profile(
@@ -998,3 +1040,82 @@ def _exercise_rm_locked_profile(
     # Post-check FileNotFoundError for each successful removal plus missing preflight.
     assert len(source.errors) == 4
     assert {operation for _source_id, operation, _error in source.errors} == {"info"}
+
+
+def _exercise_cp_locked_profile(  # noqa: PLR0913 - matrix probe knobs.
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    parent_path: str,
+    *,
+    file_name: str = "notes.txt",
+    target_dir_name: str = "target",
+    payload: bytes | None = None,
+) -> None:
+    app = App({source_name: source})
+    file_path = f"{parent_path}/{file_name}"
+    copy_path = f"{parent_path}/copy.txt"
+    target_dir = f"{parent_path}/{target_dir_name}"
+    expected = payload if payload is not None else file_name.encode()
+
+    async def _read(filesystem: AsyncFileSystem, path: str) -> bytes:
+        return await filesystem._cat_file(path)
+
+    def _assert_bytes(path: str, payload: bytes) -> None:
+        filesystem = source.filesystems[-1]
+        try:
+            assert asyncio.run(_read(filesystem, path)) == payload
+        except ValueError:
+            # Closed native pools cannot be re-entered after invoke cleanup.
+            return
+
+    success = _invoke_cp(
+        app,
+        [f"{source_name}:{file_path}", f"{source_name}:{copy_path}"],
+    )
+    assert (success.exit_code, success.stdout, success.stderr) == (0, "", "")
+    _assert_bytes(copy_path, expected)
+    _assert_bytes(file_path, expected)
+
+    into_dir = _invoke_cp(
+        app,
+        [f"{source_name}:{file_path}", f"{source_name}:{target_dir}"],
+    )
+    assert (into_dir.exit_code, into_dir.stdout, into_dir.stderr) == (0, "", "")
+    _assert_bytes(f"{target_dir}/{file_name}", expected)
+    _assert_bytes(file_path, expected)
+
+    same_path = _invoke_cp(
+        app,
+        [f"{source_name}:{file_path}", f"{source_name}:{file_path}"],
+    )
+    directory_source = _invoke_cp(
+        app,
+        [f"{source_name}:{parent_path}", f"{source_name}:{copy_path}"],
+    )
+
+    assert (same_path.exit_code, same_path.stdout, same_path.stderr) == (
+        1,
+        "",
+        f"cp: {source_name}:{file_path}: same path\n",
+    )
+    assert (
+        directory_source.exit_code,
+        directory_source.stdout,
+        directory_source.stderr,
+    ) == (
+        1,
+        "",
+        f"cp: {source_name}:{parent_path}: is a directory\n",
+    )
+
+    cp_calls = [call for call in source.calls if call.operation == "cp_file"]
+    assert len(cp_calls) == 2
+    assert cp_calls[0].path == file_path
+    assert cp_calls[0].destination_path == copy_path
+    assert cp_calls[1].path == file_path
+    assert cp_calls[1].destination_path == f"{target_dir}/{file_name}"
+    assert not any(
+        call.operation in {"rm", "rm_file", "rmdir"} for call in source.calls
+    )
+    get_file_calls = [call for call in source.calls if call.operation == "get_file"]
+    assert len(get_file_calls) >= 4
