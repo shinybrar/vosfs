@@ -206,6 +206,9 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [`ls -l` strict rejection](fsspec-cli-ls-long-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
 | [`basename string`](fsspec-cli-basename-command-profile.md) | source-free command | `not entered` | `pass` | `pass` | Hermetic | [H-2026-07-17-29564531624](#h-2026-07-17-29564531624) |
 | [`basename string`](fsspec-cli-basename-command-profile.md) option/operand rejection | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29564531624](#h-2026-07-17-29564531624) |
+| [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `local / adapted async` | `pass` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
+| [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `memory / adapted async` | `pass` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
+| [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic and live OpenCADC | Hermetic mocked transport present; live evidence absent |
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.

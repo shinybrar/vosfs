@@ -7,6 +7,7 @@ import socket
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Generic, Literal, TypeVar
 
 from fsspec.asyn import AsyncFileSystem
@@ -39,12 +40,13 @@ class ExitCall:
 
 @dataclass(frozen=True)
 class FilesystemCall:
-    operation: Literal["info", "ls"]
+    operation: Literal["info", "ls", "get_file"]
     source_id: int
     path: str
     detail: bool | None
     kwargs: Mapping[str, object]
     loop_id: int
+    local_path: str | None = None
 
 
 def _block_network(monkeypatch) -> None:
@@ -71,6 +73,7 @@ class _ProbedSource(Generic[_FilesystemT]):
         self.calls: list[FilesystemCall] = []
         self.info_results: list[tuple[int, object]] = []
         self.ls_results: list[tuple[int, object]] = []
+        self.get_file_results: list[tuple[int, str]] = []
         self.errors: list[tuple[int, str, Exception]] = []
         self.filesystems: list[_FilesystemT] = []
         self.close_calls: list[LifecycleEvent] = []
@@ -87,6 +90,7 @@ class _ProbedSource(Generic[_FilesystemT]):
     def instrument(self, source_id: int, filesystem: _FilesystemT) -> None:
         original_info = filesystem._info
         original_ls = filesystem._ls
+        original_get_file = filesystem._get_file
 
         async def info(path: str, **kwargs: object) -> object:
             self.calls.append(
@@ -130,8 +134,29 @@ class _ProbedSource(Generic[_FilesystemT]):
             self.ls_results.append((source_id, result))
             return result
 
+        async def get_file(rpath: str, lpath: str, **kwargs: object) -> object:
+            self.calls.append(
+                FilesystemCall(
+                    "get_file",
+                    source_id,
+                    rpath,
+                    None,
+                    kwargs,
+                    id(asyncio.get_running_loop()),
+                    local_path=lpath,
+                )
+            )
+            try:
+                result = await original_get_file(rpath, lpath, **kwargs)
+            except Exception as error:
+                self.errors.append((source_id, "get_file", error))
+                raise
+            self.get_file_results.append((source_id, rpath))
+            return result
+
         setattr(filesystem, "_info", info)  # noqa: B010 - instrument this instance.
         setattr(filesystem, "_ls", ls)  # noqa: B010 - instrument this instance.
+        setattr(filesystem, "_get_file", get_file)  # noqa: B010 - instrument.
 
 
 class _ProbedContext(
@@ -188,6 +213,10 @@ class _ProbedContext(
 
 def _invoke(app: App, arguments: list[str]) -> Result:
     return CliRunner().invoke(app.typer_app, ["ls", *arguments])
+
+
+def _invoke_cat(app: App, arguments: list[str]) -> Result:
+    return CliRunner().invoke(app.typer_app, ["cat", *arguments])
 
 
 def _exercise_locked_profile(
@@ -295,3 +324,80 @@ def _exercise_locked_profile(
         )
         loop_ids.append(exit_call.loop_id)
         assert len(set(loop_ids)) == 1
+
+
+def _exercise_cat_profile(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    path: str,
+    *,
+    payload: bytes,
+) -> None:
+    app = App({source_name: source})
+    operand = f"{source_name}:{path}"
+    missing_operand = f"{operand}.missing"
+
+    plain = _invoke_cat(app, [operand])
+    repeated = _invoke_cat(app, [operand, operand])
+    missing = _invoke_cat(app, [missing_operand])
+
+    assert (plain.exit_code, plain.stdout_bytes, plain.stderr) == (0, payload, "")
+    assert (repeated.exit_code, repeated.stdout_bytes, repeated.stderr) == (
+        0,
+        payload * 2,
+        "",
+    )
+    assert (missing.exit_code, missing.stdout_bytes, missing.stderr) == (
+        1,
+        b"",
+        f"cat: {missing_operand}: not found\n",
+    )
+
+    assert [event.stage for event in source.lifecycle] == [
+        "factory",
+        "enter",
+        "exit",
+        "factory",
+        "enter",
+        "exit",
+        "factory",
+        "enter",
+        "exit",
+    ]
+    assert [call.operation for call in source.calls] == [
+        "info",
+        "get_file",
+        "info",
+        "get_file",
+        "info",
+        "get_file",
+        "info",
+    ]
+    assert [call.path for call in source.calls] == [
+        path,
+        path,
+        path,
+        path,
+        path,
+        path,
+        f"{path}.missing",
+    ]
+    get_file_calls = [call for call in source.calls if call.operation == "get_file"]
+    assert len(get_file_calls) == 3
+    assert all(call.local_path is not None for call in get_file_calls)
+    assert all(
+        not Path(call.local_path).exists()  # type: ignore[arg-type]
+        for call in get_file_calls
+    )
+    assert all(not call.kwargs for call in source.calls)
+    assert len(source.get_file_results) == 3
+    assert len(source.errors) == 1
+    error_source_id, operation, error = source.errors[0]
+    assert (error_source_id, operation) == (3, "info")
+    assert isinstance(error, FileNotFoundError)
+
+    first_exit, second_exit, failing_exit = source.exit_calls
+    assert first_exit.exc_type is None
+    assert second_exit.exc_type is None
+    assert failing_exit.exc_type is FileNotFoundError
+    assert failing_exit.exception is error

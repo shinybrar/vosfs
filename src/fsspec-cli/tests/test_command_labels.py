@@ -7,6 +7,7 @@ from typing import NoReturn
 import fsspec_cli._app as app_module
 import pytest
 import typer
+from fsspec_cli._cat import _run_cat
 from fsspec_cli._ls import _preflight, _run_ls
 from fsspec_cli._sources import _SourceInvocation
 
@@ -142,6 +143,28 @@ def test_output_failure_diagnostic_uses_concrete_command_label(
 
     with pytest.raises(typer.Exit) as caught:
         asyncio.run(_run_ls(_COMMAND, ("memory:/file",), {"memory": source}))
+
+    assert caught.value.exit_code == 1
+    assert capsys.readouterr().err == (
+        f"{_RENDERED_COMMAND}: output: output failure (OSError): write\n"
+    )
+
+
+def test_cat_output_failure_diagnostic_uses_concrete_command_label(
+    monkeypatch,
+    capsys,
+) -> None:
+    output_error = OSError("write")
+    source = _RecordingSource([], get_file_content=b"data")
+
+    def fail_stdout(chunk: bytes) -> None:
+        del chunk
+        raise output_error
+
+    monkeypatch.setattr("fsspec_cli._cat._write_stdout", fail_stdout)
+
+    with pytest.raises(typer.Exit) as caught:
+        asyncio.run(_run_cat(_COMMAND, ("memory:/file",), {"memory": source}))
 
     assert caught.value.exit_code == 1
     assert capsys.readouterr().err == (

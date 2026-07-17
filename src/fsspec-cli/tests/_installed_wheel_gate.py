@@ -238,6 +238,8 @@ def main() -> None:
                 tests / "test_distribution.py",
                 tests / "test_command_matrix.py",
                 tests / "test_basename.py",
+                tests / "test_cat.py",
+                tests / "test_cat_process.py",
             ],
             cwd=root / "core-tests",
             environment=environment,

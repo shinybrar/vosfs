@@ -8,19 +8,21 @@ Hosts embed its Typer application through the sole behavioral seam,
 `AsyncFilesystemSource`: a callable that returns a fresh async context manager
 for one command invocation.
 
-The current `ls` slice implements source-free argument preflight, the
-synchronous Typer-to-asyncio boundary, invocation-owned source lifecycle, and
-the locked plain-`ls` behavior for one or more mapped operands. The current
-`basename` slice adds the locked source-free `basename string` lexical command:
-exactly one argv token, no options, POSIX Issue 8 basename semantics, zero
-source entry, and deterministic stdout with one trailing newline. Every valid
-ls operand awaits `_info`; directories then await `_ls(path, detail=False)` and
-strictly validate, filter, and locale-sort immediate child names. Rendering is
-deterministic across files and directory blocks, while ordinary operand
-failures continue with stable diagnostics and output failures preserve their
-accepted-byte boundary. Backend compatibility claims remain `unverified`
-until their source-form gates run. The package has no console entry point or
-module executable.
+The current command surface covers plain `ls`, source-free `basename string`,
+and mapped-file `cat`. Commands share source-free argument preflight and the
+synchronous Typer-to-asyncio boundary; `ls` and `cat` also use
+invocation-owned source lifecycle. The `basename` slice is exactly one argv
+token, no options, POSIX Issue 8 basename semantics, zero source entry, and
+deterministic stdout with one trailing newline. Every valid `ls` operand
+awaits `_info`; directories then await `_ls(path, detail=False)` and strictly
+validate, filter, and locale-sort immediate child names. Mapped-file `cat`
+awaits `_info`, requires fsspec `type == "file"`, stages each object through
+`_get_file` into one secure temporary, and forwards exact binary chunks to
+stdout with no text conversion. Stdin and `-` remain outside the first `cat`
+profile. Rendering is deterministic, ordinary operand failures continue with
+stable diagnostics, and output failures preserve their accepted-byte boundary.
+Backend compatibility claims remain `unverified` until their source-form gates
+run. The package has no console entry point or module executable.
 
 Package-owned hermetic probes now exercise adapted Local, adapted Memory, and
 native async `vosfs` sources through that same public seam. They block name
@@ -28,8 +30,8 @@ resolution and high-level connection attempts, give `vosfs` a strict mocked
 transport, and verify lifecycle, awaited calls, raw result shapes, output,
 diagnostics, and exit behavior. The canonical row-scoped matrix records current
 classifications and immutable evidence. Release-candidate readiness still
-requires the isolated-wheel command-matrix gate. Native `vosfs` remains
+requires the isolated-wheel command-matrix gate. Native `vosfs` `cat` remains
 `unverified` until the live OpenCADC gate supplements its hermetic evidence.
 The live observation harness captures only classification, package, platform,
 source-mode, call-shape, cleanup, commit, and immutable-run metadata; it never
-publishes directory entries or credential material.
+publishes directory entries, file bytes, or credential material.
