@@ -365,7 +365,7 @@ def test_rmdir_treats_mutation_exception_with_proven_absence_as_success() -> Non
                     )
                 )
                 filesystem._removed_paths.add(path)
-                filesystem._pending_verify_paths.add(path)
+                filesystem._pending_rmdir_verify.add(path)
                 message = "timed out after delete"
                 raise TimeoutError(message)
 
@@ -405,7 +405,7 @@ def test_rmdir_reports_uncertain_state_when_mutation_and_post_check_are_ambiguou
                         id(asyncio.get_running_loop()),
                     )
                 )
-                filesystem._pending_verify_paths.add(path)
+                filesystem._pending_rmdir_verify.add(path)
                 message = "timed out"
                 raise TimeoutError(message)
 
