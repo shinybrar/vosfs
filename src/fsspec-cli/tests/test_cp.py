@@ -67,6 +67,163 @@ def test_cp_copies_one_file_without_stdout() -> None:
     assert cp_events[0][2:4] == ("/docs/notes.txt", "/docs/copy.txt")
 
 
+def test_cp_copies_multiple_files_into_existing_directory_in_argv_order() -> None:
+    source = _file_source(
+        file_contents={
+            "/docs/first.txt": b"first",
+            "/docs/second.txt": b"second",
+        },
+        directories={"/", "/docs", "/target"},
+    )
+
+    result = _invoke_cp(
+        [
+            "memory:/docs/first.txt",
+            "memory:/docs/second.txt",
+            "memory:/target",
+        ],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.file_contents["/target/first.txt"] == b"first"
+    assert source.file_contents["/target/second.txt"] == b"second"
+    assert [event[2:4] for event in source.events if event[0] == "cp_file"] == [
+        ("/docs/first.txt", "/target/first.txt"),
+        ("/docs/second.txt", "/target/second.txt"),
+    ]
+
+
+def test_cp_acquires_multi_source_names_once_in_argv_order() -> None:
+    events: list[tuple[object, ...]] = []
+    acquisition: list[str] = []
+    first = _file_source(
+        events,
+        file_contents={"/docs/first.txt": b"first"},
+        directories={"/", "/docs"},
+    )
+    second = _file_source(
+        events,
+        file_contents={"/docs/second.txt": b"second"},
+        directories={"/", "/docs"},
+    )
+    destination = _file_source(
+        events,
+        source_path="/other.txt",
+        directories={"/", "/target"},
+    )
+
+    def named_source(name: str, source: _RecordingSource):
+        def factory():
+            acquisition.append(name)
+            return source()
+
+        return factory
+
+    result = _invoke_cp(
+        [
+            "first:/docs/first.txt",
+            "second:/docs/second.txt",
+            "destination:/target",
+        ],
+        sources={
+            "first": named_source("first", first),
+            "second": named_source("second", second),
+            "destination": named_source("destination", destination),
+        },
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert acquisition == ["first", "second", "destination"]
+    assert first.call_count == second.call_count == destination.call_count == 1
+    assert destination.file_contents["/target/first.txt"] == b"first"
+    assert destination.file_contents["/target/second.txt"] == b"second"
+
+
+def test_cp_replaces_duplicate_basenames_in_argv_order() -> None:
+    first = _file_source(
+        file_contents={"/first/item.txt": b"first"},
+        source_path="/first/item.txt",
+        parent="/first",
+    )
+    second = _file_source(
+        file_contents={"/second/item.txt": b"second"},
+        source_path="/second/item.txt",
+        parent="/second",
+    )
+    destination = _file_source(
+        source_path="/other.txt",
+        directories={"/", "/target"},
+    )
+
+    result = _invoke_cp(
+        [
+            "first:/first/item.txt",
+            "second:/second/item.txt",
+            "destination:/target",
+        ],
+        sources={"first": first, "second": second, "destination": destination},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert destination.file_contents["/target/item.txt"] == b"second"
+
+
+def test_cp_leaves_completed_multi_source_targets_after_later_failure() -> None:
+    first = _file_source(
+        file_contents={"/docs/first.txt": b"first"},
+        directories={"/", "/docs"},
+    )
+    second = _file_source(
+        file_contents={"/docs/second.txt": b"second"},
+        directories={"/", "/docs"},
+    )
+    destination = _file_source(
+        source_path="/other.txt",
+        directories={"/", "/target"},
+        put_file_by_path={"/target/second.txt": OSError("upload failed")},
+    )
+
+    result = _invoke_cp(
+        [
+            "first:/docs/first.txt",
+            "second:/docs/second.txt",
+            "destination:/target",
+        ],
+        sources={"first": first, "second": second, "destination": destination},
+    )
+
+    assert result.exit_code == 1
+    assert destination.file_contents["/target/first.txt"] == b"first"
+    assert "/target/second.txt" not in destination.file_contents
+    assert first.file_contents["/docs/first.txt"] == b"first"
+    assert second.file_contents["/docs/second.txt"] == b"second"
+
+
+def test_cp_requires_existing_directory_for_multiple_sources() -> None:
+    source = _file_source(
+        file_contents={"/docs/first.txt": b"first", "/docs/second.txt": b"second"},
+        directories={"/", "/docs"},
+        info_by_path={"/missing": FileNotFoundError("missing")},
+    )
+
+    result = _invoke_cp(
+        [
+            "memory:/docs/first.txt",
+            "memory:/docs/second.txt",
+            "memory:/missing",
+        ],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: memory:/missing: not found\n",
+    )
+    assert not any(event[0] == "cp_file" for event in source.events)
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -400,14 +557,6 @@ def test_cp_rejects_one_operand() -> None:
     assert result.exit_code == 2
     assert result.stdout == ""
     assert result.stderr == "cp: missing mapped filesystem operand\n"
-
-
-def test_cp_rejects_extra_operands_without_entering_sources() -> None:
-    result = _invoke_cp(["memory:/one", "memory:/two", "memory:/three"])
-
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == "cp: extra operand\n"
 
 
 @pytest.mark.parametrize(
