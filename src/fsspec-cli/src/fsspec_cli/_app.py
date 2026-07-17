@@ -45,7 +45,7 @@ _LS_COMMAND = "ls"
 _CAT_COMMAND = "cat"
 _MKDIR_COMMAND = "mkdir"
 _MKDIR_HELP = (
-    "Create directories without implicit parent creation. A passing result "
+    "Create directories with optional parent creation (-p). A passing result "
     "claims only source-default creation semantics, not POSIX mode or umask "
     "behavior."
 )

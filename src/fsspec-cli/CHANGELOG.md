@@ -14,6 +14,9 @@
 * **fsspec-cli:** add base `mkdir` without parent creation ([#128](https://github.com/shinybrar/vosfs/issues/128)).
   Passing results claim only source-default creation semantics, not POSIX mode
   or umask behavior.
+* **fsspec-cli:** add parent-creating `mkdir -p` through `_makedirs` ([#129](https://github.com/shinybrar/vosfs/issues/129)).
+  Passing results claim only source-default creation semantics, not POSIX mode
+  or umask behavior.
 * **fsspec-cli:** add base empty-directory `rmdir` ([#130](https://github.com/shinybrar/vosfs/issues/130))
 * **fsspec-cli:** add XSI `unlink` for one mapped file ([#131](https://github.com/shinybrar/vosfs/issues/131))
 

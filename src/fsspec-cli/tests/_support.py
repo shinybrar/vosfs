@@ -222,6 +222,36 @@ class _RecordingFileSystem(AsyncFileSystem):
         self._created_dirs.add(path)
         self._pending_mkdir_verify.add(path)
 
+    async def _makedirs(
+        self,
+        path: str,
+        exist_ok: bool = False,  # noqa: FBT002 - matches the fsspec hook signature.
+        **kwargs: object,
+    ) -> None:
+        del kwargs
+        self.source.events.append(
+            (
+                "makedirs",
+                self.source_id,
+                path,
+                exist_ok,
+                id(asyncio.get_running_loop()),
+            )
+        )
+        if path in self.source.makedirs_by_path:
+            scripted = self.source.makedirs_by_path[path]
+            if isinstance(scripted, BaseException):
+                raise scripted
+        elif path in self._created_dirs:
+            if not exist_ok:
+                raise FileExistsError(path)
+            self._pending_mkdir_verify.add(path)
+            return
+        if self.source.makedirs_error is not None:
+            raise self.source.makedirs_error
+        self._created_dirs.add(path)
+        self._pending_mkdir_verify.add(path)
+
     async def _rmdir(self, path: str, **kwargs: object) -> None:
         del kwargs
         self.source.events.append(
@@ -271,6 +301,7 @@ class _RecordingSource:
         ls_result: object = None,
         ls_error: BaseException | None = None,
         mkdir_error: BaseException | None = None,
+        makedirs_error: BaseException | None = None,
         rmdir_error: BaseException | None = None,
         rm_file_error: BaseException | None = None,
         trap_rmdir: bool = False,
@@ -281,6 +312,7 @@ class _RecordingSource:
         info_by_path: Mapping[str, object] | None = None,
         ls_by_path: Mapping[str, object] | None = None,
         mkdir_by_path: Mapping[str, object] | None = None,
+        makedirs_by_path: Mapping[str, object] | None = None,
         rmdir_by_path: Mapping[str, object] | None = None,
         rm_file_by_path: Mapping[str, object] | None = None,
         post_info_by_path: Mapping[str, object] | None = None,
@@ -295,6 +327,7 @@ class _RecordingSource:
         self.ls_result = ls_result
         self.ls_error = ls_error
         self.mkdir_error = mkdir_error
+        self.makedirs_error = makedirs_error
         self.rmdir_error = rmdir_error
         self.rm_file_error = rm_file_error
         self.trap_rmdir = trap_rmdir
@@ -305,6 +338,7 @@ class _RecordingSource:
         self.info_by_path = info_by_path or {}
         self.ls_by_path = ls_by_path or {}
         self.mkdir_by_path = mkdir_by_path or {}
+        self.makedirs_by_path = makedirs_by_path or {}
         self.rmdir_by_path = rmdir_by_path or {}
         self.rm_file_by_path = rm_file_by_path or {}
         self.post_info_by_path = post_info_by_path or {}

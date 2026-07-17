@@ -1,10 +1,10 @@
-# `fsspec-cli` base `mkdir` command profile
+# `fsspec-cli` `mkdir -p` command profile
 
 <!-- pyml disable line-length -->
 
 Status: **Locked command semantics and async execution contract**
 
-Part of [#120](https://github.com/shinybrar/vosfs/issues/120) / [#128](https://github.com/shinybrar/vosfs/issues/128)
+Part of [#120](https://github.com/shinybrar/vosfs/issues/120) / [#129](https://github.com/shinybrar/vosfs/issues/129)
 
 Client baseline: **fsspec 2026.6.0**
 
@@ -22,10 +22,11 @@ and **MAY** are interpreted as described by
 
 ## 1. Scope
 
-This contract defines base directory creation without implicit parent creation:
+This contract defines parent-creating directory creation through the fsspec-owned
+composite:
 
 ```text
-mkdir [--] name:/path...
+mkdir -p [-p] [--] name:/path...
 ```
 
 The command operates only on invocation-owned filesystems yielded by configured
@@ -34,14 +35,15 @@ and does not branch on backend type.
 
 The supported surface is deliberately smaller than POSIX Issue 8:
 
+- `-p` MUST be present before operands; long options such as `--parents` are
+  unsupported;
 - at least one mapped filesystem operand is required;
-- no options are supported in this profile; and
+- `-m`, grouped parent/mode options, and other long forms remain unsupported;
+  and
 - successful invocations emit no stdout.
 
-`-p`, grouped parent/mode options, and long forms remain unsupported in this
-profile. Parent creation is defined only by the locked
-[`mkdir -p` profile](fsspec-cli-mkdir-p-command-profile.md). `-m` and other
-mode options remain unsupported until their dedicated profiles exist.
+[Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) without `-p` remains a
+separate locked profile and MUST NOT be broadened by this profile.
 
 ## 2. Mapped filesystem operands
 
@@ -58,9 +60,11 @@ Before any source factory call, context entry, backend call, or command output,
 the command MUST validate option syntax, operand presence, operand grammar, and
 mapped filesystem names.
 
-`--` ends option parsing. Every option token is unsupported in this profile.
-Typer's framework-owned `--help` short circuit is explicitly exempt from this
-command compatibility profile.
+`--` ends option parsing. `-p` is idempotent when repeated or grouped. A grouped
+option token is valid only when every option character is `p`; otherwise the
+complete token is reported as unsupported. Option tokens after the first operand
+are unsupported. Typer's framework-owned `--help` short circuit is explicitly
+exempt from this command compatibility profile.
 
 The first preflight error in argument order MUST produce one diagnostic and
 exit `2`. No source may be entered and no stdout output written before it.
@@ -80,12 +84,16 @@ command MUST process operands sequentially in original order.
 
 For each operand it MUST:
 
-1. await `_mkdir(path, create_parents=False)` at the pinned fsspec baseline;
+1. await `_makedirs(path, exist_ok=True)` at the pinned fsspec baseline;
 2. await `_info(path)`; and
 3. require the returned mapping to report `type == "directory"`.
 
-A void `_mkdir` return alone is not success. The command MUST NOT construct
-parents, traverse ancestors, invent modes, or call public synchronous facades.
+A void `_makedirs` return alone is not success. The command MUST NOT enumerate,
+split, or create individual parent components in CLI code. Parent creation is
+delegated entirely to the backend composite.
+
+An already-existing directory is success. An existing non-directory remains a
+failure.
 
 ## 4. POSIX Issue 8 mode divergence
 
@@ -113,17 +121,18 @@ mkdir: <mapped operand>: <stable category>
 
 | Exception or condition | Category |
 | --- | --- |
-| Confirmed `_mkdir` `FileNotFoundError` | `not found` |
-| Confirmed `_mkdir` `FileExistsError` | `file exists` |
-| Confirmed `_mkdir` `PermissionError` | `permission denied` |
-| Confirmed `_mkdir` `NotADirectoryError` | `not a directory` |
-| Confirmed `_mkdir` `NotImplementedError` | `unsupported operation` |
-| Confirmed `_mkdir` any other backend exception | `backend failure (<class>): <message>` |
+| Confirmed `_makedirs` `FileNotFoundError` | `not found` |
+| Confirmed `_makedirs` `FileExistsError` | `file exists` |
+| Confirmed `_makedirs` `PermissionError` | `permission denied` |
+| Confirmed `_makedirs` `NotADirectoryError` | `not a directory` |
+| Confirmed `_makedirs` `NotImplementedError` | `unsupported operation` |
+| Confirmed `_makedirs` any other backend exception | `backend failure (<class>): <message>` |
 | Post-success `_info` backend exception | `uncertain state (<confirmed category>)` |
-| Invalid or non-directory `_info` after `_mkdir` returned | `uncertain state (incompatible result)` |
+| Invalid or non-directory `_info` after `_makedirs` returned | `uncertain state (incompatible result)` |
 
 Diagnostic rendering, escaping, cleanup precedence, and source lifecycle rules
-match the plain `ls` profile.
+match the plain `ls` profile and
+[base `mkdir`](fsspec-cli-base-mkdir-command-profile.md).
 
 ## 7. Exit status
 
@@ -137,7 +146,9 @@ match the plain `ls` profile.
 
 Hermetic matrix probes exercise adapted async Local, adapted async Memory, and
 native async `vosfs` through the production `App` seam. Source-free rejection
-tests prove `-p` completes during command preflight without entering a source.
+tests prove `-m`, `--parents`, mixed option groups, options after operands, and
+other unsupported forms complete during command preflight without entering a
+source.
 
 Live OpenCADC evidence is not required for this profile in v1; native `vosfs`
 hermetic evidence does not broaden into a general service guarantee.
