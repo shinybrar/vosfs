@@ -382,15 +382,20 @@ def test_cp_preserves_control_flow(control: BaseException) -> None:
         assert caught.value is control
 
 
-def test_cp_refuses_an_active_same_thread_event_loop() -> None:
+def test_cp_refuses_an_active_same_thread_event_loop(monkeypatch) -> None:
+    real_run = asyncio.run
+    recording_run = pytest.importorskip("unittest.mock").Mock(wraps=real_run)
+
     async def invoke() -> object:
+        monkeypatch.setattr(asyncio, "run", recording_run)
         return _invoke_cp(["memory:/a", "memory:/b"])
 
-    result = asyncio.run(invoke())
+    result = real_run(invoke())
 
-    assert result.exit_code == 1  # type: ignore[union-attr]
-    assert result.stdout == ""  # type: ignore[union-attr]
-    assert result.stderr == "cp: cannot run from an active event loop\n"  # type: ignore[union-attr]
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "cp: cannot run from an active event loop\n"
+    assert recording_run.call_count == 0
 
 
 def test_cp_reports_unknown_names_with_locale_sorted_known_names() -> None:
