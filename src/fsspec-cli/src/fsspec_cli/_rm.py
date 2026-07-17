@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class _RmRequest:
+    force: bool
     operands: tuple[_MappedOperand, ...]
 
 
@@ -52,19 +53,30 @@ def _is_rejected_path(path: str) -> bool:
     return final in {".", ".."}
 
 
-def _preflight(
+def _preflight(  # noqa: C901 - locked option and operand diagnostics.
     command: str,
     raw_arguments: tuple[str, ...],
     known_names: Collection[str],
 ) -> _RmRequest:
+    force = False
     operands = []
     options_active = True
+    seen_operand = False
+    after_double_dash = False
 
     for argument in raw_arguments:
         if options_active and argument == "--":
             options_active = False
+            after_double_dash = True
             continue
-        if options_active and argument.startswith("-") and argument != "-":
+        is_option_like = argument.startswith("-") and argument != "-"
+        if options_active and is_option_like:
+            if all(character == "f" for character in argument[1:]):
+                force = True
+                continue
+            rendered = _render_diagnostic_value(argument)
+            _usage_error(command, f"{rendered}: unsupported option")
+        if seen_operand and is_option_like and not after_double_dash:
             rendered = _render_diagnostic_value(argument)
             _usage_error(command, f"{rendered}: unsupported option")
 
@@ -98,11 +110,14 @@ def _preflight(
             _usage_error(command, f"{rendered}: rejected path")
 
         operands.append(_MappedOperand(spelling=argument, name=name, path=path))
+        seen_operand = True
+        if options_active:
+            options_active = False
 
-    if not operands:
+    if not operands and not force:
         _usage_error(command, "missing mapped filesystem operand")
 
-    return _RmRequest(operands=tuple(operands))
+    return _RmRequest(force=force, operands=tuple(operands))
 
 
 async def _trace_operands(
@@ -112,7 +127,11 @@ async def _trace_operands(
     failures = []
     for operand in request.operands:
         result = await _confirmed_rm_file(operand, filesystems[operand.name])
-        if isinstance(result, _UnlinkFailure):
+        if isinstance(result, _UnlinkFailure) and not (
+            request.force
+            and not result.uncertain
+            and isinstance(result.backend_error, FileNotFoundError)
+        ):
             failures.append(result)
     return tuple(failures)
 

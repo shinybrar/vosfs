@@ -21,7 +21,9 @@
 * **fsspec-cli:** add XSI `unlink` for one mapped file ([#131](https://github.com/shinybrar/vosfs/issues/131))
 * **fsspec-cli:** add base file-only `rm` ([#132](https://github.com/shinybrar/vosfs/issues/132)).
   Reuses the unlink confirmed `_rm_file` absence boundary for one or more files;
-  force, directory, recursion, verbose, and interactive options remain unsupported.
+  directory, recursion, verbose, and interactive options remain unsupported.
+* **fsspec-cli:** add exact `rm -f` ([#133](https://github.com/shinybrar/vosfs/issues/133)).
+  It silently ignores only pre-mutation missing files and permits zero operands.
 
 * **fsspec-cli:** add verified same-source two-operand `cp` ([#137](https://github.com/shinybrar/vosfs/issues/137)).
   Passing rows prove target resolution, replacement, bytes, diagnostics, cleanup,

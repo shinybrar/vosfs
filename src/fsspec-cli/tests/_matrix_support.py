@@ -1037,6 +1037,20 @@ def _exercise_rm_locked_profile(
     assert {operation for _source_id, operation, _error in source.errors} == {"info"}
 
 
+def _exercise_rm_force_profile(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    parent_path: str,
+) -> None:
+    app = App({source_name: source})
+    missing_path = f"{parent_path}/missing.txt"
+    result = _invoke_rm(app, ["-f", f"{source_name}:{missing_path}"])
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.calls[-1].operation == "info"
+    assert source.calls[-1].path == missing_path
+
+
 def _exercise_cp_locked_profile(  # noqa: PLR0913 - matrix probe knobs.
     source_name: str,
     source: _ProbedSource[_FilesystemT],
