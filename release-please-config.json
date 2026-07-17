@@ -2,6 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/v17.6.1/schemas/config.json",
   "label": "autorelease: pending",
   "release-label": "autorelease: tagged",
+  "separate-pull-requests": true,
   "packages": {
     ".": {
       "release-type": "python",
@@ -17,13 +18,17 @@
       "exclude-paths": [
         "src/fsspec-cli/**",
         ".github/workflows/fsspec-cli-*.yml",
-        "fsspec-cli-release-please-config.json",
         ".fsspec-cli-release-please-manifest.json",
+        ".pre-commit-config.yaml",
+        ".release-please-manifest.json",
         "docs/adr/0001-release-fsspec-cli-independently.md",
         "docs/adr/0002-own-async-filesystems-per-invocation.md",
         "docs/adr/0003-acquire-referenced-async-filesystem-sources.md",
+        "docs/agents/release.md",
         "docs/design/fsspec-cli-*.md",
         "docs/research/fsspec-cli-*.md",
+        "fsspec-cli-release-please-config.json",
+        "release-please-config.json",
         "uv.lock"
       ],
       "extra-files": [
@@ -31,6 +36,31 @@
           "type": "toml",
           "path": "uv.lock",
           "jsonpath": "$.package[?(@.name.value==\"vosfs\")].version"
+        }
+      ]
+    },
+    "src/fsspec-cli": {
+      "package-name": "fsspec-cli",
+      "changelog-path": "CHANGELOG.md",
+      "release-type": "python",
+      "path": "src/fsspec-cli",
+      "exclude-paths": [
+        "src/vosfs"
+      ],
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": true,
+      "draft": true,
+      "prerelease": false,
+      "include-component-in-tag": true,
+      "component": "fsspec-cli",
+      "include-v-in-tag": true,
+      "initial-version": "0.1.0",
+      "extra-files": [
+        "pyproject.toml",
+        {
+          "jsonpath": "$.package[?(@.name.value==\"fsspec-cli\")].version",
+          "path": "/uv.lock",
+          "type": "toml"
         }
       ]
     }

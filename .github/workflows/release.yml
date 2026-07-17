@@ -20,6 +20,8 @@ jobs:
       github.event.workflow_run.head_branch == 'main'
     permissions:
       contents: write
+      issues: write
+      pull-requests: write
     runs-on: ubuntu-latest
     steps:
       - name: Verify CI validated current main
@@ -52,6 +54,18 @@ jobs:
         run: |
           gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" \
             -f event_type=release-build \
+            -f "client_payload[tag_name]=$RELEASE_TAG" \
+            -f "client_payload[sha]=$RELEASE_SHA"
+
+      - name: Dispatch fsspec-cli publication
+        if: steps.release.outputs['src/fsspec-cli--release_created'] == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.release.outputs['src/fsspec-cli--sha'] }}
+          RELEASE_TAG: ${{ steps.release.outputs['src/fsspec-cli--tag_name'] }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" \
+            -f event_type=fsspec-cli-release-build \
             -f "client_payload[tag_name]=$RELEASE_TAG" \
             -f "client_payload[sha]=$RELEASE_SHA"
 

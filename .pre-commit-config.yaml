@@ -34,11 +34,7 @@ repos:
 
       - id: ty
         name: ty
-        entry: >-
-          uv run --locked ty check
-          src/vosfs
-          src/fsspec-cli/src/fsspec_cli
-          src/fsspec-cli/tools/verify_release.py
+        entry: uv run --locked ty check src/vosfs src/fsspec-cli/src/fsspec_cli
         language: unsupported
         pass_filenames: false
         always_run: true
