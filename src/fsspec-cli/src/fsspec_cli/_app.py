@@ -51,10 +51,10 @@ _LS_COMMAND = "ls"
 _CAT_COMMAND = "cat"
 _CP_COMMAND = "cp"
 _CP_HELP = (
-    "Copy one same-source mapped file with byte verification. A passing result "
-    "proves target resolution, replacement, bytes, diagnostics, cleanup, and "
-    "partial-state reporting only — not POSIX mode, ownership, link identity, "
-    "or timestamps."
+    "Copy one same-source and cross-source mapped file with byte verification. "
+    "A passing result proves target resolution, replacement, bytes, diagnostics, "
+    "cleanup, and partial-state reporting only — not POSIX mode, ownership, "
+    "link identity, or timestamps."
 )
 _MV_COMMAND = "mv"
 _MV_HELP = (

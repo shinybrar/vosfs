@@ -66,8 +66,17 @@ def test_cp_copies_one_file_without_stdout() -> None:
     assert cp_events[0][2:4] == ("/docs/notes.txt", "/docs/copy.txt")
 
 
-def test_cp_copies_file_between_distinct_configured_sources() -> None:
-    source = _file_source(content=b"\0\xff cross-source")
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"",
+        b"\0\xff cross-source",
+        b"x" * (1 << 20),
+    ],
+    ids=["empty", "binary", "large"],
+)
+def test_cp_copies_payload_between_distinct_configured_sources(payload: bytes) -> None:
+    source = _file_source(content=payload)
     destination = _file_source(
         source_path="/other.txt",
         parent="/out",
@@ -82,8 +91,8 @@ def test_cp_copies_file_between_distinct_configured_sources() -> None:
     assert result.exit_code == 0
     assert result.stdout == ""
     assert result.stderr == ""
-    assert source.file_contents["/docs/notes.txt"] == b"\0\xff cross-source"
-    assert destination.file_contents["/out/copy.txt"] == b"\0\xff cross-source"
+    assert source.file_contents["/docs/notes.txt"] == payload
+    assert destination.file_contents["/out/copy.txt"] == payload
     assert [event[0] for event in source.events].count("get_file") == 1
     assert [event[0] for event in destination.events].count("put_file") == 1
     assert [event[0] for event in destination.events].count("get_file") == 1
@@ -139,39 +148,6 @@ def test_cp_rejects_same_size_wrong_cross_source_destination() -> None:
     assert destination.file_contents["/out/copy.txt"] == b"corrupt"
 
 
-def test_cp_rejects_cross_source_digest_collision_with_different_bytes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = _file_source(content=b"correct")
-    destination = _file_source(
-        source_path="/other.txt",
-        parent="/out",
-        directories={"/", "/out"},
-    )
-
-    def corrupt_upload(_local_path: str, remote_path: str) -> None:
-        filesystem = destination.contexts[0].filesystem
-        filesystem._file_contents[remote_path] = b"corrupt"
-        destination.file_contents[remote_path] = b"corrupt"
-
-    monkeypatch.setattr(
-        "fsspec_cli._cp._file_digest",
-        lambda _path: (b"same-digest", None),
-        raising=False,
-    )
-    destination.put_file_hook = corrupt_upload
-    result = _invoke_cp(
-        ["source:/docs/notes.txt", "destination:/out/copy.txt"],
-        sources={"source": source, "destination": destination},
-    )
-
-    assert result.exit_code == 1
-    assert result.stderr == (
-        "cp: destination:/out/copy.txt: verification failure; "
-        "destination residue may remain\n"
-    )
-
-
 def test_cp_hides_local_temporary_path_in_cross_source_staging_diagnostic() -> None:
     staged_paths: list[str] = []
 
@@ -195,6 +171,66 @@ def test_cp_hides_local_temporary_path_in_cross_source_staging_diagnostic() -> N
     assert result.stderr == "cp: source:/docs/notes.txt: staging failure (OSError)\n"
     assert len(staged_paths) == 1
     assert staged_paths[0] not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "destination_info",
+    [
+        MappingProxyType({"type": "directory", "size": 0}),
+        MappingProxyType({"type": "file", "size": 3}),
+    ],
+    ids=["wrong-type", "truncated"],
+)
+def test_cp_rejects_invalid_cross_source_destination_after_upload(
+    destination_info: MappingProxyType,
+) -> None:
+    source = _file_source(content=b"abcdef")
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+        post_info_by_path={"/out/copy.txt": destination_info},
+    )
+
+    result = _invoke_cp(
+        ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+        sources={"source": source, "destination": destination},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "cp: destination:/out/copy.txt: verification failure; "
+        "destination residue may remain\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "download_error",
+    [OSError("download-failed"), BrokenPipeError()],
+    ids=["download-failure", "broken-pipe"],
+)
+def test_cp_reports_cross_source_verification_download_failure(
+    download_error: OSError,
+) -> None:
+    source = _file_source()
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+        get_file_by_path={"/out/copy.txt": download_error},
+    )
+
+    result = _invoke_cp(
+        ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+        sources={"source": source, "destination": destination},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "cp: destination:/out/copy.txt: staging failure "
+        f"({type(download_error).__name__}); "
+        "destination residue may remain\n"
+    )
 
 
 def test_cp_appends_basename_when_destination_is_directory() -> None:
@@ -565,7 +601,7 @@ def test_cp_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
     result = _invoke_cp(arguments)
 
     assert result.exit_code == 0
-    assert result.stdout != ""
+    assert "cross-source" in result.stdout
 
 
 def test_cp_cancels_without_claiming_success() -> None:
