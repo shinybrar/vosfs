@@ -8,6 +8,11 @@ from typer.testing import CliRunner, Result
 
 from ._matrix_support import _block_network
 
+_CLI_RUNNER_ENV = {
+    "NO_COLOR": "1",
+    "TERM": "dumb",
+}
+
 _EXACT_BASENAME_HELP = (
     "                                                                                \n"
     " Usage: root basename [OPTIONS]                                                 \n"
@@ -38,6 +43,7 @@ def _invoke_basename(
     return CliRunner().invoke(
         App(sources).typer_app,
         ["basename", *arguments],
+        env=_CLI_RUNNER_ENV,
     )
 
 
