@@ -276,6 +276,100 @@ def test_rm_force_reports_non_missing_pre_mutation_failures(
     assert result.stderr == f"rm: memory:/docs/notes.txt: {category}\n"
 
 
+@pytest.mark.parametrize(
+    "error",
+    [TimeoutError("request timed out"), RuntimeError("service timeout")],
+)
+def test_rm_force_reports_timeouts_before_mutation(error: Exception) -> None:
+    source = _RecordingSource([], info_error=error)
+
+    result = _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "rm: memory:/docs/notes.txt: backend failure "
+        f"({type(error).__name__}): {error}\n"
+    )
+    assert [event[0] for event in source.events].count("rm_file") == 0
+
+
+def test_rm_force_continues_mixed_operands_in_order() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(
+        events,
+        info_by_path={
+            "/docs/missing.txt": FileNotFoundError("missing"),
+            "/docs/failing.txt": PermissionError("denied"),
+        },
+    )
+
+    result = _invoke_rm(
+        [
+            "-f",
+            "memory:/docs/missing.txt",
+            "memory:/docs/existing.txt",
+            "memory:/docs/failing.txt",
+        ],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "rm: memory:/docs/failing.txt: permission denied\n"
+    assert [
+        (event[0], event[2]) for event in events if event[0] in {"info", "rm_file"}
+    ] == [
+        ("info", "/docs/missing.txt"),
+        ("info", "/docs/existing.txt"),
+        ("rm_file", "/docs/existing.txt"),
+        ("info", "/docs/existing.txt"),
+        ("info", "/docs/failing.txt"),
+    ]
+
+
+def test_rm_force_confirms_many_file_removals() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
+
+    result = _invoke_rm(
+        ["-f", "memory:/docs/a.txt", "memory:/docs/b.txt", "memory:/docs/c.txt"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [
+        (event[0], event[2]) for event in events if event[0] in {"info", "rm_file"}
+    ] == [
+        ("info", "/docs/a.txt"),
+        ("rm_file", "/docs/a.txt"),
+        ("info", "/docs/a.txt"),
+        ("info", "/docs/b.txt"),
+        ("rm_file", "/docs/b.txt"),
+        ("info", "/docs/b.txt"),
+        ("info", "/docs/c.txt"),
+        ("rm_file", "/docs/c.txt"),
+        ("info", "/docs/c.txt"),
+    ]
+
+
+def test_rm_force_accepts_operand_after_option_terminator() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
+
+    result = _invoke_rm(["-f", "--", "name:/file"], sources={"name": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [event[0] for event in events] == [
+        "factory",
+        "enter",
+        "info",
+        "rm_file",
+        "info",
+        "exit",
+    ]
+
+
 @pytest.mark.parametrize("arguments", [["memory:/file", "-f"], ["-i"], ["--force"]])
 def test_rm_force_profile_rejects_unsupported_options_before_source_entry(
     arguments: list[str],
