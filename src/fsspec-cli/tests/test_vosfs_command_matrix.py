@@ -12,6 +12,7 @@ from ._matrix_support import (
     _block_network,
     _exercise_cat_profile,
     _exercise_locked_profile,
+    _exercise_mkdir_p_locked_profile,
     _exercise_rmdir_locked_profile,
     _exercise_unlink_locked_profile,
     _ProbedSource,
@@ -251,6 +252,78 @@ class _CatMockTransport(httpx.MockTransport):
         await super().aclose()
 
 
+class _MakedirsMockTransport(httpx.MockTransport):
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str]] = []
+        self.closed = False
+        self.nodes: dict[str, str] = {
+            "/": "container",
+            "/docs": "container",
+            "/docs/notes.txt": "data",
+            "/docs/.hidden": "data",
+            "/docs/guide.md": "data",
+            "/docs/empty": "container",
+        }
+        super().__init__(self._respond)
+
+    def _node_path(self, url_path: str) -> str:
+        prefix = "/arc/nodes"
+        if not url_path.startswith(prefix):
+            message = f"unexpected node url: {url_path!r}"
+            raise AssertionError(message)
+        node_path = url_path[len(prefix) :]
+        return node_path or "/"
+
+    def _container_xml(self, node_path: str) -> bytes:
+        return f"""<vos:node
+    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}{node_path}">
+  <vos:properties/>
+  <vos:nodes/>
+</vos:node>
+""".encode()
+
+    def _data_xml(self, node_path: str) -> bytes:
+        return f"""<vos:node
+    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}{node_path}">
+  <vos:properties/>
+</vos:node>
+""".encode()
+
+    async def _respond(self, request: httpx.Request) -> httpx.Response:  # noqa: PLR0911
+        call = (request.method, request.url.path)
+        self.requests.append(call)
+        if call == ("GET", "/arc/capabilities"):
+            return httpx.Response(200, content=_CAPABILITIES)
+        if call == ("GET", "/arc/nodes"):
+            return httpx.Response(200, content=_ROOT)
+        if call[0] == "GET" and call[1].startswith("/arc/nodes"):
+            node_path = self._node_path(call[1])
+            if node_path not in self.nodes:
+                return httpx.Response(404, text="not found")
+            if self.nodes[node_path] == "container":
+                return httpx.Response(200, content=self._container_xml(node_path))
+            return httpx.Response(200, content=self._data_xml(node_path))
+        if call[0] == "PUT" and call[1].startswith("/arc/nodes"):
+            node_path = self._node_path(call[1])
+            parent = node_path.rsplit("/", 1)[0] or "/"
+            if parent not in self.nodes or self.nodes[parent] != "container":
+                return httpx.Response(404, text="not found")
+            if node_path in self.nodes and self.nodes[node_path] == "data":
+                return httpx.Response(409, text="conflict")
+            self.nodes[node_path] = "container"
+            return httpx.Response(201, content=self._container_xml(node_path))
+        message = f"unplanned mocked request: {call!r}"
+        raise AssertionError(message)
+
+    async def aclose(self) -> None:
+        self.closed = True
+        await super().aclose()
+
+
 class _RmdirMockTransport(_StrictMockTransport):
     def __init__(self) -> None:
         self._empty_deleted = False
@@ -454,6 +527,37 @@ def test_native_vosfs_base_mkdir_profile_uses_only_mocked_transport() -> None:
         ],
     ]
     assert all(transport.closed for transport in transports)
+
+
+def test_native_vosfs_mkdir_p_profile_uses_only_mocked_transport() -> None:
+    transports: list[_MakedirsMockTransport] = []
+
+    def make_filesystem() -> VOSpaceFileSystem:
+        transport = _MakedirsMockTransport()
+        transports.append(transport)
+        return VOSpaceFileSystem(
+            _BASE_URL,
+            transport=transport,
+            asynchronous=True,
+            skip_instance_cache=True,
+            trust_env=False,
+        )
+
+    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+
+    _exercise_mkdir_p_locked_profile(
+        "vos",
+        source,
+        "/docs",
+        parent_file_category="file exists",
+    )
+
+    assert all(isinstance(fs, VOSpaceFileSystem) for fs in source.filesystems)
+    assert all(transport.closed for transport in transports)
+    makedirs_calls = [call for call in source.calls if call.operation == "makedirs"]
+    assert makedirs_calls
+    assert all(call.exist_ok is True for call in makedirs_calls)
+    assert not any(call.operation == "mkdir" for call in source.calls)
 
 
 def test_native_vosfs_base_rmdir_profile_uses_only_mocked_transport() -> None:

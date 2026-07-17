@@ -41,7 +41,16 @@ class ExitCall:
 
 @dataclass(frozen=True)
 class FilesystemCall:
-    operation: Literal["info", "ls", "get_file", "mkdir", "rmdir", "rm_file", "rm"]
+    operation: Literal[
+        "info",
+        "ls",
+        "get_file",
+        "mkdir",
+        "makedirs",
+        "rmdir",
+        "rm_file",
+        "rm",
+    ]
     source_id: int
     path: str
     detail: bool | None
@@ -49,6 +58,7 @@ class FilesystemCall:
     loop_id: int
     local_path: str | None = None
     create_parents: bool | None = None
+    exist_ok: bool | None = None
 
 
 def _block_network(monkeypatch) -> None:
@@ -205,6 +215,39 @@ class _ProbedSource(Generic[_FilesystemT]):
 
         return mkdir
 
+    def _wrap_makedirs(
+        self,
+        source_id: int,
+        filesystem: _FilesystemT,
+        original_makedirs: Callable[..., Awaitable[None]] | None,
+    ) -> Callable[..., Awaitable[None]]:
+        async def makedirs(
+            path: str,
+            exist_ok: bool = False,  # noqa: FBT002 - mirrors the fsspec hook.
+            **kwargs: object,
+        ) -> None:
+            self.calls.append(
+                FilesystemCall(
+                    "makedirs",
+                    source_id,
+                    path,
+                    None,
+                    kwargs,
+                    id(asyncio.get_running_loop()),
+                    exist_ok=exist_ok,
+                )
+            )
+            if original_makedirs is None:
+                message = f"{type(filesystem).__name__} lacks _makedirs"
+                raise NotImplementedError(message)
+            try:
+                await original_makedirs(path, exist_ok=exist_ok, **kwargs)
+            except Exception as error:
+                self.errors.append((source_id, "makedirs", error))
+                raise
+
+        return makedirs
+
     def _wrap_rmdir(
         self,
         source_id: int,
@@ -302,6 +345,13 @@ class _ProbedSource(Generic[_FilesystemT]):
             "_mkdir",
             self._wrap_mkdir(
                 source_id, filesystem, getattr(filesystem, "_mkdir", None)
+            ),
+        )
+        setattr(  # noqa: B010 - instrument this instance.
+            filesystem,
+            "_makedirs",
+            self._wrap_makedirs(
+                source_id, filesystem, getattr(filesystem, "_makedirs", None)
             ),
         )
         setattr(  # noqa: B010 - instrument this instance.
@@ -703,6 +753,78 @@ def _exercise_mkdir_memory_over_eager_failure(
         call.operation == "info" and call.path == missing_parent
         for call in source.calls
     )
+
+
+def _exercise_mkdir_p_locked_profile(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    parent_path: str,
+    *,
+    file_name: str = "notes.txt",
+    parent_file_category: str | None = None,
+) -> None:
+    if parent_file_category is None:
+        parent_file_category = (
+            "not found" if sys.platform == "win32" else "not a directory"
+        )
+    app = App({source_name: source})
+    new_dir = f"{parent_path}/deep/nested/subdir"
+    one_parent = f"{parent_path}/newchild"
+    existing_dir = f"{parent_path}/empty"
+    file_path = f"{parent_path}/{file_name}"
+    parent_file = f"{file_path}/child"
+    root_operand = f"{source_name}:/"
+
+    deep = _invoke_mkdir(app, ["-p", f"{source_name}:{new_dir}"])
+    one = _invoke_mkdir(app, ["-p", f"{source_name}:{one_parent}"])
+    existing = _invoke_mkdir(app, ["-p", f"{source_name}:{existing_dir}"])
+    exists = _invoke_mkdir(app, ["-p", f"{source_name}:{file_path}"])
+    parent_fail = _invoke_mkdir(app, ["-p", f"{source_name}:{parent_file}"])
+    root = _invoke_mkdir(app, ["-p", root_operand])
+
+    assert (deep.exit_code, deep.stdout, deep.stderr) == (0, "", "")
+    assert (one.exit_code, one.stdout, one.stderr) == (0, "", "")
+    assert (existing.exit_code, existing.stdout, existing.stderr) == (0, "", "")
+    assert exists.exit_code == 1
+    assert exists.stdout == ""
+    assert exists.stderr in {
+        f"mkdir: {source_name}:{file_path}: file exists\n",
+        f"mkdir: {source_name}:{file_path}: uncertain state (incompatible result)\n",
+    }
+    assert parent_fail.exit_code == 1
+    assert parent_fail.stdout == ""
+    assert parent_fail.stderr in {
+        f"mkdir: {source_name}:{parent_file}: {parent_file_category}\n",
+        f"mkdir: {source_name}:{parent_file}: file exists\n",
+        f"mkdir: {source_name}:{parent_file}: not found\n",
+    }
+    assert (root.exit_code, root.stdout, root.stderr) == (0, "", "")
+
+    makedirs_calls = [call for call in source.calls if call.operation == "makedirs"]
+    assert len(makedirs_calls) >= 5
+    assert all(call.exist_ok is True for call in makedirs_calls)
+    assert {call.path for call in makedirs_calls} >= {
+        new_dir,
+        one_parent,
+        existing_dir,
+        file_path,
+        parent_file,
+        "/",
+    }
+    mkdir_calls = [call for call in source.calls if call.operation == "mkdir"]
+    assert not mkdir_calls
+    verify_calls = [
+        call
+        for call in source.calls
+        if call.operation == "info"
+        and call.path
+        in {new_dir, one_parent, existing_dir, file_path, parent_file, "/"}
+    ]
+    assert len(verify_calls) >= 4
+    assert len(source.errors) >= 1
+    assert {operation for _source_id, operation, _error in source.errors} == {
+        "makedirs"
+    }
 
 
 def _exercise_rmdir_locked_profile(

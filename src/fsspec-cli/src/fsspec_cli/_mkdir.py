@@ -34,6 +34,7 @@ class _MappedOperand:
 
 @dataclass(frozen=True)
 class _MkdirRequest:
+    create_parents: bool
     operands: tuple[_MappedOperand, ...]
 
 
@@ -79,6 +80,7 @@ def _preflight(
     raw_arguments: tuple[str, ...],
     known_names: Collection[str],
 ) -> _MkdirRequest:
+    create_parents = False
     operands = []
     options_active = True
 
@@ -87,6 +89,12 @@ def _preflight(
             options_active = False
             continue
         if options_active and argument.startswith("-") and argument != "-":
+            if argument == "--parents":
+                create_parents = True
+                continue
+            if all(character == "p" for character in argument[1:]):
+                create_parents = True
+                continue
             rendered = _render_diagnostic_value(argument)
             _usage_error(command, f"{rendered}: unsupported option")
 
@@ -120,7 +128,7 @@ def _preflight(
     if not operands:
         _usage_error(command, "missing mapped filesystem operand")
 
-    return _MkdirRequest(operands=tuple(operands))
+    return _MkdirRequest(create_parents=create_parents, operands=tuple(operands))
 
 
 async def _run_mkdir(
@@ -136,7 +144,11 @@ async def _run_mkdir(
         names = dict.fromkeys(operand.name for operand in request.operands)
         filesystems = await invocation.acquire(names)
         if filesystems is not None:
-            failures = await _trace_operands(request, filesystems)
+            failures = await _trace_operands(
+                request,
+                filesystems,
+                create_parents=request.create_parents,
+            )
             for failure in failures:
                 _render_failure(command, failure)
             succeeded = not failures
@@ -167,10 +179,16 @@ async def _run_mkdir(
 async def _trace_operands(
     request: _MkdirRequest,
     filesystems: Mapping[str, AsyncFileSystem],
+    *,
+    create_parents: bool,
 ) -> tuple[_Failure, ...]:
     failures = []
     for operand in request.operands:
-        result = await _create_operand(operand, filesystems[operand.name])
+        result = await _create_operand(
+            operand,
+            filesystems[operand.name],
+            create_parents=create_parents,
+        )
         if isinstance(result, _Failure):
             failures.append(result)
     return tuple(failures)
@@ -179,12 +197,20 @@ async def _trace_operands(
 async def _create_operand(
     operand: _MappedOperand,
     filesystem: AsyncFileSystem,
+    *,
+    create_parents: bool,
 ) -> _Failure | None:
     try:
-        await filesystem._mkdir(  # noqa: SLF001
-            operand.path,
-            create_parents=False,
-        )
+        if create_parents:
+            await filesystem._makedirs(  # noqa: SLF001
+                operand.path,
+                exist_ok=True,
+            )
+        else:
+            await filesystem._mkdir(  # noqa: SLF001
+                operand.path,
+                create_parents=False,
+            )
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _Failure(operand, backend_error=error)
 

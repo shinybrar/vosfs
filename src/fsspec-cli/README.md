@@ -9,7 +9,7 @@ Hosts embed its Typer application through the sole behavioral seam,
 for one command invocation.
 
 The current command surface covers plain `ls`, source-free `basename string`
-with optional `suffix`, source-free `dirname string`, mapped-file `cat`, base `mkdir`, base `rmdir`, and XSI
+with optional `suffix`, source-free `dirname string`, mapped-file `cat`, base `mkdir`, parent-creating `mkdir -p`, base `rmdir`, and XSI
 `unlink`. Commands share source-free argument preflight and the synchronous
 Typer-to-asyncio boundary; `ls`, `cat`, `mkdir`, `rmdir`, and `unlink` also
 use invocation-owned source lifecycle. The `basename` slice accepts one or two
@@ -25,7 +25,10 @@ Operand-free `cat` and each `-` operand read the same binary stdin stream at
 that argv position; mapped sources still acquire before any stdin byte when
 files are present. `-u` remains source-free unsupported. Base `mkdir` awaits
 `_mkdir(path, create_parents=False)` and post-verifies `_info(path)` requires
-`type == "directory"`. Successful `mkdir` invocations emit no stdout, continue
+`type == "directory"`. Parent-creating `mkdir -p` awaits
+`_makedirs(path, exist_ok=True)` and post-verifies the final path the same way,
+delegating every missing ancestor to the backend composite rather than splitting
+parents in CLI code. Successful `mkdir` invocations emit no stdout, continue
 after ordinary per-operand failure, and disclose that passing rows claim only
 source-default creation semantics, not POSIX mode or umask behavior. Base
 `rmdir` removes one or more empty directories through `_info`, exact `_rmdir`,

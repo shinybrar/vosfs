@@ -222,7 +222,11 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29565052441](#h-2026-07-17-29565052441) |
 | [Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) | source | `memory / adapted async` | `fail` | `pass` | Hermetic | [H-2026-07-17-29565052441](#h-2026-07-17-29565052441) |
 | [Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29565052441](#h-2026-07-17-29565052441) |
-| [Base `mkdir` `-p` strict rejection](fsspec-cli-base-mkdir-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29565052441](#h-2026-07-17-29565052441) |
+| [`mkdir -p`](fsspec-cli-mkdir-p-command-profile.md) | source | `local / adapted async` | `unverified` | `pass` | Hermetic | Hermetic `test_command_matrix.py` on this change |
+| [`mkdir -p`](fsspec-cli-mkdir-p-command-profile.md) | source | `memory / adapted async` | `unverified` | `pass` | Hermetic | Hermetic `test_command_matrix.py` on this change |
+| [`mkdir -p`](fsspec-cli-mkdir-p-command-profile.md) | source | `vosfs / native async` | `unverified` | `pass` | Hermetic | Hermetic `test_vosfs_command_matrix.py` on this change |
+| [`mkdir -p` `-m` strict rejection](fsspec-cli-mkdir-p-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | Hermetic `test_command_matrix.py` on this change |
+| [`mkdir -p` mixed `-pm` strict rejection](fsspec-cli-mkdir-p-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | Hermetic `test_command_matrix.py` on this change |
 | [XSI `unlink`](fsspec-cli-unlink-command-profile.md) | source | `local / adapted async` | `unverified` | `pass` | Hermetic | — |
 | [XSI `unlink`](fsspec-cli-unlink-command-profile.md) | source | `memory / adapted async` | `unverified` | `pass` | Hermetic | — |
 | [XSI `unlink`](fsspec-cli-unlink-command-profile.md) | source | `vosfs / native async` | `unverified` | `pass` | Hermetic | — |
