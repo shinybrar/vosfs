@@ -59,13 +59,16 @@ through the same confirmed `_rm_file` and absence boundary as XSI `unlink`, with
 whole-argv root and final-dot guards, all-source acquisition before mutation,
 and sequential continuation after ordinary operand failure. Exact `rm -d`
 also removes source-reported empty directories through `_rmdir`, without
-recursion, listing, or `_rm` fallback; it does not combine with `-f`. Exact `rm -f`
-accepts repeated or grouped force tokens before operands, succeeds source-free
-with zero operands, and treats only pre-mutation `FileNotFoundError` as a silent
-no-op; it never aliases recursive `_rm` or suppresses other failures. Base `rm`
-without `-d` or `-f` rejects every option, including `-R`/`-r`/`-v`/`-i`;
-recursive removal is unsupported because available source composites lack a
-verifiable complete-result contract. `type ==
+recursion, listing, or `_rm` fallback; it does not combine with `-f` or `-v`.
+Exact `rm -f` accepts repeated or grouped force tokens before operands, succeeds
+source-free with zero operands, and treats only pre-mutation `FileNotFoundError`
+as a silent no-op; it never aliases recursive `_rm` or suppresses other failures.
+Exact `rm -v` prints each confirmed mapped operand after absence proof and never
+prints failed or uncertain removals; stdout faults retain accepted removals,
+stop later mutation, and clean up without rollback. Base `rm` without those
+profiles rejects every other option, including `-R`/`-r`/`-i` and unprofiled
+combinations such as `-fv`/`-dv`; recursive removal is unsupported because
+available source composites lack a verifiable complete-result contract. `type ==
 "file"` is only fsspec's common type shape; implicit permission-based POSIX
 prompting is unavailable. XSI `unlink`
 awaits `_info`, `_rm_file`, and a distinguishable absence proof for exactly one
