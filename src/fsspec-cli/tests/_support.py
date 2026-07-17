@@ -273,6 +273,9 @@ class _RecordingFileSystem(AsyncFileSystem):
             scripted = self.source.put_file_by_path[rpath]
             if isinstance(scripted, BaseException):
                 raise scripted
+            if callable(scripted):
+                scripted(lpath, rpath)
+                return
         elif self.source.put_file_error is not None:
             raise self.source.put_file_error
         if self.source.put_file_hook is not None:

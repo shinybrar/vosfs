@@ -132,7 +132,7 @@ def test_cp_rejects_same_size_wrong_cross_source_destination() -> None:
         filesystem._file_contents[remote_path] = b"corrupt"
         destination.file_contents[remote_path] = b"corrupt"
 
-    destination.put_file_hook = corrupt_upload
+    destination.put_file_by_path = {"/out/copy.txt": corrupt_upload}
     result = _invoke_cp(
         ["source:/docs/notes.txt", "destination:/out/copy.txt"],
         sources={"source": source, "destination": destination},
