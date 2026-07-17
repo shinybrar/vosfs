@@ -125,5 +125,5 @@ uv run pre-commit run --files src/fsspec-cli/tests/test_basename.py
 
 ### CI git
 
-- Commit: pending — `test(fsspec-cli): disable color for basename help assertions`
+- Commit: `2ede3bf` — `test(fsspec-cli): disable color for basename help assertions`
 - Pushed: `feat/issue-123` updates PR #153
