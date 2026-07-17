@@ -52,6 +52,7 @@ _CAT_COMMAND = "cat"
 _CP_COMMAND = "cp"
 _CP_HELP = (
     "Copy one same-source and cross-source mapped file with byte verification. "
+    "Recursive (-R) copy is unsupported. "
     "A passing result proves target resolution, replacement, bytes, diagnostics, "
     "cleanup, and partial-state reporting only — not POSIX mode, ownership, "
     "link identity, or timestamps."
@@ -61,7 +62,8 @@ _MV_HELP = (
     "Move one same-source mapped file with result verification. A passing result "
     "proves target resolution, replacement, destination bytes, source absence, "
     "diagnostics, cleanup, and partial-state reporting only — not atomic rename, "
-    "identity preservation, or generic metadata preservation."
+    "identity preservation, or generic metadata preservation. Cross-source moves "
+    "are unsupported."
 )
 _MKDIR_COMMAND = "mkdir"
 _MKDIR_HELP = (
@@ -75,7 +77,7 @@ _UNLINK_COMMAND = "unlink"
 _RM_HELP = (
     "Remove source-reported files. rm -d also removes empty directories. rm -f "
     "ignores files already missing before removal, including with zero operands. "
-    "Recursive and interactive permission prompts are unavailable."
+    "Recursion and interactive permission prompts are unavailable."
 )
 _SOURCE_FREE_CONTEXT = {
     "allow_extra_args": True,

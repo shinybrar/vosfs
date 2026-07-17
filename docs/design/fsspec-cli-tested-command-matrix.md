@@ -241,6 +241,7 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [`rm -d`](fsspec-cli-rm-directory-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | `test_command_matrix.py` on this change; exact `_rm_file`/`_rmdir`, no `_rm` or listing |
 | [`rm -d`](fsspec-cli-rm-directory-command-profile.md) | source | `vosfs / native async` | `pass` | — | Hermetic | `test_vosfs_command_matrix.py` uses fully mocked native transport; installed-wheel gate names this test explicitly |
 | [`rm -d` option rejection](fsspec-cli-rm-directory-command-profile.md#preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | `test_rm.py` on this change |
+| [`rm -R`/`-r` recursive rejection](fsspec-cli-rm-recursive-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [`test_rm.py` at `ed022d3`](https://github.com/shinybrar/vosfs/blob/ed022d3de5957c929c8a1836d47c0efc0d45f157/src/fsspec-cli/tests/test_rm.py) |
 | [`rm -f`](fsspec-cli-rm-force-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [`rm -f`](fsspec-cli-rm-force-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [`rm -f`](fsspec-cli-rm-force-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | Hermetic `test_vosfs_command_matrix.py` on this change |
@@ -249,6 +250,7 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | — |
 | [Verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | Hermetic mocked transport present; live evidence absent |
 | [Verified same-source `cp` option rejection](fsspec-cli-same-source-cp-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | — |
+| [Same-source `cp -R` rejection](fsspec-cli-recursive-cp-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | Existing hermetic `test_command_matrix.py::test_cp_option_rejection_is_source_free` |
 | [Verified cross-source `cp`](fsspec-cli-cross-source-cp-command-profile.md) | source pair | `local / adapted async` to `memory / adapted async` | `pass` | — | Hermetic | Hermetic `test_command_matrix.py`; isolated-wheel gate includes this matrix |
 | [Verified cross-source `cp`](fsspec-cli-cross-source-cp-command-profile.md) | source pair | `memory / adapted async` to `local / adapted async` | `pass` | — | Hermetic | Hermetic `test_command_matrix.py`; isolated-wheel gate includes this matrix |
 | [Verified cross-source `cp`](fsspec-cli-cross-source-cp-command-profile.md) | source pair | `vosfs / native async` directions | `unverified` | — | Hermetic | — |
@@ -256,6 +258,7 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Positively evidenced same-source file `mv`](fsspec-cli-same-source-mv-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic exact-operation rejection | Hermetic `test_command_matrix.py`; wrapper does not declare `_mv` and sync facade is trapped |
 | [Positively evidenced same-source file `mv`](fsspec-cli-same-source-mv-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic exact-operation classification | Hermetic `test_vosfs_command_matrix.py`; native form does not declare `_mv` |
 | [Same-source file `mv` option rejection](fsspec-cli-same-source-mv-command-profile.md) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | Hermetic `test_mv.py` on this change |
+| [Cross-source `mv` strict rejection](fsspec-cli-cross-source-mv-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | Hermetic `test_mv.py::test_mv_rejects_cross_source_without_factories_or_mutation` on this change |
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.
