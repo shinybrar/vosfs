@@ -17,8 +17,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _TIMEOUT = 5
 _NATIVE_NEWLINE = os.linesep.encode()
 _OPERAND = "dir\nname"
-_EXPECTED_STDOUT = _OPERAND.encode() + _NATIVE_NEWLINE
 _CHILD_PATH = Path(__file__).with_name("_basename_process_child.py")
+
+
+def _expected_stdout(text: str) -> bytes:
+    return (f"{text}\n").replace("\n", os.linesep).encode()
+
+
+_EXPECTED_STDOUT = _expected_stdout(_OPERAND)
 
 
 def _command(*, suffix: str | None = None) -> list[str]:
