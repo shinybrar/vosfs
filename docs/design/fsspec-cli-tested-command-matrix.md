@@ -239,7 +239,7 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Base file-only `rm` option rejection](fsspec-cli-base-rm-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29586378872](#h-2026-07-17-29586378872) |
 | [`rm -d`](fsspec-cli-rm-directory-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | `test_command_matrix.py` on this change; exact `_rm_file`/`_rmdir`, no `_rm` or listing |
 | [`rm -d`](fsspec-cli-rm-directory-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | `test_command_matrix.py` on this change; exact `_rm_file`/`_rmdir`, no `_rm` or listing |
-| [`rm -d`](fsspec-cli-rm-directory-command-profile.md) | source | `vosfs / native async` | `unverified` | — | — | No native hermetic row yet |
+| [`rm -d`](fsspec-cli-rm-directory-command-profile.md) | source | `vosfs / native async` | `pass` | — | Hermetic | `test_vosfs_command_matrix.py` uses fully mocked native transport; installed-wheel gate names this test explicitly |
 | [`rm -d` option rejection](fsspec-cli-rm-directory-command-profile.md#preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | `test_rm.py` on this change |
 | [`rm -f`](fsspec-cli-rm-force-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [`rm -f`](fsspec-cli-rm-force-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
