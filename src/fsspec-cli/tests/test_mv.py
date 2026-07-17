@@ -95,6 +95,15 @@ def test_mv_resolves_directory_target_and_replaces_file() -> None:
     assert source.file_contents == {"/docs/out/notes.txt": b"new"}
 
 
+def test_mv_replaces_direct_existing_file_target() -> None:
+    source = _source(contents={"/docs/notes.txt": b"new", "/docs/moved.txt": b"old"})
+
+    result = _invoke(source, "memory:/docs/notes.txt", "memory:/docs/moved.txt")
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.file_contents == {"/docs/moved.txt": b"new"}
+
+
 def test_mv_rejects_same_backend_under_different_configured_name() -> None:
     source = _source()
 
@@ -157,6 +166,14 @@ def test_mv_rejects_missing_destination_parent_without_mutation() -> None:
             "mv: -f: unsupported option\n",
         ),
         (
+            ("-i", "memory:/docs/notes.txt", "memory:/docs/moved.txt"),
+            "mv: -i: unsupported option\n",
+        ),
+        (
+            ("--interactive", "memory:/docs/notes.txt", "memory:/docs/moved.txt"),
+            "mv: --interactive: unsupported option\n",
+        ),
+        (
             ("memory:/docs/notes.txt", "memory:/docs/moved.txt", "memory:/extra"),
             "mv: extra operand\n",
         ),
@@ -206,16 +223,16 @@ def test_mv_reports_mutation_exception_as_uncertain_residue() -> None:
     assert all(not Path(path).exists() for path in source.get_file_paths)
 
 
-def test_mv_reports_residue_after_destination_created_then_move_fails() -> None:
+def test_mv_reports_source_deletion_failure_after_destination_creation() -> None:
     source = _source()
 
-    def create_then_fail(_path1: str, path2: str) -> None:
+    def copy_then_source_deletion_fails(path1: str, path2: str) -> None:
         filesystem = source.contexts[0].filesystem
-        filesystem._file_contents[path2] = b"payload"
-        source.file_contents[path2] = b"payload"
-        raise OSError(_MOVE_FAILED)
+        filesystem._file_contents[path2] = filesystem._file_contents[path1]
+        source.file_contents[path2] = source.file_contents[path1]
+        raise PermissionError(_MOVE_FAILED)
 
-    source.mv_hook = create_then_fail
+    source.mv_hook = copy_then_source_deletion_fails
     result = _invoke(source, "memory:/docs/notes.txt", "memory:/docs/moved.txt")
 
     assert (result.exit_code, result.stdout, result.stderr) == (
@@ -277,7 +294,7 @@ def test_mv_rejects_destination_size_or_content_mismatch(
     }
 
 
-def test_mv_rejects_source_retained_after_destination_is_complete() -> None:
+def test_mv_rejects_source_retained_after_complete_destination() -> None:
     source = _source()
 
     def copy_without_deletion(path1: str, path2: str) -> None:
@@ -300,8 +317,12 @@ def test_mv_rejects_source_retained_after_destination_is_complete() -> None:
     }
 
 
-def test_mv_preserves_cancellation() -> None:
+def test_mv_cancellation_removes_temps_and_closes_source() -> None:
     source = _source(mv_error=asyncio.CancelledError())
 
     with pytest.raises(asyncio.CancelledError):
         _invoke(source, "memory:/docs/notes.txt", "memory:/docs/moved.txt")
+    assert len(source.get_file_paths) == 1
+    assert all(not Path(path).exists() for path in source.get_file_paths)
+    assert len(source.exit_calls) == 1
+    assert isinstance(source.exit_calls[0][1], asyncio.CancelledError)

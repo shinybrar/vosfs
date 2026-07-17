@@ -36,3 +36,10 @@ Commands and output:
 - `uv run --no-project python src/fsspec-cli/tests/_installed_wheel_gate.py` — core `598 passed, 3 skipped`; vosfs `14 passed, 1 skipped`
 
 Standards fix: reverted hand-edited fsspec-cli changelog to origin/main; changelog diff now empty.
+
+## Spec coverage fix
+
+Added direct existing-file replacement, `-i`/`--interactive` source-free
+rejection, cancellation temporary/source-close, and separate source-deletion
+failure versus retained-source coverage. Directory-source profile now records
+runtime status `1` after `_info`; full fsspec-cli suite: 793 passed, 8 skipped.
