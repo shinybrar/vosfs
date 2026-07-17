@@ -94,7 +94,10 @@ For each operand it MUST:
 3. await `_info(path)` again, requiring a distinguishable `FileNotFoundError`.
 
 A void `_rmdir` return alone is not success. Non-`FileNotFoundError`
-post-check failures remain visible.
+post-check failures remain visible as uncertain state. A mutation-call
+exception is not automatically a confirmed failure: the command MUST observe
+post-state and classify confirmed success (absence), confirmed failure
+(presence), or uncertain state (unproven).
 
 ## 4. Standard output
 
@@ -121,7 +124,9 @@ rmdir: <mapped operand>: <stable category>
 | `OSError` with `errno.ENOTEMPTY` | `directory not empty` |
 | `NotImplementedError` | `unsupported operation` |
 | Invalid consumed backend shape or path still present | `incompatible result` |
-| Any other backend exception | `backend failure (<class>): <message>` |
+| Mutation-call exception with presence proven | confirmed failure category above |
+| Mutation-call exception or post-check that leaves state unproven | `uncertain state` |
+| Any other confirmed pre-mutation backend exception | `backend failure (<class>): <message>` |
 
 Diagnostic rendering, escaping, cleanup precedence, and source lifecycle rules
 match the plain `ls` profile.

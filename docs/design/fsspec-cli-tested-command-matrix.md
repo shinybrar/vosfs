@@ -194,8 +194,9 @@ When classifying a gate result:
 
 ## 8. Initial matrix and first-release target
 
-Only qualifying source-form gates can change a row from `unverified`. The
-current rows have complete exact-commit evidence for the first-release target;
+Only qualifying source-form gates can change a row from `unverified`. Rows
+with exact-commit evidence below remain `pass` or `unsupported`; base `rmdir`
+rows stay `unverified` until a qualifying hermetic CI evidence record lands.
 Section 9 still requires the release candidate to rerun every required gate.
 
 | Command profile | Scope | Source form | Current status | Required status for `fsspec-cli` 0.1.0 | Required gates | Evidence |
@@ -203,10 +204,10 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic and live OpenCADC | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110), [L-2026-07-16-29536609626](#l-2026-07-16-29536609626) |
-| [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | pending |
-| [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | pending |
-| [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic | pending |
-| [Base `rmdir` `-p` strict rejection](fsspec-cli-base-rmdir-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | pending |
+| [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `local / adapted async` | `unverified` | `pass` | Hermetic | — |
+| [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `memory / adapted async` | `unverified` | `pass` | Hermetic | — |
+| [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `vosfs / native async` | `unverified` | `pass` | Hermetic | — |
+| [Base `rmdir` `-p` strict rejection](fsspec-cli-base-rmdir-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | — |
 | [`ls -l` strict rejection](fsspec-cli-ls-long-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
 | [`basename string`](fsspec-cli-basename-command-profile.md) | source-free command | `not entered` | `pass` | `pass` | Hermetic | [H-2026-07-17-29564531624](#h-2026-07-17-29564531624) |
 | [`basename string`](fsspec-cli-basename-command-profile.md) option/operand rejection | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29564531624](#h-2026-07-17-29564531624) |

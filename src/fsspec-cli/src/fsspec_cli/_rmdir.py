@@ -41,6 +41,7 @@ class _RmdirFailure:
     operand: _MappedOperand
     backend_error: Exception | None = None
     incompatible: Literal["directory", "result"] | None = None
+    uncertain: bool = False
 
 
 class _RmdirCommand(TyperCommand):
@@ -114,7 +115,7 @@ def _preflight(
     return _RmdirRequest(operands=tuple(operands))
 
 
-async def _remove_empty_directory(  # noqa: PLR0911 - explicit outcome branches.
+async def _require_directory(
     operand: _MappedOperand,
     filesystem: AsyncFileSystem,
 ) -> _RmdirFailure | None:
@@ -131,6 +132,36 @@ async def _remove_empty_directory(  # noqa: PLR0911 - explicit outcome branches.
         return _RmdirFailure(operand, incompatible="directory")
     if result_type != "directory":
         return _RmdirFailure(operand, incompatible="result")
+    return None
+
+
+async def _observe_post_mutation(
+    operand: _MappedOperand,
+    filesystem: AsyncFileSystem,
+    mutation_error: Exception | None,
+) -> _RmdirFailure | None:
+    try:
+        await filesystem._info(operand.path)  # noqa: SLF001
+    except FileNotFoundError:
+        # Absence proves success, including after a mutation-call exception.
+        return None
+    except Exception as error:  # noqa: BLE001 - never hide non-not-found errors.
+        if mutation_error is not None:
+            return _RmdirFailure(operand, backend_error=mutation_error, uncertain=True)
+        return _RmdirFailure(operand, backend_error=error, uncertain=True)
+    if mutation_error is not None:
+        # Presence after a mutation-call exception is confirmed failure.
+        return _RmdirFailure(operand, backend_error=mutation_error)
+    return _RmdirFailure(operand, incompatible="result")
+
+
+async def _remove_empty_directory(
+    operand: _MappedOperand,
+    filesystem: AsyncFileSystem,
+) -> _RmdirFailure | None:
+    directory_failure = await _require_directory(operand, filesystem)
+    if directory_failure is not None:
+        return directory_failure
 
     rmdir = getattr(filesystem, "_rmdir", None)
     if not callable(rmdir):
@@ -141,19 +172,13 @@ async def _remove_empty_directory(  # noqa: PLR0911 - explicit outcome branches.
             ),
         )
 
+    mutation_error: Exception | None = None
     try:
         await rmdir(operand.path)
-    except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
-        return _RmdirFailure(operand, backend_error=error)
+    except Exception as error:  # noqa: BLE001 - mutation may leave uncertain state.
+        mutation_error = error
 
-    try:
-        await filesystem._info(operand.path)  # noqa: SLF001
-    except FileNotFoundError:
-        return None
-    except Exception as error:  # noqa: BLE001 - never hide non-not-found errors.
-        return _RmdirFailure(operand, backend_error=error)
-    else:
-        return _RmdirFailure(operand, incompatible="result")
+    return await _observe_post_mutation(operand, filesystem, mutation_error)
 
 
 def _render_operand_diagnostic(
@@ -178,7 +203,9 @@ def _render_rmdir_backend_failure(
 
 
 def _render_failure(command: str, failure: _RmdirFailure) -> None:
-    if failure.incompatible == "directory":
+    if failure.uncertain:
+        _render_operand_diagnostic(command, failure.operand, "uncertain state")
+    elif failure.incompatible == "directory":
         _render_operand_diagnostic(command, failure.operand, "not a directory")
     elif failure.incompatible == "result":
         _render_operand_diagnostic(command, failure.operand, "incompatible result")

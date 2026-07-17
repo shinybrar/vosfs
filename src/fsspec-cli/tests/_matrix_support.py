@@ -619,8 +619,14 @@ def _exercise_rmdir_locked_profile(
         for call in source.calls
         if call.operation == "info" and call.path in {empty_dir, parent_path, file_path}
     ]
-    assert len(cli_info_calls) == 4
-    assert [call.path for call in cli_info_calls[:2]] == [empty_dir, empty_dir]
+    assert len(cli_info_calls) == 5
+    assert [call.path for call in cli_info_calls] == [
+        empty_dir,
+        empty_dir,
+        parent_path,
+        parent_path,
+        file_path,
+    ]
     assert len(source.errors) == 2
     error_operations = {operation for _source_id, operation, _error in source.errors}
     assert error_operations == {"rmdir", "info"}

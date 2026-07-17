@@ -56,9 +56,14 @@ class _RecordingFileSystem(AsyncFileSystem):
         super().__init__(asynchronous=True)
         self.source = source
         self.source_id = source_id
+<<<<<<< HEAD
         self._pending_mkdir_verify: set[str] = set()
         self._pending_rmdir_verify: set[str] = set()
         self._created_dirs: set[str] = set()
+=======
+        self._pending_verify_paths: set[str] = set()
+        self._removed_paths: set[str] = set()
+>>>>>>> 75224f7 (fix(fsspec-cli): distinguish rmdir mutation uncertainty (#130))
 
     async def _info(self, path: str, **kwargs: object) -> object:
         del kwargs
@@ -70,10 +75,15 @@ class _RecordingFileSystem(AsyncFileSystem):
             if path in self.source.post_info_by_path:
                 scripted = self.source.post_info_by_path[path]
                 if isinstance(scripted, BaseException):
+                    self._removed_paths.discard(path)
                     raise scripted
+                self._removed_paths.discard(path)
                 return scripted
             if self.source.post_info_error is not None:
+                self._removed_paths.discard(path)
                 raise self.source.post_info_error
+            raise FileNotFoundError(path)
+        if path in self._removed_paths:
             raise FileNotFoundError(path)
         if path in self.source.info_by_path:
             scripted = self.source.info_by_path[path]
@@ -189,7 +199,12 @@ class _RecordingFileSystem(AsyncFileSystem):
                 raise scripted
         elif self.source.rmdir_error is not None:
             raise self.source.rmdir_error
+<<<<<<< HEAD
         self._pending_rmdir_verify.add(path)
+=======
+        self._removed_paths.add(path)
+        self._pending_verify_paths.add(path)
+>>>>>>> 75224f7 (fix(fsspec-cli): distinguish rmdir mutation uncertainty (#130))
 
 
 class _RecordingSource:

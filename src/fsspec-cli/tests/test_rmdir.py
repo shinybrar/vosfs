@@ -119,15 +119,13 @@ def test_rmdir_processes_repeated_operands_independently() -> None:
         sources={"memory": source},
     )
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     assert result.stdout == ""
-    assert result.stderr == ""
+    assert result.stderr == "rmdir: memory:/docs/empty: not found\n"
     assert [event[0] for event in events if event[0] in {"info", "rmdir"}] == [
         "info",
         "rmdir",
         "info",
-        "info",
-        "rmdir",
         "info",
     ]
 
@@ -284,7 +282,6 @@ def test_rmdir_rejects_a_source_without_async_rmdir() -> None:
     assert [event[0] for event in events].count("rmdir") == 0
 
 
-@pytest.mark.parametrize("stage", ["info", "rmdir", "post_info"])
 @pytest.mark.parametrize(
     ("error_factory", "category"),
     [
@@ -299,22 +296,152 @@ def test_rmdir_rejects_a_source_without_async_rmdir() -> None:
         (RuntimeError, "backend failure (RuntimeError): "),
     ],
 )
-def test_rmdir_maps_runtime_failures_to_locked_categories(
-    stage: str,
+def test_rmdir_maps_pre_mutation_failures_to_locked_categories(
     error_factory: Callable[[], Exception],
     category: str,
 ) -> None:
-    if stage == "post_info" and error_factory is FileNotFoundError:
-        pytest.skip("post-check FileNotFoundError confirms success")
+    error = error_factory()
+    source = _RecordingSource([], info_error=error)
+
+    result = _invoke_rmdir(["memory:/docs/empty"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == f"rmdir: memory:/docs/empty: {category}\n"
+
+
+@pytest.mark.parametrize(
+    ("error_factory", "category"),
+    [
+        (FileNotFoundError, "not found"),
+        (PermissionError, "permission denied"),
+        (NotADirectoryError, "not a directory"),
+        (NotImplementedError, "unsupported operation"),
+        (
+            lambda: OSError(errno.ENOTEMPTY, "directory not empty"),
+            "directory not empty",
+        ),
+        (RuntimeError, "backend failure (RuntimeError): "),
+    ],
+)
+def test_rmdir_treats_mutation_exception_with_path_still_present_as_confirmed_failure(
+    error_factory: Callable[[], Exception],
+    category: str,
+) -> None:
     error = error_factory()
     source = _RecordingSource(
         [],
         info_result={"type": "directory"},
-        info_error=error if stage == "info" else None,
-        rmdir_error=error if stage == "rmdir" else None,
-        post_info_by_path={
-            "/docs/empty": error if stage == "post_info" else FileNotFoundError()
-        },
+        rmdir_error=error,
+    )
+
+    result = _invoke_rmdir(["memory:/docs/empty"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == f"rmdir: memory:/docs/empty: {category}\n"
+    assert [event[0] for event in source.events if event[0] == "info"] == [
+        "info",
+        "info",
+    ]
+
+
+def test_rmdir_treats_mutation_exception_with_proven_absence_as_success() -> None:
+    events: list[tuple[object, ...]] = []
+
+    class _AbsentAfterError(_RecordingSource):
+        def __call__(self) -> object:
+            context = super().__call__()
+            filesystem = context.filesystem
+
+            async def rmdir(path: str, **kwargs: object) -> None:
+                del kwargs
+                self.events.append(
+                    (
+                        "rmdir",
+                        filesystem.source_id,
+                        path,
+                        id(asyncio.get_running_loop()),
+                    )
+                )
+                filesystem._removed_paths.add(path)
+                filesystem._pending_verify_paths.add(path)
+                message = "timed out after delete"
+                raise TimeoutError(message)
+
+            filesystem._rmdir = rmdir  # type: ignore[method-assign]
+            return context
+
+    source = _AbsentAfterError(
+        events,
+        info_result={"type": "directory"},
+        post_info_by_path={"/docs/empty": FileNotFoundError("gone")},
+    )
+
+    result = _invoke_rmdir(["memory:/docs/empty"], sources={"memory": source})
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
+def test_rmdir_reports_uncertain_state_when_mutation_and_post_check_are_ambiguous() -> (
+    None
+):
+    events: list[tuple[object, ...]] = []
+
+    class _UncertainAfterError(_RecordingSource):
+        def __call__(self) -> object:
+            context = super().__call__()
+            filesystem = context.filesystem
+
+            async def rmdir(path: str, **kwargs: object) -> None:
+                del kwargs
+                self.events.append(
+                    (
+                        "rmdir",
+                        filesystem.source_id,
+                        path,
+                        id(asyncio.get_running_loop()),
+                    )
+                )
+                filesystem._pending_verify_paths.add(path)
+                message = "timed out"
+                raise TimeoutError(message)
+
+            filesystem._rmdir = rmdir  # type: ignore[method-assign]
+            return context
+
+    source = _UncertainAfterError(
+        events,
+        info_result={"type": "directory"},
+        post_info_by_path={"/docs/empty": PermissionError("denied during verify")},
+    )
+
+    result = _invoke_rmdir(["memory:/docs/empty"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "rmdir: memory:/docs/empty: uncertain state\n"
+
+
+@pytest.mark.parametrize(
+    ("error_factory", "category"),
+    [
+        (PermissionError, "uncertain state"),
+        (NotImplementedError, "uncertain state"),
+        (RuntimeError, "uncertain state"),
+    ],
+)
+def test_rmdir_reports_uncertain_state_for_ambiguous_post_check_after_void_rmdir(
+    error_factory: Callable[[], Exception],
+    category: str,
+) -> None:
+    error = error_factory()
+    source = _RecordingSource(
+        [],
+        info_result={"type": "directory"},
+        post_info_by_path={"/docs/empty": error},
     )
 
     result = _invoke_rmdir(["memory:/docs/empty"], sources={"memory": source})
