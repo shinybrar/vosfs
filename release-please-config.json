@@ -13,11 +13,12 @@
       "force-tag-creation": true,
       "include-component-in-tag": false,
       "include-v-in-tag": true,
-      "pull-request-title-pattern": "chore: release ${version}",
+      "pull-request-title-pattern": "chore: release vosfs ${version}",
       "exclude-paths": [
         "src/fsspec-cli/**",
         ".github/workflows/fsspec-cli-*.yml",
         "docs/**",
+        ".superpowers/**",
         ".pre-commit-config.yaml",
         ".release-please-manifest.json",
         "release-please-config.json",
