@@ -2,16 +2,12 @@
 
 import errno
 import os
+import pty
 import subprocess
 import sys
+import termios
 from contextlib import suppress
 from pathlib import Path
-
-import pytest
-
-if os.name == "posix":
-    import pty
-    import termios
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _TIMEOUT = 5
@@ -118,12 +114,6 @@ def test_public_seam_suffix_tty_matches_redirected_output_verbatim() -> None:
         timeout=_TIMEOUT,
         check=False,
     )
-    if os.name != "posix":
-        assert redirected.returncode == 0
-        assert redirected.stdout == expected_stdout
-        assert redirected.stderr == b""
-        return
-
     returncode, stdout, stderr = _run_pty_command(command)
 
     assert returncode == redirected.returncode == 0
@@ -132,11 +122,6 @@ def test_public_seam_suffix_tty_matches_redirected_output_verbatim() -> None:
 
 
 def _run_pty_command(command: list[str]) -> tuple[int, bytes, bytes]:
-    if os.name != "posix":
-        pytest.skip("PTY evidence requires POSIX")
-    if not hasattr(termios, "ONLCR") or not hasattr(termios, "ECHO"):
-        pytest.skip("required terminal flags unavailable")
-
     master_fd, slave_fd = pty.openpty()
     try:
         attributes = termios.tcgetattr(slave_fd)
@@ -178,12 +163,6 @@ def _run_pty_command(command: list[str]) -> tuple[int, bytes, bytes]:
 
 def test_public_seam_tty_matches_redirected_output_verbatim() -> None:
     redirected = _run_redirected()
-    if os.name != "posix":
-        assert redirected.returncode == 0
-        assert redirected.stdout == _EXPECTED_STDOUT
-        assert redirected.stderr == b""
-        return
-
     returncode, stdout, stderr = _run_pty_command(_command())
 
     assert returncode == redirected.returncode == 0

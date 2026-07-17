@@ -55,12 +55,6 @@ def _only_artifact(directory: Path, pattern: str) -> Path:
     return matches[0].resolve()
 
 
-def _venv_python(environment: Path) -> Path:
-    if os.name == "nt":
-        return environment / "Scripts" / "python.exe"
-    return environment / "bin" / "python"
-
-
 def _create_environment(
     uv: str,
     root: Path,
@@ -74,7 +68,7 @@ def _create_environment(
         cwd=root,
         environment=environment,
     )
-    python = _venv_python(venv)
+    python = venv / "bin" / "python"
     _run(
         [
             uv,

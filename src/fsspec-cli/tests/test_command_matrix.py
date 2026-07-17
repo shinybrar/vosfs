@@ -57,14 +57,7 @@ def test_hermetic_guard_rejects_name_resolution() -> None:
 
 
 def _local_command_path(root: Path) -> str:
-    resolved = root.resolve()
-    path = resolved.as_posix()
-    if not resolved.drive:
-        return path
-    message = "the Windows hermetic Local gate requires a drive-letter tmp_path"
-    assert len(resolved.drive) == 2, message
-    assert resolved.drive.endswith(":"), message
-    return f"//?/{path}"
+    return root.resolve().as_posix()
 
 
 def test_adapted_local_plain_ls_profile_uses_native_temporary_storage(
@@ -87,8 +80,6 @@ def test_adapted_local_plain_ls_profile_uses_native_temporary_storage(
     assert all(fs.asynchronous is True for fs in source.filesystems)
     assert len({id(fs) for fs in source.filesystems}) == 3
     assert len({id(fs.sync_fs) for fs in source.filesystems}) == 3
-    if root.drive:
-        assert path.startswith(f"//?/{root.drive}/")
 
 
 def test_adapted_memory_plain_ls_profile_has_isolated_state(

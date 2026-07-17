@@ -5,6 +5,9 @@ filesystem for the **OpenCADC Cavern VOSpace** service. It registers the `vos`
 protocol so fsspec-aware Python tools — and pandas, NumPy, Dask, Zarr, and
 PyArrow — can read, write, inspect, and mutate OpenCADC VOSpace paths.
 
+Supported host platforms are Linux and macOS. Other platforms are untested and
+unsupported.
+
 Install the current development version directly from GitHub:
 
 ```bash

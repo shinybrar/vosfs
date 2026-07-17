@@ -28,13 +28,12 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          # Pull requests validate the fast path: Python 3.12 across all three
-          # operating systems. Pushes to main and manual dispatches expand Linux
+          # Pull requests validate the fast path: Python 3.12 on Linux and macOS.
+          # Pushes to main and manual dispatches expand Linux
           # to the full supported Python range (3.10-3.14).
           pull_request='{"include":[
             {"os":"ubuntu-latest","python":"3.12"},
-            {"os":"macos-latest","python":"3.12"},
-            {"os":"windows-latest","python":"3.12"}
+            {"os":"macos-latest","python":"3.12"}
           ]}'
           full='{"include":[
             {"os":"ubuntu-latest","python":"3.10"},
@@ -42,8 +41,7 @@ jobs:
             {"os":"ubuntu-latest","python":"3.12"},
             {"os":"ubuntu-latest","python":"3.13"},
             {"os":"ubuntu-latest","python":"3.14"},
-            {"os":"macos-latest","python":"3.12"},
-            {"os":"windows-latest","python":"3.12"}
+            {"os":"macos-latest","python":"3.12"}
           ]}'
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             matrix="$pull_request"

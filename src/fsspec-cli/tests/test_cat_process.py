@@ -80,9 +80,6 @@ def _run_broken_stdout_pipe(
     tracking_path: Path | None = None,
     tmpdir: Path | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
-    if os.name != "posix":
-        pytest.skip("closed-reader pipe evidence requires POSIX")
-
     read_fd, write_fd = os.pipe()
     os.close(read_fd)
     environment = _environment(tracking_path=tracking_path, tmpdir=tmpdir)

@@ -2,16 +2,14 @@
 
 import errno
 import os
+import pty
 import subprocess
 import sys
+import termios
 from contextlib import suppress
 from pathlib import Path
 
 import pytest
-
-if os.name == "posix":
-    import pty
-    import termios
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _TIMEOUT = 5
@@ -56,11 +54,6 @@ def _run_redirected(mode: str) -> subprocess.CompletedProcess[bytes]:
 
 
 def _run_pty(mode: str) -> tuple[int, bytes, bytes]:
-    if os.name != "posix":
-        pytest.skip("PTY evidence requires POSIX")
-    if not hasattr(termios, "ONLCR") or not hasattr(termios, "ECHO"):
-        pytest.skip("required terminal flags unavailable")
-
     command = _command(mode)
     master_fd, slave_fd = pty.openpty()
     try:
@@ -102,9 +95,6 @@ def _run_pty(mode: str) -> tuple[int, bytes, bytes]:
 
 
 def test_public_seam_broken_pipe_is_silent_runtime_failure() -> None:
-    if os.name != "posix":
-        pytest.skip("closed-reader pipe evidence requires POSIX")
-
     read_fd, write_fd = os.pipe()
     os.close(read_fd)
     try:

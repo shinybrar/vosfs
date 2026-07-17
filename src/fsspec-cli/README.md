@@ -3,6 +3,9 @@
 `fsspec-cli` is a library-only package for composing POSIX-shaped commands
 over host-configured async fsspec filesystems.
 
+Supported host platforms are Linux and macOS. Other platforms are untested and
+unsupported.
+
 Hosts embed its Typer application through the sole behavioral seam,
 `App(sources).typer_app`. Each configured value is an
 `AsyncFilesystemSource`: a callable that returns a fresh async context manager

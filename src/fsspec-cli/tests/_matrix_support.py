@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import socket
-import sys
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
@@ -690,9 +689,7 @@ def _exercise_mkdir_locked_profile(
     parent_file_category: str | None = None,
 ) -> None:
     if parent_file_category is None:
-        parent_file_category = (
-            "not found" if sys.platform == "win32" else "not a directory"
-        )
+        parent_file_category = "not a directory"
     app = App({source_name: source})
     new_dir = f"{parent_path}/subdir"
     file_path = f"{parent_path}/{file_name}"
@@ -810,9 +807,7 @@ def _exercise_mkdir_p_locked_profile(
     parent_file_category: str | None = None,
 ) -> None:
     if parent_file_category is None:
-        parent_file_category = (
-            "not found" if sys.platform == "win32" else "not a directory"
-        )
+        parent_file_category = "not a directory"
     app = App({source_name: source})
     new_dir = f"{parent_path}/deep/nested/subdir"
     one_parent = f"{parent_path}/newchild"

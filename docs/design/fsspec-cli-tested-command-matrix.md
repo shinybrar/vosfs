@@ -177,6 +177,7 @@ Evidence is current only for its recorded version and source-form identity.
 Changing the command profile, relevant `fsspec-cli` implementation, fsspec,
 Typer, backend distribution, adapter mode, or declared platform set makes the
 affected row `unverified` until its required gates run again.
+The declared supported host platforms are Linux and macOS.
 
 There is no arbitrary wall-clock expiry. Every release candidate obtains new
 evidence for its exact build, and live observations always retain their time.
@@ -273,10 +274,9 @@ versions below come from each job log's `Runner Image` group:
 | 3.12.3 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87895410858](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410858) | [87895410815](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410815) |
 | 3.13.14 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87895410790](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410790) | [87895410824](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410824) |
 | 3.14.6 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87895410838](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410838) | [87895410773](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410773) |
-| 3.12.10 | Microsoft Windows Server 2025, 10.0.26100 Datacenter | `windows-2025-vs2026@20260714.173.1` | [87895410831](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410831) | [87895410811](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410811) |
 | 3.12.10 | macOS 26.4, build 25E246 | `macos-26-arm64@20260715.0248.1` | [87895410778](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410778) | [87895410804](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410804) |
 
-Python patch versions for the Ubuntu 3.12, macOS 3.12, and Windows 3.12
+Python patch versions for the Ubuntu 3.12 and macOS 3.12
 installed-wheel jobs were not printed in those job logs; the table reuses the
 matching hermetic-leg patch versions from the same workflow matrix cell. The
 aggregate
@@ -320,10 +320,9 @@ versions below come from each job log's `Runner Image` group:
 | 3.12.3 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87904366747](https://github.com/shinybrar/vosfs/actions/runs/29586378872/job/87904366747) | [87904366554](https://github.com/shinybrar/vosfs/actions/runs/29586378872/job/87904366554) |
 | 3.13.14 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87904366625](https://github.com/shinybrar/vosfs/actions/runs/29586378872/job/87904366625) | [87904366482](https://github.com/shinybrar/vosfs/actions/runs/29586378872/job/87904366482) |
 | 3.14.6 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87904366501](https://github.com/shinybrar/vosfs/actions/runs/29586378872/job/87904366501) | [87904366470](https://github.com/shinybrar/vosfs/actions/runs/29586378872/job/87904366470) |
-| 3.12.10 | Microsoft Windows Server 2025, 10.0.26100 Datacenter | `windows-2025-vs2026@20260714.173.1` | [87904366656](https://github.com/shinybrar/vosfs/actions/runs/29586378872/job/87904366656) | [87904366601](https://github.com/shinybrar/vosfs/actions/runs/29586378872/job/87904366601) |
 | 3.12.10 | macOS 26.4, build 25E246 | `macos-26-arm64@20260715.0248.1` | [87904366534](https://github.com/shinybrar/vosfs/actions/runs/29586378872/job/87904366534) | [87904366528](https://github.com/shinybrar/vosfs/actions/runs/29586378872/job/87904366528) |
 
-Python patch versions for the Ubuntu 3.12, macOS 3.12, and Windows 3.12
+Python patch versions for the Ubuntu 3.12 and macOS 3.12
 installed-wheel jobs were not printed in those job logs; the table reuses the
 matching hermetic-leg patch versions from the same workflow matrix cell. The
 aggregate
@@ -365,10 +364,9 @@ versions below come from each job log's `Runner Image` group:
 | 3.12.3 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87834083024](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083024) | [87834083002](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083002) |
 | 3.13.14 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87834083035](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083035) | [87834082973](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834082973) |
 | 3.14.6 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87834083039](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083039) | [87834082976](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834082976) |
-| 3.12.10 | Microsoft Windows Server 2025, 10.0.26100 Datacenter | `windows-2025-vs2026@20260714.173.1` | [87834083013](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083013) | [87834083053](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083053) |
 | 3.12.10 | macOS 26.4, build 25E246 | `macos-26-arm64@20260715.0248.1` | [87834083065](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083065) | [87834083004](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083004) |
 
-Python patch versions for the Ubuntu 3.12, macOS 3.12, and Windows 3.12
+Python patch versions for the Ubuntu 3.12 and macOS 3.12
 installed-wheel jobs were not printed in those job logs; the table reuses the
 matching hermetic-leg patch versions from the same workflow matrix cell. The
 aggregate
@@ -412,10 +410,9 @@ versions below come from each job log's `Runner Image` group:
 | 3.12.3 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87904313756](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313756) | [87904313858](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313858) |
 | 3.13.14 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87904313755](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313755) | [87904313779](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313779) |
 | 3.14.6 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87904313952](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313952) | [87904313869](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313869) |
-| 3.12.10 | Microsoft Windows Server 2025, 10.0.26100 Datacenter | `windows-2025-vs2026@20260714.173.1` | [87904313802](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313802) | [87904313875](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313875) |
 | 3.12.10 | macOS 26.4, build 25E246 | `macos-26-arm64@20260715.0248.1` | [87904313795](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313795) | [87904313716](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313716) |
 
-Python patch versions for the Ubuntu 3.12, macOS 3.12, and Windows 3.12
+Python patch versions for the Ubuntu 3.12 and macOS 3.12
 installed-wheel jobs were not printed in those job logs; the table reuses the
 matching hermetic-leg patch versions from the same workflow matrix cell. The
 aggregate
@@ -457,7 +454,6 @@ Every leg used runner 2.335.1:
 | 3.12.3 | Ubuntu 24.04.4 LTS | `ubuntu-24.04` | `20260714.240.1` | `20260707.563` | [87712449711](https://github.com/shinybrar/vosfs/actions/runs/29525392759/job/87712449711) |
 | 3.13.14 | Ubuntu 24.04.4 LTS | `ubuntu-24.04` | `20260714.240.1` | `20260707.563` | [87712449685](https://github.com/shinybrar/vosfs/actions/runs/29525392759/job/87712449685) |
 | 3.14.6 | Ubuntu 24.04.4 LTS | `ubuntu-24.04` | `20260714.240.1` | `20260707.563` | [87712449720](https://github.com/shinybrar/vosfs/actions/runs/29525392759/job/87712449720) |
-| 3.12.10 | Microsoft Windows Server 2025, 10.0.26100 Datacenter | `windows-2025-vs2026` | `20260714.173.1` | `20260707.563` | [87712449677](https://github.com/shinybrar/vosfs/actions/runs/29525392759/job/87712449677) |
 | 3.12.10 | macOS 26.4, build 25E246 | `macos-26-arm64` | `20260630.0213.1` | `20260624.560` | [87712449708](https://github.com/shinybrar/vosfs/actions/runs/29525392759/job/87712449708) |
 
 The executable evidence is the commit-pinned
@@ -493,11 +489,10 @@ workspace with dependency checks, and exercised the same
 | 3.12.3 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87748922259](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922259) | [87748922173](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922173) |
 | 3.13.14 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87748922293](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922293) | [87748922187](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922187) |
 | 3.14.6 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87748922306](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922306) | [87748922183](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922183) |
-| 3.12.10 | Windows Server 2025 | `windows-2025-vs2026@20260714.173.1` | [87748922170](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922170) | [87748922198](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922198) |
 | 3.12.10 | macOS 26.4 | `macos-26-arm64@20260630.0213.1` | [87748922260](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922260) | [87748922268](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87748922268) |
 
-Every leg used runner 2.335.1. Ubuntu and Windows used provisioner
-`20260707.563`; macOS used `20260624.560`. The aggregate
+Every leg used runner 2.335.1. Ubuntu used provisioner `20260707.563`; macOS
+used `20260624.560`. The aggregate
 [Required job](https://github.com/shinybrar/vosfs/actions/runs/29536484110/job/87749288044)
 passed only after the quality, hermetic, installed-wheel, and repository live
 dependencies completed successfully.
@@ -545,7 +540,6 @@ preflight without entering a source.
 | 3.12.3 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87835687032](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687032) | [87835687224](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687224) |
 | 3.13.14 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87835687115](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687115) | [87835687094](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687094) |
 | 3.14.6 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87835687079](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687079) | [87835687249](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687249) |
-| 3.12.10 | Windows Server 2025 | `windows-2025-vs2026@20260714.173.1` | [87835687114](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687114) | [87835687251](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687251) |
 | 3.12.10 | macOS 26.4 | `macos-26-arm64@20260715.0248.1` | [87835687095](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687095) | [87835687120](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687120) |
 
 Every leg used runner 2.335.1 and provisioner `20260707.563`. The aggregate

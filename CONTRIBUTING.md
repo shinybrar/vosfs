@@ -38,8 +38,10 @@ Markdown checks.
 
 - Support every actively supported Python version allowed by
   `project.requires-python`. CI tests that full range on Linux and tests the
-  newest-minus-two Python release on macOS and Windows. Advance the declared
-  minimum and matrix together as Python's five-version support window moves.
+  newest-minus-two Python release on macOS. Linux and macOS are the supported
+  host platforms; other platforms are untested and unsupported. Advance the
+  declared minimum and matrix together as Python's five-version support window
+  moves.
 - Keep the `vosfs` package under `src/vosfs/`. Each independently installable
   workspace member keeps its package under that member's `src/` directory. Add
   type annotations to public APIs.
