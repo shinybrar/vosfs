@@ -108,6 +108,9 @@ Expected: `incompatible result` for each.
 Examples:
 
 - `"size": null`
+- `"size": True` / `"uid": False` / `"mode": True` / `"nlink": True` /
+  `"gid": False` (`bool` must fail exact-int checks)
+- `"mtime": True` (`bool` rejected even though it subclasses `int`)
 - `"mtime": "2026-07-17T00:00:00Z"` (string on a Local-like row)
 - `"mode": "33188"`
 - `"type": "other"` without being rejected earlier as non-file/dir
@@ -116,9 +119,11 @@ Expected: `incompatible result`.
 
 ## V8 — locale / time boundary
 
-Same `mtime` epoch rendered with the profile's C-locale local formatter must
-match golden bytes on Linux and macOS CI for a fixed `TZ`. Ambient non-C
-`LC_TIME` MUST NOT change month abbreviations in command output.
+Same `mtime` epoch rendered with the profile's C-locale formatter under pinned
+`TZ=UTC` must match golden bytes on Linux and macOS CI. Ambient non-C
+`LC_TIME` or unpinned host `TZ` MUST NOT be used for byte-for-byte claims.
+Include at least one vector with newline/backslash/NUL in a backend message to
+lock diagnostic escaping (`\\n`, `\\\\`, `\\0`).
 
 ## V9 — output failure
 

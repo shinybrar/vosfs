@@ -107,18 +107,25 @@ An operand is renderable only when `_info` returns a mapping that satisfies
 **all** of:
 
 1. `type` is exactly `"file"` or `"directory"` (`str`);
-2. `islink` is absent or exactly `False` (`bool` if present);
+2. `islink` is absent or exactly `False` (`bool` if present); optional key;
 3. `name` is `str`;
-4. `size` is `int` and `>= 0` (not `None`);
-5. `mode` is `int`;
-6. `nlink` is `int` and `>= 1`;
-7. `uid` is `int` and `>= 0`;
-8. `gid` is `int` and `>= 0`;
-9. `mtime` is `int` or `float` (epoch seconds, finite, not NaN).
+4. `size` is present with `type(size) is int` and `size >= 0` (not `None`,
+   not `bool`; explicit `0` from the source is valid);
+5. `mode` with `type(mode) is int` (not `bool`);
+6. `nlink` with `type(nlink) is int` and `nlink >= 1` (not `bool`);
+7. `uid` with `type(uid) is int` and `uid >= 0` (not `bool`);
+8. `gid` with `type(gid) is int` and `gid >= 0` (not `bool`);
+9. `mtime` is `int` or `float` (epoch seconds, finite, not NaN; `bool`
+   rejected because `bool` subclasses `int`).
 
-Any missing key, wrong Python type, `islink is True`, `type` outside
-`{file, directory}`, `size is None`, or non-finite `mtime` is an **incompatible
-result**. The renderer MUST NOT emit `?`, `0` placeholders, dashes, host
+Integer fields above MUST use exact-int checks (`type(value) is int`), not
+`isinstance(..., int)`, so booleans cannot slip through.
+
+Any missing **required** key (`type`, `name`, `size`, `mode`, `nlink`, `uid`,
+`gid`, `mtime`), wrong Python type, `islink is True`, `type` outside
+`{file, directory}`, missing/defaulted `size`, or non-finite `mtime` is an
+**incompatible result**. Absent `islink` remains compatible under rule 2.
+The renderer MUST NOT emit `?`, synthesized `0` placeholders, dashes, host
 identity guesses, VOSpace properties relabeled as POSIX mode/owner, or silently
 omitted columns.
 
@@ -145,7 +152,7 @@ Field rules (BSD/macOS-shaped, reduced):
 | `<owner>` | `pwd.getpwuid(uid).pw_name` when resolvable; otherwise decimal `uid` string (same role as `%Su`) |
 | `<group>` | `grp.getgrgid(gid).gr_name` when resolvable; otherwise decimal `gid` string (same role as `%Sg`) |
 | `<size>` | Decimal byte `size` (same role as `%z` for non-devices; devices unsupported) |
-| `<mtime>` | Local timezone, fixed C-locale month abbreviations, format `%b %e %H:%M:%S %Y` matching BSD `TIME_FORMAT` `%b %e %T %Y`, always wrapped in double quotes like default-format times |
+| `<mtime>` | Process-local timezone under pinned conformance `TZ` (see §4.1), fixed C-locale month abbreviations, format `%b %e %H:%M:%S %Y` matching BSD `TIME_FORMAT` `%b %e %T %Y`, always wrapped in double quotes like default-format times |
 | `<pathname>` | The operand path portion exactly as spelled after the first `:` (including leading `/`) |
 
 Separators are single ASCII spaces between fields. No column alignment beyond
@@ -160,11 +167,14 @@ truthful.
 ### 4.1 Locale, numeric, timezone, units
 
 - Size and link count are decimal bytes and counts; no block units.
-- Timestamps use the process local timezone; no UTC conversion unless the host
-  TZ is UTC.
-- Month abbreviations and numeric fields MUST render under an effective `C`
-  locale for time formatting so golden vectors stay deterministic across
-  Linux/macOS CI.
+- Timestamps use the process local timezone derived from `TZ` (no separate UTC
+  conversion step).
+- Conformance tests and golden vectors MUST pin `TZ=UTC` and an effective `C`
+  locale for time formatting so `<mtime>` bytes match across Linux/macOS CI.
+  Ambient host `TZ` / `LC_TIME` outside those pins are out of scope for
+  byte-for-byte claims.
+- Month abbreviations and numeric fields MUST render under that pinned `C`
+  locale.
 - Owner/group name lookup is host presentation for numeric ids already returned
   by `_info`; it is not a remote identity resolver.
 
@@ -179,6 +189,14 @@ truthful.
 | Stdout short write / broken pipe after accepted bytes | Stop further operand output; preserve accepted bytes; status `1`; still run cleanup |
 | Cancellation / control-flow `BaseException` | Propagate after source cleanup per ADR 0003 |
 | Cleanup failures | Append diagnostics; force status `1` without erasing earlier ordinary failure; BaseException precedence unchanged |
+
+Every diagnostic is terminated by one newline. For diagnostics only, each
+inserted option token, operand, exception class, and exception message is
+rendered by replacing, in order, `\\` with `\\\\`, NUL with `\\0`, carriage
+return with `\\r`, and newline with `\\n`; every other character is unchanged.
+Literal command text and stable categories (`incompatible result`,
+`unsupported option`, …) are not transformed. This is the only diagnostic
+escaping algorithm. No traceback is written.
 
 Successful invocations that render every operand exit `0`. Partial success exits
 `1`. No stdout on pure rejection paths.
