@@ -47,7 +47,7 @@ One matrix row identifies one claim through these fields:
 | Field | Required meaning |
 | --- | --- |
 | Command profile | The linked, locked observable command-and-option contract. |
-| Scope | `source` when filesystem behavior is exercised; `command preflight` when rejection completes before source entry. |
+| Scope | `source` when filesystem behavior is exercised; `command preflight` when rejection completes before source entry; `source-free command` when a lexical command completes without source entry. |
 | Source form | The configured source and whether it yields native or adapted async behavior. For command preflight, this is `not entered`. |
 | Status | Exactly one of `pass`, `fail`, `unsupported`, or `unverified`. |
 | Required gates | The hermetic and, where applicable, live evidence needed for this row. |
@@ -204,9 +204,22 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic and live OpenCADC | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110), [L-2026-07-16-29536609626](#l-2026-07-16-29536609626) |
 | [`ls -l` strict rejection](fsspec-cli-ls-long-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
+| [`basename string`](fsspec-cli-basename-command-profile.md) | source-free command | `not entered` | `pass` | `pass` | Hermetic | [Executable hermetic tests](#basename-string-hermetic-evidence) |
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.
+
+### Basename string hermetic evidence
+
+The hermetic gate for [`basename string`](fsspec-cli-basename-command-profile.md)
+is the production handler exercised through `App(sources).typer_app` with a
+source factory that raises if called. Executable evidence lives in
+[`test_basename.py`](../../src/fsspec-cli/tests/test_basename.py),
+[`test_basename_process.py`](../../src/fsspec-cli/tests/test_basename_process.py),
+and
+[`test_command_matrix.py::test_basename_string_is_source_free`](../../src/fsspec-cli/tests/test_command_matrix.py).
+The isolated-wheel gate additionally runs `test_basename.py` from the built
+source distribution with declared runtime dependencies only.
 
 ### H-2026-07-16-29525392759
 
