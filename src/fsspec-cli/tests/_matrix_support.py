@@ -324,6 +324,37 @@ class _ProbedSource(Generic[_FilesystemT]):
             self._wrap_rm(source_id),
         )
 
+        async def rm(path: str, **kwargs: object) -> None:
+            self.calls.append(
+                FilesystemCall(
+                    "rm",
+                    source_id,
+                    path,
+                    None,
+                    kwargs,
+                    id(asyncio.get_running_loop()),
+                )
+            )
+            message = "_rm must not be called by unlink"
+            raise AssertionError(message)
+
+        async def rmdir(path: str, **kwargs: object) -> None:
+            self.calls.append(
+                FilesystemCall(
+                    "rmdir",
+                    source_id,
+                    path,
+                    None,
+                    kwargs,
+                    id(asyncio.get_running_loop()),
+                )
+            )
+            message = "_rmdir must not be called by unlink"
+            raise AssertionError(message)
+
+        setattr(filesystem, "_rm", rm)  # noqa: B010
+        setattr(filesystem, "_rmdir", rmdir)  # noqa: B010
+
 
 class _ProbedContext(
     AbstractAsyncContextManager[_FilesystemT],
@@ -800,6 +831,6 @@ def _exercise_unlink_locked_profile(
     assert any(call.path == missing_path for call in info_calls)
     assert any(call.path == directory_path for call in info_calls)
     assert not any(call.operation == "ls" for call in source.calls)
-    assert not any(call.operation == "rm" for call in source.calls)
+    assert not any(call.operation in {"rm", "rmdir"} for call in source.calls)
     assert len(source.errors) == 2
     assert {operation for _source_id, operation, _error in source.errors} == {"info"}

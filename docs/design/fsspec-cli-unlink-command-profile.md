@@ -84,14 +84,21 @@ remain visible.
 
 ## 4. Runtime failures and diagnostics
 
+Pre-mutation failures happen before `_rm_file` and use the confirmed categories
+below. Any failure after `_rm_file` begins — including `_rm_file` exceptions,
+non-`FileNotFoundError` post-check exceptions, and a path that still resolves —
+is uncertain mutation state. The command MUST NOT reuse confirmed pre-mutation
+categories for that phase.
+
 | Exception or condition | Category |
 | --- | --- |
-| `FileNotFoundError` | `not found` |
-| `PermissionError` | `permission denied` |
-| `IsADirectoryError` or source-reported directory | `is a directory` |
-| `NotImplementedError` | `unsupported operation` |
-| Invalid consumed backend shape or path still present | `incompatible result` |
-| Any other backend exception | `backend failure (<class>): <message>` |
+| Pre-mutation `FileNotFoundError` | `not found` |
+| Pre-mutation `PermissionError` | `permission denied` |
+| Pre-mutation `IsADirectoryError` or source-reported directory | `is a directory` |
+| Pre-mutation `NotImplementedError` | `unsupported operation` |
+| Pre-mutation invalid consumed backend shape | `incompatible result` |
+| Pre-mutation any other backend exception | `backend failure (<class>): <message>` |
+| Post-mutation `_rm_file` failure, non-not-found post-check, or path still present | `uncertain mutation state` |
 
 ## 5. Exit status
 

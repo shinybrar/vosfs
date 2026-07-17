@@ -31,6 +31,7 @@ def test_unlink_removes_one_file_without_stdout() -> None:
         ("info", "/docs/notes.txt"),
         ("exit",),
     ]
+    assert not any(event[0] in {"rm", "rmdir", "ls"} for event in events)
 
 
 def test_unlink_rejects_a_missing_mapped_filesystem_operand() -> None:
@@ -50,8 +51,36 @@ def test_unlink_rejects_extra_operands_without_entering_sources() -> None:
 
 
 @pytest.mark.parametrize(
+    "second",
+    ["malformed", "other:/two", "memory:/", "memory:/."],
+)
+def test_unlink_reports_extra_operand_before_second_operand_validation(
+    second: str,
+) -> None:
+    result = _invoke_unlink(["memory:/one", second])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == "unlink: extra operand\n"
+
+
+@pytest.mark.parametrize(
     "option",
-    ["-f", "-r", "-R", "-d", "-v", "-i", "-l", "--force", "-A", "-h", "--help=value"],
+    [
+        "-f",
+        "-r",
+        "-R",
+        "-d",
+        "-v",
+        "-i",
+        "-l",
+        "--force",
+        "-A",
+        "-h",
+        "--help=value",
+        "-fr",
+        "-fd",
+    ],
 )
 def test_unlink_rejects_every_option_without_entering_sources(option: str) -> None:
     result = _invoke_unlink([option, "memory:/file"])
@@ -59,6 +88,36 @@ def test_unlink_rejects_every_option_without_entering_sources(option: str) -> No
     assert result.exit_code == 2
     assert result.stdout == ""
     assert result.stderr == f"unlink: {option}: unsupported option\n"
+
+
+def test_unlink_accepts_operand_after_option_terminator() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
+
+    result = _invoke_unlink(
+        ["--", "memory:/docs/notes.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert [event[0] for event in events] == [
+        "factory",
+        "enter",
+        "info",
+        "rm_file",
+        "info",
+        "exit",
+    ]
+
+
+def test_unlink_treats_dashed_tokens_after_terminator_as_operands() -> None:
+    result = _invoke_unlink(["--", "-f"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == "unlink: -f: invalid mapped filesystem operand\n"
 
 
 @pytest.mark.parametrize(
@@ -69,6 +128,9 @@ def test_unlink_rejects_every_option_without_entering_sources(option: str) -> No
         ("memory:/..", "memory:/.."),
         ("memory:/docs/.", "memory:/docs/."),
         ("memory:/docs/..", "memory:/docs/.."),
+        ("memory:/./", "memory:/./"),
+        ("memory:/docs/./", "memory:/docs/./"),
+        ("memory:/docs/../", "memory:/docs/../"),
     ],
 )
 def test_unlink_rejects_root_and_final_dot_paths_before_source_entry(
@@ -148,7 +210,6 @@ def test_unlink_rejects_a_missing_file() -> None:
     assert [event[0] for event in source.events].count("rm_file") == 0
 
 
-@pytest.mark.parametrize("stage", ["info", "rm_file", "post_info"])
 @pytest.mark.parametrize(
     ("error_factory", "category"),
     [
@@ -159,17 +220,41 @@ def test_unlink_rejects_a_missing_file() -> None:
         (RuntimeError, "backend failure (RuntimeError): "),
     ],
 )
-def test_unlink_maps_runtime_failures_to_locked_categories(
-    stage: str,
+def test_unlink_maps_pre_mutation_failures_to_locked_categories(
     error_factory: Callable[[], Exception],
     category: str,
+) -> None:
+    error = error_factory()
+    source = _RecordingSource([], info_error=error)
+
+    result = _invoke_unlink(["memory:/docs/notes.txt"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == f"unlink: memory:/docs/notes.txt: {category}\n"
+    assert [event[0] for event in source.events].count("rm_file") == 0
+
+
+@pytest.mark.parametrize("stage", ["rm_file", "post_info"])
+@pytest.mark.parametrize(
+    "error_factory",
+    [
+        FileNotFoundError,
+        PermissionError,
+        IsADirectoryError,
+        NotImplementedError,
+        RuntimeError,
+    ],
+)
+def test_unlink_reports_uncertain_mutation_after_delete_attempt(
+    stage: str,
+    error_factory: Callable[[], Exception],
 ) -> None:
     if stage == "post_info" and error_factory is FileNotFoundError:
         pytest.skip("post-check FileNotFoundError confirms success")
     error = error_factory()
     source = _RecordingSource(
         [],
-        info_error=error if stage == "info" else None,
         rm_file_error=error if stage == "rm_file" else None,
         post_info_by_path={
             "/docs/notes.txt": error if stage == "post_info" else FileNotFoundError()
@@ -180,7 +265,9 @@ def test_unlink_maps_runtime_failures_to_locked_categories(
 
     assert result.exit_code == 1
     assert result.stdout == ""
-    assert result.stderr == f"unlink: memory:/docs/notes.txt: {category}\n"
+    assert result.stderr == (
+        "unlink: memory:/docs/notes.txt: uncertain mutation state\n"
+    )
 
 
 def test_unlink_rejects_when_post_check_shows_the_file_still_present() -> None:
@@ -193,7 +280,9 @@ def test_unlink_rejects_when_post_check_shows_the_file_still_present() -> None:
 
     assert result.exit_code == 1
     assert result.stdout == ""
-    assert result.stderr == "unlink: memory:/docs/notes.txt: incompatible result\n"
+    assert result.stderr == (
+        "unlink: memory:/docs/notes.txt: uncertain mutation state\n"
+    )
 
 
 def test_unlink_rejects_ambiguous_post_check_shapes() -> None:
@@ -206,7 +295,9 @@ def test_unlink_rejects_ambiguous_post_check_shapes() -> None:
 
     assert result.exit_code == 1
     assert result.stdout == ""
-    assert result.stderr == "unlink: memory:/docs/notes.txt: incompatible result\n"
+    assert result.stderr == (
+        "unlink: memory:/docs/notes.txt: uncertain mutation state\n"
+    )
 
 
 def test_unlink_refuses_an_active_same_thread_event_loop(monkeypatch) -> None:
@@ -328,4 +419,29 @@ def test_unlink_accepts_hidden_file_paths_that_are_not_final_dot_components() ->
         "/.hidden",
         "/.hidden",
         "/.hidden",
+    ]
+
+
+def test_unlink_never_calls_rm_or_rmdir_primitives() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events, trap_rmdir=True)
+
+    result = _invoke_unlink(["memory:/docs/notes.txt"], sources={"memory": source})
+
+    assert result.exit_code == 0
+    assert [event[0] for event in events if event[0] == "rm_file"] == ["rm_file"]
+    assert not any(event[0] in {"rm", "rmdir"} for event in events)
+
+    filesystem = source.contexts[0].filesystem
+
+    async def prove_traps() -> None:
+        with pytest.raises(AssertionError, match="_rm must not be called by unlink"):
+            await filesystem._rm("/docs/notes.txt")
+        with pytest.raises(AssertionError, match="_rmdir must not be called by unlink"):
+            await filesystem._rmdir("/docs")
+
+    asyncio.run(prove_traps())
+    assert [event[0] for event in events if event[0] in {"rm", "rmdir"}] == [
+        "rm",
+        "rmdir",
     ]

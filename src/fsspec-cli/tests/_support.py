@@ -227,6 +227,9 @@ class _RecordingFileSystem(AsyncFileSystem):
         self.source.events.append(
             ("rmdir", self.source_id, path, id(asyncio.get_running_loop()))
         )
+        if self.source.trap_rmdir:
+            message = "_rmdir must not be called by unlink"
+            raise AssertionError(message)
         if path in self.source.rmdir_by_path:
             scripted = self.source.rmdir_by_path[path]
             if isinstance(scripted, BaseException):
@@ -270,6 +273,7 @@ class _RecordingSource:
         mkdir_error: BaseException | None = None,
         rmdir_error: BaseException | None = None,
         rm_file_error: BaseException | None = None,
+        trap_rmdir: bool = False,
         post_info_result: object | None = MappingProxyType({"type": "directory"}),
         post_info_error: BaseException | None = None,
         exit_result: object = None,
@@ -293,6 +297,7 @@ class _RecordingSource:
         self.mkdir_error = mkdir_error
         self.rmdir_error = rmdir_error
         self.rm_file_error = rm_file_error
+        self.trap_rmdir = trap_rmdir
         self.post_info_result = post_info_result
         self.post_info_error = post_info_error
         self.exit_result = exit_result

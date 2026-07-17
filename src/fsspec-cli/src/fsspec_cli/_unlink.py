@@ -40,6 +40,7 @@ class _UnlinkFailure:
     operand: _MappedOperand
     backend_error: Exception | None = None
     incompatible: Literal["directory", "result"] | None = None
+    uncertain: bool = False
 
 
 class _UnlinkCommand(TyperCommand):
@@ -60,12 +61,49 @@ def _is_rejected_path(path: str) -> bool:
     return final in {".", ".."}
 
 
+def _validate_mapped_operand(
+    command: str,
+    argument: str,
+    known_names: Collection[str],
+) -> _MappedOperand:
+    name, separator, path = argument.partition(":")
+    if (
+        not name
+        or not separator
+        or not path.startswith("/")
+        or "\0" in argument
+        or "\n" in argument
+    ):
+        rendered = _render_diagnostic_value(argument)
+        _usage_error(command, f"{rendered}: invalid mapped filesystem operand")
+
+    if name not in known_names:
+        known = sorted(
+            known_names,
+            key=lambda candidate: (locale.strxfrm(candidate), candidate),
+        )
+        rendered_operand = _render_diagnostic_value(argument)
+        rendered_names = ", ".join(
+            _render_diagnostic_value(candidate) for candidate in known
+        )
+        _usage_error(
+            command,
+            f"{rendered_operand}: unknown filesystem (known: {rendered_names})",
+        )
+
+    if _is_rejected_path(path):
+        rendered = _render_diagnostic_value(argument)
+        _usage_error(command, f"{rendered}: rejected path")
+
+    return _MappedOperand(spelling=argument, name=name, path=path)
+
+
 def _preflight(
     command: str,
     raw_arguments: tuple[str, ...],
     known_names: Collection[str],
 ) -> _UnlinkRequest:
-    operands = []
+    operands: list[str] = []
     options_active = True
 
     for argument in raw_arguments:
@@ -75,45 +113,16 @@ def _preflight(
         if options_active and argument.startswith("-") and argument != "-":
             rendered = _render_diagnostic_value(argument)
             _usage_error(command, f"{rendered}: unsupported option")
-
-        name, separator, path = argument.partition(":")
-        if (
-            not name
-            or not separator
-            or not path.startswith("/")
-            or "\0" in argument
-            or "\n" in argument
-        ):
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: invalid mapped filesystem operand")
-
-        if name not in known_names:
-            known = sorted(
-                known_names,
-                key=lambda candidate: (locale.strxfrm(candidate), candidate),
-            )
-            rendered_operand = _render_diagnostic_value(argument)
-            rendered_names = ", ".join(
-                _render_diagnostic_value(candidate) for candidate in known
-            )
-            _usage_error(
-                command,
-                f"{rendered_operand}: unknown filesystem (known: {rendered_names})",
-            )
-
-        if _is_rejected_path(path):
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: rejected path")
-
-        if len(operands) == 1:
-            _usage_error(command, "extra operand")
-
-        operands.append(_MappedOperand(spelling=argument, name=name, path=path))
+        operands.append(argument)
 
     if not operands:
         _usage_error(command, "missing mapped filesystem operand")
+    if len(operands) > 1:
+        _usage_error(command, "extra operand")
 
-    return _UnlinkRequest(operand=operands[0])
+    return _UnlinkRequest(
+        operand=_validate_mapped_operand(command, operands[0], known_names)
+    )
 
 
 async def _confirmed_rm_file(  # noqa: PLR0911 - explicit outcome branches.
@@ -137,17 +146,17 @@ async def _confirmed_rm_file(  # noqa: PLR0911 - explicit outcome branches.
 
     try:
         await filesystem._rm_file(operand.path)  # noqa: SLF001
-    except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
-        return _UnlinkFailure(operand, backend_error=error)
+    except Exception as error:  # noqa: BLE001 - mutation may have partially applied.
+        return _UnlinkFailure(operand, backend_error=error, uncertain=True)
 
     try:
         await filesystem._info(operand.path)  # noqa: SLF001
     except FileNotFoundError:
         return None
     except Exception as error:  # noqa: BLE001 - never hide non-not-found errors.
-        return _UnlinkFailure(operand, backend_error=error)
+        return _UnlinkFailure(operand, backend_error=error, uncertain=True)
     else:
-        return _UnlinkFailure(operand, incompatible="result")
+        return _UnlinkFailure(operand, uncertain=True)
 
 
 def _render_operand_diagnostic(
@@ -161,7 +170,9 @@ def _render_operand_diagnostic(
 
 
 def _render_failure(command: str, failure: _UnlinkFailure) -> None:
-    if failure.incompatible == "directory":
+    if failure.uncertain:
+        _render_operand_diagnostic(command, failure.operand, "uncertain mutation state")
+    elif failure.incompatible == "directory":
         _render_operand_diagnostic(command, failure.operand, "is a directory")
     elif failure.incompatible == "result":
         _render_operand_diagnostic(command, failure.operand, "incompatible result")
