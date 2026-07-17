@@ -11,6 +11,7 @@
   Passing results claim only source-default creation semantics, not POSIX mode
   or umask behavior.
 * **fsspec-cli:** add base empty-directory `rmdir` ([#130](https://github.com/shinybrar/vosfs/issues/130))
+* **fsspec-cli:** add XSI `unlink` for one mapped file ([#131](https://github.com/shinybrar/vosfs/issues/131))
 
 ### Changed
 

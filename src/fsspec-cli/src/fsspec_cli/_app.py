@@ -23,6 +23,8 @@ from ._ls import _LsCommand, _raw_arguments, _run_ls
 from ._mkdir import _MkdirCommand, _run_mkdir
 from ._rmdir import _raw_arguments as _rmdir_raw_arguments
 from ._rmdir import _RmdirCommand, _run_rmdir
+from ._unlink import _raw_arguments as _unlink_raw_arguments
+from ._unlink import _run_unlink, _UnlinkCommand
 
 AsyncFilesystemSource: TypeAlias = Callable[
     [], AbstractAsyncContextManager[AbstractFileSystem]
@@ -37,6 +39,7 @@ _MKDIR_HELP = (
     "behavior."
 )
 _RMDIR_COMMAND = "rmdir"
+_UNLINK_COMMAND = "unlink"
 
 
 def _validate_source_name(name: object) -> None:
@@ -149,3 +152,16 @@ class App:
             raw_arguments = _rmdir_raw_arguments(ctx)
             _ensure_no_active_event_loop(_RMDIR_COMMAND)
             asyncio.run(_run_rmdir(_RMDIR_COMMAND, raw_arguments, self._sources))
+
+        @self.typer_app.command(
+            _UNLINK_COMMAND,
+            cls=_UnlinkCommand,
+            context_settings={
+                "allow_extra_args": True,
+                "ignore_unknown_options": True,
+            },
+        )
+        def unlink(ctx: typer.Context) -> None:
+            raw_arguments = _unlink_raw_arguments(ctx)
+            _ensure_no_active_event_loop(_UNLINK_COMMAND)
+            asyncio.run(_run_unlink(_UNLINK_COMMAND, raw_arguments, self._sources))
