@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import TYPE_CHECKING, NoReturn
 
 import pytest
@@ -161,10 +162,75 @@ def test_rm_rejects_a_missing_mapped_filesystem_operand() -> None:
     assert result.stderr == "rm: missing mapped filesystem operand\n"
 
 
+def test_rm_force_without_operands_succeeds_without_source_entry() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> object:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke_rm(["-f"], sources={"memory": source_must_not_run})
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert source_calls == 0
+
+
+def test_rm_force_ignores_missing_operands_and_removes_later_files() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(
+        events,
+        info_by_path={"/docs/missing.txt": FileNotFoundError("missing")},
+    )
+
+    result = _invoke_rm(
+        ["-f", "memory:/docs/missing.txt", "memory:/docs/notes.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert [event[2] for event in events if event[0] == "rm_file"] == [
+        "/docs/notes.txt"
+    ]
+
+
+def test_rm_force_succeeds_when_all_operands_are_missing() -> None:
+    source = _RecordingSource(
+        [],
+        info_by_path={
+            "/docs/first.txt": FileNotFoundError(),
+            "/docs/second.txt": FileNotFoundError(),
+        },
+    )
+
+    result = _invoke_rm(
+        ["-f", "memory:/docs/first.txt", "memory:/docs/second.txt"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [event[0] for event in source.events].count("rm_file") == 0
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [["-f", "-f"], ["-ff"], ["-fff"]],
+)
+def test_rm_force_accepts_repeated_and_grouped_flags(arguments: list[str]) -> None:
+    result = _invoke_rm(arguments)
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
 @pytest.mark.parametrize(
     "option",
     [
-        "-f",
         "-d",
         "-R",
         "-r",
@@ -179,6 +245,7 @@ def test_rm_rejects_a_missing_mapped_filesystem_operand() -> None:
         "-fr",
         "-fd",
         "-Rf",
+        "-fi",
     ],
 )
 def test_rm_rejects_every_option_without_entering_sources(option: str) -> None:
@@ -187,6 +254,227 @@ def test_rm_rejects_every_option_without_entering_sources(option: str) -> None:
     assert result.exit_code == 2
     assert result.stdout == ""
     assert result.stderr == f"rm: {option}: unsupported option\n"
+
+
+@pytest.mark.parametrize(
+    ("error_factory", "category"),
+    [
+        (PermissionError, "permission denied"),
+        (RuntimeError, "backend failure (RuntimeError): "),
+    ],
+)
+def test_rm_force_reports_non_missing_pre_mutation_failures(
+    error_factory: Callable[[], Exception],
+    category: str,
+) -> None:
+    source = _RecordingSource([], info_error=error_factory())
+
+    result = _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == f"rm: memory:/docs/notes.txt: {category}\n"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [TimeoutError("request timed out"), RuntimeError("service timeout")],
+)
+def test_rm_force_reports_timeouts_before_mutation(error: Exception) -> None:
+    source = _RecordingSource([], info_error=error)
+
+    result = _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "rm: memory:/docs/notes.txt: backend failure "
+        f"({type(error).__name__}): {error}\n"
+    )
+    assert [event[0] for event in source.events].count("rm_file") == 0
+
+
+def test_rm_force_continues_mixed_operands_in_order() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(
+        events,
+        info_by_path={
+            "/docs/missing.txt": FileNotFoundError("missing"),
+            "/docs/failing.txt": PermissionError("denied"),
+        },
+    )
+
+    result = _invoke_rm(
+        [
+            "-f",
+            "memory:/docs/missing.txt",
+            "memory:/docs/existing.txt",
+            "memory:/docs/failing.txt",
+        ],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "rm: memory:/docs/failing.txt: permission denied\n"
+    assert [
+        (event[0], event[2]) for event in events if event[0] in {"info", "rm_file"}
+    ] == [
+        ("info", "/docs/missing.txt"),
+        ("info", "/docs/existing.txt"),
+        ("rm_file", "/docs/existing.txt"),
+        ("info", "/docs/existing.txt"),
+        ("info", "/docs/failing.txt"),
+    ]
+
+
+def test_rm_force_confirms_many_file_removals() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
+
+    result = _invoke_rm(
+        ["-f", "memory:/docs/a.txt", "memory:/docs/b.txt", "memory:/docs/c.txt"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [
+        (event[0], event[2]) for event in events if event[0] in {"info", "rm_file"}
+    ] == [
+        ("info", "/docs/a.txt"),
+        ("rm_file", "/docs/a.txt"),
+        ("info", "/docs/a.txt"),
+        ("info", "/docs/b.txt"),
+        ("rm_file", "/docs/b.txt"),
+        ("info", "/docs/b.txt"),
+        ("info", "/docs/c.txt"),
+        ("rm_file", "/docs/c.txt"),
+        ("info", "/docs/c.txt"),
+    ]
+
+
+def test_rm_force_accepts_operand_after_option_terminator() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
+
+    result = _invoke_rm(["-f", "--", "name:/file"], sources={"name": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [event[0] for event in events] == [
+        "factory",
+        "enter",
+        "info",
+        "rm_file",
+        "info",
+        "exit",
+    ]
+
+
+@pytest.mark.parametrize("arguments", [["memory:/file", "-f"], ["-i"], ["--force"]])
+def test_rm_force_profile_rejects_unsupported_options_before_source_entry(
+    arguments: list[str],
+) -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> object:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke_rm(arguments, sources={"memory": source_must_not_run})
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "unsupported option" in result.stderr
+    assert source_calls == 0
+
+
+@pytest.mark.parametrize(
+    ("info_result", "category"),
+    [
+        ({"type": "directory"}, "is a directory"),
+        ({"type": "link"}, "incompatible result"),
+    ],
+)
+def test_rm_force_preserves_non_file_failures(
+    info_result: object,
+    category: str,
+) -> None:
+    source = _RecordingSource([], info_result=info_result)
+
+    result = _invoke_rm(["-f", "memory:/docs"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == f"rm: memory:/docs: {category}\n"
+
+
+def test_rm_force_preserves_uncertain_mutation_failure() -> None:
+    source = _RecordingSource([], rm_file_error=PermissionError())
+
+    result = _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "rm: memory:/docs/notes.txt: uncertain mutation state\n"
+
+
+def test_rm_force_keeps_post_mutation_not_found_uncertain() -> None:
+    source = _RecordingSource([], rm_file_error=FileNotFoundError("raced removal"))
+
+    result = _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "rm: memory:/docs/notes.txt: uncertain mutation state\n"
+
+
+def test_rm_force_uses_distinct_sources_and_skips_missing_operands() -> None:
+    events: list[tuple[object, ...]] = []
+    alpha = _RecordingSource(
+        events,
+        info_by_path={"/docs/missing.txt": FileNotFoundError("missing")},
+    )
+    beta = _RecordingSource(events)
+
+    result = _invoke_rm(
+        ["-f", "alpha:/docs/missing.txt", "beta:/docs/notes.txt"],
+        sources={"alpha": alpha, "beta": beta},
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert alpha.call_count == beta.call_count == 1
+    assert [event[2] for event in events if event[0] == "rm_file"] == [
+        "/docs/notes.txt"
+    ]
+
+
+def test_rm_force_preserves_cancellation() -> None:
+    control = asyncio.CancelledError()
+    source = _RecordingSource([], rm_file_error=control)
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+
+    assert caught.value is control
+    exception_type, exception, traceback = source.exit_calls[0]
+    assert exception_type is asyncio.CancelledError
+    assert exception is control
+    assert traceback is not None
+
+
+def test_rm_force_reports_cleanup_failure() -> None:
+    source = _RecordingSource([], exit_error=OSError("cleanup failed"))
+
+    result = _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert (
+        result.stderr == "rm: memory: source exit failure (OSError): cleanup failed\n"
+    )
 
 
 def test_rm_accepts_operand_after_option_terminator() -> None:
@@ -569,6 +857,17 @@ def test_rm_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
 
     assert result.exit_code == 0
     assert "Usage:" in result.stdout
+    assert result.stderr == ""
+
+
+def test_rm_help_describes_force_profile() -> None:
+    result = _invoke_rm(["--help"])
+
+    assert result.exit_code == 0
+    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
+    assert "rm -f ignores files already missing before removal" in " ".join(
+        plain_help.split()
+    )
     assert result.stderr == ""
 
 

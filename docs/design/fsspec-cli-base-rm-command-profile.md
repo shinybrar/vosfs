@@ -44,8 +44,9 @@ The supported surface is deliberately smaller than POSIX Issue 8:
 regular-file or non-link identity. Implicit permission-based POSIX prompting
 is unavailable in this profile.
 
-`-f`, `-d`, `-R`/`-r`, `-v`, `-i`, grouped forms, and long forms remain
-unsupported until their dedicated profiles exist.
+`-d`, `-R`/`-r`, `-v`, `-i`, grouped forms, and long forms remain unsupported
+until their dedicated profiles exist. [`rm -f`](fsspec-cli-rm-force-command-profile.md)
+is a separate profile.
 
 ## 2. Mapped filesystem operands
 
@@ -140,8 +141,8 @@ match the plain `ls` profile.
 
 Hermetic matrix probes exercise adapted async Local, adapted async Memory, and
 native async `vosfs` through the production `App` seam. Source-free rejection
-tests prove `-f` and other unsupported options complete during command
-preflight without entering a source.
+tests prove unsupported options complete during command preflight without
+entering a source.
 
 Live OpenCADC evidence is not required for this profile in v1; native `vosfs`
 hermetic evidence does not broaden into a general service guarantee.

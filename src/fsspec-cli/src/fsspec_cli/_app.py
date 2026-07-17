@@ -64,8 +64,9 @@ _RMDIR_COMMAND = "rmdir"
 _RM_COMMAND = "rm"
 _UNLINK_COMMAND = "unlink"
 _RM_HELP = (
-    "Remove one or more source-reported files. Directories, force, recursion, "
-    "and interactive permission prompts are unavailable in this profile."
+    "Remove source-reported files. rm -f ignores files already missing before "
+    "removal, including with zero operands. Directories, recursion, and "
+    "interactive permission prompts are unavailable."
 )
 _SOURCE_FREE_CONTEXT = {
     "allow_extra_args": True,

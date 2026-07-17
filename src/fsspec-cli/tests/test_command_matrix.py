@@ -20,6 +20,7 @@ from ._matrix_support import (
     _exercise_mkdir_locked_profile,
     _exercise_mkdir_memory_over_eager_failure,
     _exercise_mkdir_p_locked_profile,
+    _exercise_rm_force_profile,
     _exercise_rm_locked_profile,
     _exercise_rmdir_locked_profile,
     _exercise_unlink_locked_profile,
@@ -644,6 +645,7 @@ def test_adapted_local_base_rm_profile_uses_native_temporary_storage(
     )
 
     _exercise_rm_locked_profile("local", source, path)
+    _exercise_rm_force_profile("local", source, path)
 
 
 def test_adapted_local_cp_profile_uses_native_temporary_storage(
@@ -683,6 +685,7 @@ def test_adapted_memory_base_rm_profile_has_isolated_state(
     source = _ProbedSource(make_filesystem)
 
     _exercise_rm_locked_profile("memory", source, "/docs")
+    _exercise_rm_force_profile("memory", source, "/docs")
 
 
 def test_adapted_memory_cp_profile_has_isolated_state(
@@ -730,7 +733,7 @@ def test_cp_option_rejection_is_source_free() -> None:
     assert source_calls == 0
 
 
-def test_rm_option_rejection_is_source_free() -> None:
+def test_rm_force_profile_option_rejection_is_source_free() -> None:
     source_calls = 0
 
     def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
@@ -741,12 +744,12 @@ def test_rm_option_rejection_is_source_free() -> None:
     result = _invoke(
         App({"memory": source_must_not_run}),
         "rm",
-        ["-f", "memory:/docs/notes.txt"],
+        ["-f", "-i", "memory:/docs/notes.txt"],
     )
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         2,
         "",
-        "rm: -f: unsupported option\n",
+        "rm: -i: unsupported option\n",
     )
     assert source_calls == 0
