@@ -217,6 +217,9 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) | source | `memory / adapted async` | `fail` | `pass` | Hermetic | [H-2026-07-17-29565052441](#h-2026-07-17-29565052441) |
 | [Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29565052441](#h-2026-07-17-29565052441) |
 | [Base `mkdir` `-p` strict rejection](fsspec-cli-base-mkdir-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29565052441](#h-2026-07-17-29565052441) |
+| [XSI `unlink`](fsspec-cli-unlink-command-profile.md) | source | `local / adapted async` | `unverified` | `pass` | Hermetic | — |
+| [XSI `unlink`](fsspec-cli-unlink-command-profile.md) | source | `memory / adapted async` | `unverified` | `pass` | Hermetic | — |
+| [XSI `unlink`](fsspec-cli-unlink-command-profile.md) | source | `vosfs / native async` | `unverified` | `pass` | Hermetic | — |
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.

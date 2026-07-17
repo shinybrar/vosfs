@@ -41,7 +41,7 @@ class ExitCall:
 
 @dataclass(frozen=True)
 class FilesystemCall:
-    operation: Literal["info", "ls", "get_file", "mkdir", "rmdir"]
+    operation: Literal["info", "ls", "get_file", "mkdir", "rmdir", "rm_file", "rm"]
     source_id: int
     path: str
     detail: bool | None
@@ -233,6 +233,54 @@ class _ProbedSource(Generic[_FilesystemT]):
 
         return rmdir
 
+    def _wrap_rm_file(
+        self,
+        source_id: int,
+        filesystem: _FilesystemT,
+        original_rm_file: Callable[..., Awaitable[None]] | None,
+    ) -> Callable[..., Awaitable[None]]:
+        async def rm_file(path: str, **kwargs: object) -> None:
+            self.calls.append(
+                FilesystemCall(
+                    "rm_file",
+                    source_id,
+                    path,
+                    None,
+                    kwargs,
+                    id(asyncio.get_running_loop()),
+                )
+            )
+            if original_rm_file is None:
+                message = f"{type(filesystem).__name__} lacks _rm_file"
+                raise NotImplementedError(message)
+            try:
+                await original_rm_file(path, **kwargs)
+            except Exception as error:
+                self.errors.append((source_id, "rm_file", error))
+                raise
+
+        return rm_file
+
+    def _wrap_rm(
+        self,
+        source_id: int,
+    ) -> Callable[..., Awaitable[None]]:
+        async def rm(path: str, **kwargs: object) -> None:
+            self.calls.append(
+                FilesystemCall(
+                    "rm",
+                    source_id,
+                    path,
+                    None,
+                    kwargs,
+                    id(asyncio.get_running_loop()),
+                )
+            )
+            message = "_rm must not be called by unlink"
+            raise AssertionError(message)
+
+        return rm
+
     def instrument(self, source_id: int, filesystem: _FilesystemT) -> None:
         setattr(  # noqa: B010 - instrument this instance.
             filesystem,
@@ -262,6 +310,18 @@ class _ProbedSource(Generic[_FilesystemT]):
             self._wrap_rmdir(
                 source_id, filesystem, getattr(filesystem, "_rmdir", None)
             ),
+        )
+        setattr(  # noqa: B010 - instrument this instance.
+            filesystem,
+            "_rm_file",
+            self._wrap_rm_file(
+                source_id, filesystem, getattr(filesystem, "_rm_file", None)
+            ),
+        )
+        setattr(  # noqa: B010 - negative trap for recursive rm.
+            filesystem,
+            "_rm",
+            self._wrap_rm(source_id),
         )
 
 
@@ -335,6 +395,10 @@ def _invoke_mkdir(app: App, arguments: list[str]) -> Result:
 
 def _invoke_rmdir(app: App, arguments: list[str]) -> Result:
     return _invoke(app, "rmdir", arguments)
+
+
+def _invoke_unlink(app: App, arguments: list[str]) -> Result:
+    return _invoke(app, "unlink", arguments)
 
 
 def _exercise_locked_profile(
@@ -688,3 +752,54 @@ def _exercise_rmdir_locked_profile(
     assert error_operations == {"rmdir", "info"}
     absence_proof = next(error for _sid, op, error in source.errors if op == "info")
     assert isinstance(absence_proof, FileNotFoundError)
+
+
+def _exercise_unlink_locked_profile(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    parent_path: str,
+    *,
+    file_name: str = "notes.txt",
+) -> None:
+    app = App({source_name: source})
+    file_path = f"{parent_path}/{file_name}"
+    missing_path = f"{parent_path}/missing.txt"
+    directory_path = parent_path
+
+    success = _invoke_unlink(app, [f"{source_name}:{file_path}"])
+    missing = _invoke_unlink(app, [f"{source_name}:{missing_path}"])
+    directory = _invoke_unlink(app, [f"{source_name}:{directory_path}"])
+
+    assert (success.exit_code, success.stdout, success.stderr) == (0, "", "")
+    assert (missing.exit_code, missing.stdout, missing.stderr) == (
+        1,
+        "",
+        f"unlink: {source_name}:{missing_path}: not found\n",
+    )
+    assert (directory.exit_code, directory.stdout, directory.stderr) == (
+        1,
+        "",
+        f"unlink: {source_name}:{directory_path}: is a directory\n",
+    )
+    assert [event.stage for event in source.lifecycle] == [
+        "factory",
+        "enter",
+        "exit",
+        "factory",
+        "enter",
+        "exit",
+        "factory",
+        "enter",
+        "exit",
+    ]
+    rm_file_calls = [call for call in source.calls if call.operation == "rm_file"]
+    assert len(rm_file_calls) == 1
+    assert rm_file_calls[0].path == file_path
+    info_calls = [call for call in source.calls if call.operation == "info"]
+    assert sum(1 for call in info_calls if call.path == file_path) >= 2
+    assert any(call.path == missing_path for call in info_calls)
+    assert any(call.path == directory_path for call in info_calls)
+    assert not any(call.operation == "ls" for call in source.calls)
+    assert not any(call.operation in {"rm", "rmdir"} for call in source.calls)
+    assert len(source.errors) == 2
+    assert {operation for _source_id, operation, _error in source.errors} == {"info"}

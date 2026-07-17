@@ -45,6 +45,16 @@ def _invoke_rmdir(
     return CliRunner().invoke(App(sources).typer_app, ["rmdir", *arguments])
 
 
+def _invoke_unlink(
+    arguments: list[str],
+    *,
+    sources: dict[str, AsyncFilesystemSource] | None = None,
+) -> Result:
+    if sources is None:
+        sources = {"memory": _source_must_not_run}
+    return CliRunner().invoke(App(sources).typer_app, ["unlink", *arguments])
+
+
 class _RecordingFileSystem(AsyncFileSystem):
     cachable = False
 
@@ -58,6 +68,7 @@ class _RecordingFileSystem(AsyncFileSystem):
         self.source_id = source_id
         self._pending_mkdir_verify: set[str] = set()
         self._pending_rmdir_verify: set[str] = set()
+        self._pending_unlink_verify: set[str] = set()
         self._created_dirs: set[str] = set()
         self._removed_paths: set[str] = set()
 
@@ -93,6 +104,15 @@ class _RecordingFileSystem(AsyncFileSystem):
             return self.source.post_info_result
         return None
 
+    def _post_unlink_info(self, path: str) -> object:
+        self._pending_unlink_verify.discard(path)
+        scripted = self._consume_post_info(path)
+        if scripted is not None:
+            return scripted
+        if self.source.post_info_error is not None:
+            raise self.source.post_info_error
+        raise FileNotFoundError(path)
+
     async def _info(self, path: str, **kwargs: object) -> object:
         del kwargs
         self.source.events.append(
@@ -100,6 +120,8 @@ class _RecordingFileSystem(AsyncFileSystem):
         )
         if path in self._pending_rmdir_verify:
             return self._post_rmdir_info(path)
+        if path in self._pending_unlink_verify:
+            return self._post_unlink_info(path)
         if path in self._removed_paths:
             raise FileNotFoundError(path)
         if path in self.source.info_by_path:
@@ -205,6 +227,9 @@ class _RecordingFileSystem(AsyncFileSystem):
         self.source.events.append(
             ("rmdir", self.source_id, path, id(asyncio.get_running_loop()))
         )
+        if self.source.trap_rmdir:
+            message = "_rmdir must not be called by unlink"
+            raise AssertionError(message)
         if path in self.source.rmdir_by_path:
             scripted = self.source.rmdir_by_path[path]
             if isinstance(scripted, BaseException):
@@ -213,6 +238,27 @@ class _RecordingFileSystem(AsyncFileSystem):
             raise self.source.rmdir_error
         self._removed_paths.add(path)
         self._pending_rmdir_verify.add(path)
+
+    async def _rm_file(self, path: str, **kwargs: object) -> None:
+        del kwargs
+        self.source.events.append(
+            ("rm_file", self.source_id, path, id(asyncio.get_running_loop()))
+        )
+        if path in self.source.rm_file_by_path:
+            scripted = self.source.rm_file_by_path[path]
+            if isinstance(scripted, BaseException):
+                raise scripted
+        elif self.source.rm_file_error is not None:
+            raise self.source.rm_file_error
+        self._pending_unlink_verify.add(path)
+
+    async def _rm(self, path: str, **kwargs: object) -> None:
+        del kwargs
+        self.source.events.append(
+            ("rm", self.source_id, path, id(asyncio.get_running_loop()))
+        )
+        message = "_rm must not be called by unlink"
+        raise AssertionError(message)
 
 
 class _RecordingSource:
@@ -226,6 +272,8 @@ class _RecordingSource:
         ls_error: BaseException | None = None,
         mkdir_error: BaseException | None = None,
         rmdir_error: BaseException | None = None,
+        rm_file_error: BaseException | None = None,
+        trap_rmdir: bool = False,
         post_info_result: object | None = MappingProxyType({"type": "directory"}),
         post_info_error: BaseException | None = None,
         exit_result: object = None,
@@ -234,6 +282,7 @@ class _RecordingSource:
         ls_by_path: Mapping[str, object] | None = None,
         mkdir_by_path: Mapping[str, object] | None = None,
         rmdir_by_path: Mapping[str, object] | None = None,
+        rm_file_by_path: Mapping[str, object] | None = None,
         post_info_by_path: Mapping[str, object] | None = None,
         get_file_content: bytes = b"",
         get_file_error: BaseException | None = None,
@@ -247,6 +296,8 @@ class _RecordingSource:
         self.ls_error = ls_error
         self.mkdir_error = mkdir_error
         self.rmdir_error = rmdir_error
+        self.rm_file_error = rm_file_error
+        self.trap_rmdir = trap_rmdir
         self.post_info_result = post_info_result
         self.post_info_error = post_info_error
         self.exit_result = exit_result
@@ -255,6 +306,7 @@ class _RecordingSource:
         self.ls_by_path = ls_by_path or {}
         self.mkdir_by_path = mkdir_by_path or {}
         self.rmdir_by_path = rmdir_by_path or {}
+        self.rm_file_by_path = rm_file_by_path or {}
         self.post_info_by_path = post_info_by_path or {}
         self.get_file_content = get_file_content
         self.get_file_error = get_file_error
