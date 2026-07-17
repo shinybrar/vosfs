@@ -11,9 +11,12 @@ mv [--] name:/file name:/target
 ```
 
 Exactly two mapped operands, same configured source name, no options. File
-source only. Cross-source, multi-source, `-i`, `-f`, and every other option or
-operand shape reject before source entry with status `2`. A directory source
-enters its source, then `_info` reports `is a directory` with status `1`.
+source only. Cross-source, `-i`, `-f`, and every other option or unprofiled
+operand shape reject before source entry with status `2`. Multiple same-source
+file operands into an existing directory are covered by the
+[multi-file same-source `mv` profile](fsspec-cli-same-source-multi-file-mv-command-profile.md).
+A directory source enters its source, then `_info` reports `is a directory`
+with status `1`.
 
 Target resolution matches verified same-source `cp`: destination directory gets
 source basename, existing files may replace, and resolved parent must exist as a

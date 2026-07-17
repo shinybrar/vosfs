@@ -950,6 +950,92 @@ def test_adapted_memory_mv_remains_unverified_without_exact_operation(
     assert not any(call.operation == "get_file" for call in source.calls)
 
 
+def test_adapted_local_multi_file_mv_remains_unverified_without_exact_operation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    notes_path = root / "notes.txt"
+    guide_path = root / "guide.md"
+    target_dir = root / "target"
+    notes_path.write_bytes(b"notes")
+    guide_path.write_bytes(b"guide")
+    target_dir.mkdir()
+    source = _ProbedSource(
+        lambda: AsyncFileSystemWrapper(
+            LocalFileSystem(skip_instance_cache=True),
+            asynchronous=True,
+        )
+    )
+
+    def reject_sync_mv(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError(_SYNC_MV_MESSAGE)
+
+    monkeypatch.setattr(AsyncFileSystemWrapper, "mv", reject_sync_mv)
+    result = _invoke(
+        App({"local": source}),
+        "mv",
+        [f"local:{notes_path}", f"local:{guide_path}", f"local:{target_dir}"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        f"mv: local:{target_dir}: unsupported operation\n",
+    )
+    assert "_mv" not in type(source.filesystems[0]).__dict__
+    assert notes_path.read_bytes() == b"notes"
+    assert guide_path.read_bytes() == b"guide"
+    assert not (target_dir / "notes.txt").exists()
+    assert not (target_dir / "guide.md").exists()
+    assert not any(call.operation == "get_file" for call in source.calls)
+
+
+def test_adapted_memory_multi_file_mv_remains_unverified_without_exact_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+
+    def make_filesystem() -> AsyncFileSystemWrapper:
+        MemoryFileSystem.clear_instance_cache()
+        filesystem = MemoryFileSystem()
+        filesystem.makedirs("/docs/target")
+        filesystem.pipe_file("/docs/notes.txt", b"notes")
+        filesystem.pipe_file("/docs/guide.md", b"guide")
+        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
+
+    source = _ProbedSource(make_filesystem)
+
+    def reject_sync_mv(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError(_SYNC_MV_MESSAGE)
+
+    monkeypatch.setattr(AsyncFileSystemWrapper, "mv", reject_sync_mv)
+    result = _invoke(
+        App({"memory": source}),
+        "mv",
+        [
+            "memory:/docs/notes.txt",
+            "memory:/docs/guide.md",
+            "memory:/docs/target",
+        ],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "mv: memory:/docs/target: unsupported operation\n",
+    )
+    filesystem = source.filesystems[0]
+    assert "_mv" not in type(filesystem).__dict__
+    assert filesystem.sync_fs.cat("/docs/notes.txt") == b"notes"
+    assert filesystem.sync_fs.cat("/docs/guide.md") == b"guide"
+    assert not filesystem.sync_fs.exists("/docs/target/notes.txt")
+    assert not filesystem.sync_fs.exists("/docs/target/guide.md")
+    assert not any(call.operation == "get_file" for call in source.calls)
+
+
 def test_rm_option_rejection_is_source_free() -> None:
     source_calls = 0
 

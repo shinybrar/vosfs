@@ -1,4 +1,4 @@
-"""Same-source two-operand ``mv`` tests through public embedded-command seam."""
+"""Same-source file ``mv`` tests through public embedded-command seam."""
 
 from __future__ import annotations
 
@@ -42,9 +42,11 @@ def test_mv_help_explains_cross_source_rejection() -> None:
     result = CliRunner().invoke(
         App({"memory": _source_must_not_run}).typer_app, ["mv", "--help"]
     )
+    help_text = " ".join(result.stdout.split())
 
     assert result.exit_code == 0
-    assert "Cross-source moves are unsupported." in " ".join(result.stdout.split())
+    assert "Multiple sources require an existing destination directory" in help_text
+    assert "Cross-source moves are unsupported." in help_text
     assert result.stderr == ""
 
 
@@ -104,6 +106,268 @@ def test_mv_resolves_directory_target_and_replaces_file() -> None:
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     assert source.file_contents == {"/docs/out/notes.txt": b"new"}
+
+
+def test_mv_moves_multiple_files_into_existing_directory_in_argv_order() -> None:
+    source = _source(
+        contents={
+            "/docs/one.txt": b"one",
+            "/docs/two.txt": b"two",
+            "/docs/out/one.txt": b"old",
+        },
+        directories={"/", "/docs", "/docs/out"},
+    )
+
+    result = _invoke(
+        source,
+        "memory:/docs/one.txt",
+        "memory:/docs/two.txt",
+        "memory:/docs/out",
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.file_contents == {
+        "/docs/out/one.txt": b"one",
+        "/docs/out/two.txt": b"two",
+    }
+    assert source.call_count == 1
+    assert [(event[2], event[3]) for event in source.events if event[0] == "mv"] == [
+        ("/docs/one.txt", "/docs/out/one.txt"),
+        ("/docs/two.txt", "/docs/out/two.txt"),
+    ]
+
+
+def test_mv_multiple_files_replaces_duplicate_basenames_in_argv_order() -> None:
+    source = _source(
+        contents={"/left/item.txt": b"left", "/right/item.txt": b"right"},
+        directories={"/", "/left", "/right", "/out"},
+    )
+
+    result = _invoke(
+        source,
+        "memory:/left/item.txt",
+        "memory:/right/item.txt",
+        "memory:/out",
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.file_contents == {"/out/item.txt": b"right"}
+
+
+@pytest.mark.parametrize(
+    ("destination", "expected"),
+    [
+        ("memory:/docs/missing", "mv: memory:/docs/missing: not found\n"),
+        (
+            "memory:/docs/existing.txt",
+            "mv: memory:/docs/existing.txt: not a directory\n",
+        ),
+    ],
+)
+def test_mv_multiple_files_requires_existing_directory_destination(
+    destination: str, expected: str
+) -> None:
+    source = _source(
+        contents={
+            "/docs/one.txt": b"one",
+            "/docs/two.txt": b"two",
+            "/docs/existing.txt": b"x",
+        },
+        directories={"/", "/docs"},
+        info_by_path=(
+            {"/docs/missing": FileNotFoundError("/docs/missing")}
+            if destination.endswith("/missing")
+            else None
+        ),
+    )
+
+    result = _invoke(
+        source, "memory:/docs/one.txt", "memory:/docs/two.txt", destination
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (1, "", expected)
+    assert source.file_contents["/docs/one.txt"] == b"one"
+    assert source.file_contents["/docs/two.txt"] == b"two"
+    assert not [event for event in source.events if event[0] == "mv"]
+
+
+def test_mv_multiple_files_stops_after_failure_and_preserves_prior_move() -> None:
+    source = _source(
+        contents={"/docs/one.txt": b"one", "/docs/two.txt": b"two"},
+        directories={"/", "/docs", "/docs/out"},
+        mv_by_path={"/docs/two.txt": OSError(_MOVE_FAILED)},
+    )
+
+    result = _invoke(
+        source,
+        "memory:/docs/one.txt",
+        "memory:/docs/two.txt",
+        "memory:/docs/out",
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "mv: memory:/docs/out: uncertain mutation state; "
+        "destination residue may remain\n",
+    )
+    assert source.file_contents == {
+        "/docs/out/one.txt": b"one",
+        "/docs/two.txt": b"two",
+    }
+
+
+def test_mv_multiple_files_same_path_noop_then_moves_remaining() -> None:
+    source = _source(
+        contents={"/docs/out/keep.txt": b"keep", "/docs/other.txt": b"other"},
+        directories={"/", "/docs", "/docs/out"},
+    )
+
+    result = _invoke(
+        source,
+        "memory:/docs/out/keep.txt",
+        "memory:/docs/other.txt",
+        "memory:/docs/out",
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.file_contents == {
+        "/docs/out/keep.txt": b"keep",
+        "/docs/out/other.txt": b"other",
+    }
+    assert [(event[2], event[3]) for event in source.events if event[0] == "mv"] == [
+        ("/docs/other.txt", "/docs/out/other.txt")
+    ]
+
+
+def test_mv_multiple_files_missing_source_preserves_prior_move() -> None:
+    source = _source(
+        contents={"/docs/one.txt": b"one"},
+        directories={"/", "/docs", "/docs/out"},
+        info_by_path={"/docs/missing.txt": FileNotFoundError("/docs/missing.txt")},
+    )
+
+    result = _invoke(
+        source,
+        "memory:/docs/one.txt",
+        "memory:/docs/missing.txt",
+        "memory:/docs/out",
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "mv: memory:/docs/missing.txt: not found\n",
+    )
+    assert source.file_contents == {"/docs/out/one.txt": b"one"}
+
+
+def test_mv_multiple_files_directory_source_preserves_prior_move() -> None:
+    source = _source(
+        contents={"/docs/one.txt": b"one"},
+        directories={"/", "/docs", "/docs/nested", "/docs/out"},
+        info_by_path={"/docs/nested": {"type": "directory"}},
+    )
+
+    result = _invoke(
+        source,
+        "memory:/docs/one.txt",
+        "memory:/docs/nested",
+        "memory:/docs/out",
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "mv: memory:/docs/nested: is a directory\n",
+    )
+    assert source.file_contents == {"/docs/out/one.txt": b"one"}
+
+
+def test_mv_multiple_files_destination_verification_failure_preserves_prior() -> None:
+    source = _source(
+        contents={"/docs/one.txt": b"one", "/docs/two.txt": b"two"},
+        directories={"/", "/docs", "/docs/out"},
+    )
+
+    def corrupt_two(_path1: str, path2: str) -> None:
+        filesystem = source.contexts[0].filesystem
+        filesystem._file_contents[path2] = b"x"
+        source.file_contents[path2] = b"x"
+
+    source.mv_by_path = {"/docs/two.txt": corrupt_two}
+    result = _invoke(
+        source,
+        "memory:/docs/one.txt",
+        "memory:/docs/two.txt",
+        "memory:/docs/out",
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "mv: memory:/docs/out: verification failure; destination residue may remain\n",
+    )
+    assert source.file_contents == {
+        "/docs/out/one.txt": b"one",
+        "/docs/two.txt": b"two",
+        "/docs/out/two.txt": b"x",
+    }
+
+
+def test_mv_multiple_files_source_retained_after_later_destination() -> None:
+    source = _source(
+        contents={"/docs/one.txt": b"one", "/docs/two.txt": b"two"},
+        directories={"/", "/docs", "/docs/out"},
+    )
+
+    def copy_without_deletion(path1: str, path2: str) -> None:
+        filesystem = source.contexts[0].filesystem
+        filesystem._file_contents[path2] = filesystem._file_contents[path1]
+        source.file_contents[path2] = source.file_contents[path1]
+
+    source.mv_by_path = {"/docs/two.txt": copy_without_deletion}
+    result = _invoke(
+        source,
+        "memory:/docs/one.txt",
+        "memory:/docs/two.txt",
+        "memory:/docs/out",
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "mv: memory:/docs/out: verification failure; destination residue may remain\n",
+    )
+    assert source.file_contents == {
+        "/docs/out/one.txt": b"one",
+        "/docs/two.txt": b"two",
+        "/docs/out/two.txt": b"two",
+    }
+
+
+def test_mv_multiple_files_cancellation_removes_temps_and_closes_source() -> None:
+    source = _source(
+        contents={"/docs/one.txt": b"one", "/docs/two.txt": b"two"},
+        directories={"/", "/docs", "/docs/out"},
+        mv_by_path={"/docs/two.txt": asyncio.CancelledError()},
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        _invoke(
+            source,
+            "memory:/docs/one.txt",
+            "memory:/docs/two.txt",
+            "memory:/docs/out",
+        )
+    assert source.file_contents == {
+        "/docs/out/one.txt": b"one",
+        "/docs/two.txt": b"two",
+    }
+    assert source.get_file_paths
+    assert all(not Path(path).exists() for path in source.get_file_paths)
+    assert len(source.exit_calls) == 1
+    assert isinstance(source.exit_calls[0][1], asyncio.CancelledError)
 
 
 def test_mv_replaces_direct_existing_file_target() -> None:
@@ -209,8 +473,40 @@ def test_mv_rejects_missing_destination_parent_without_mutation() -> None:
             "mv: --interactive: unsupported option\n",
         ),
         (
-            ("memory:/docs/notes.txt", "memory:/docs/moved.txt", "memory:/extra"),
-            "mv: extra operand\n",
+            ("memory:/docs/notes.txt",),
+            "mv: missing mapped filesystem operand\n",
+        ),
+        (
+            (
+                "memory:/docs/notes.txt",
+                "other:/docs/second.txt",
+                "memory:/docs/out",
+            ),
+            "mv: cross-source move unsupported\n",
+        ),
+        (
+            (
+                "memory:/docs/notes.txt",
+                "memory:/docs/second.txt",
+                "other:/docs/out",
+            ),
+            "mv: cross-source move unsupported\n",
+        ),
+        (
+            ("memory:relative", "memory:/docs/moved.txt"),
+            "mv: memory:relative: invalid mapped filesystem operand\n",
+        ),
+        (
+            (
+                "memory:/docs/one.txt",
+                "unknown:/docs/two.txt",
+                "memory:/docs/out",
+            ),
+            "mv: unknown:/docs/two.txt: unknown filesystem (known: memory, other)\n",
+        ),
+        (
+            ("not-mapped", "memory:/docs/one.txt", "memory:/docs/out"),
+            "mv: not-mapped: invalid mapped filesystem operand\n",
         ),
     ],
 )

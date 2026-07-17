@@ -1,4 +1,4 @@
-"""Raw Typer parsing and async execution for same-source two-operand ``mv``."""
+"""Raw Typer parsing and async execution for same-source file ``mv``."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from ._cp import (
     _files_match,
     _remove_temporary,
     _render_failure,
+    _require_directory,
     _require_file_size,
     _resolve_destination,
     _stage_remote,
@@ -56,7 +57,7 @@ def _preflight(
     command: str,
     raw_arguments: tuple[str, ...],
     known_names: Collection[str],
-) -> _CpRequest:
+) -> tuple[tuple[_CpRequest, ...], bool]:
     operands: list[str] = []
     options_active = True
     for argument in raw_arguments:
@@ -69,13 +70,17 @@ def _preflight(
             operands.append(argument)
     if len(operands) < _OPERAND_COUNT:
         _usage_error(command, "missing mapped filesystem operand")
-    if len(operands) > _OPERAND_COUNT:
-        _usage_error(command, "extra operand")
-    source = _validate_mapped_operand(command, operands[0], known_names)
-    destination = _validate_mapped_operand(command, operands[1], known_names)
-    if source.name != destination.name:
+    sources = tuple(
+        _validate_mapped_operand(command, operand, known_names)
+        for operand in operands[:-1]
+    )
+    destination = _validate_mapped_operand(command, operands[-1], known_names)
+    if any(source.name != destination.name for source in sources):
         _usage_error(command, "cross-source move unsupported")
-    return _CpRequest(source, destination)
+    return (
+        tuple(_CpRequest(source, destination) for source in sources),
+        len(sources) > 1,
+    )
 
 
 async def _confirmed_mv_file(  # noqa: C901, PLR0911, PLR0912
@@ -170,16 +175,21 @@ async def _run_mv(
     raw_arguments: tuple[str, ...],
     sources: MappingType[str, AsyncFilesystemSource],
 ) -> None:
-    request = _preflight(command, raw_arguments, sources)
+    requests, requires_directory = _preflight(command, raw_arguments, sources)
     invocation = _SourceInvocation(command, sources)
     succeeded = False
     failure: _CpFailure | None = None
     try:
-        filesystems = await invocation.acquire((request.source.name,))
+        filesystems = await invocation.acquire((requests[0].source.name,))
         if filesystems is not None:
-            failure = await _confirmed_mv_file(
-                request, filesystems[request.source.name]
-            )
+            filesystem = filesystems[requests[0].source.name]
+            if requires_directory:
+                failure = await _require_directory(requests[0].destination, filesystem)
+            if failure is None:
+                for request in requests:
+                    failure = await _confirmed_mv_file(request, filesystem)
+                    if failure is not None:
+                        break
             if failure is not None:
                 _render_failure(command, failure)
             succeeded = failure is None
