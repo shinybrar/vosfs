@@ -40,11 +40,11 @@ future admission needs one exact source form with a direct awaitable operation
 and full evidence for every listed boundary.
 
 Evidence: hermetic public-seam rejection test at
-[`e8a3d4ac72ffa1baffdad98692db250bf7a5f403`](https://github.com/shinybrar/vosfs/commit/e8a3d4ac72ffa1baffdad98692db250bf7a5f403),
-against `fsspec-cli` 0.1.1, fsspec 2026.6.0, Typer 0.27.0, and vosfs 0.4.0 on
-macOS with CPython 3.13.5. The source-form declaration probe on that exact
-environment found no direct `_mv` in adapted async Local or Memory or native
-async `vosfs`.
+[`e9c9fa98bfc521628092fa7532d8ac8098d36734`](https://github.com/shinybrar/vosfs/commit/e9c9fa98bfc521628092fa7532d8ac8098d36734).
+Pinned stack: `fsspec-cli` 0.1.1, fsspec 2026.6.0, Typer 0.27.0, and vosfs
+0.4.0 on macOS with CPython 3.13.5. On that stack, a source-form declaration
+probe found no direct `_mv` in adapted async Local or Memory or native async
+`vosfs`.
 
 ## Operation and proof
 
