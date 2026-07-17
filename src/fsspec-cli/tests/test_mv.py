@@ -239,6 +239,10 @@ def test_mv_rejects_directory_source_before_mutation() -> None:
         "mv: memory:/docs: is a directory\n",
     )
     assert not [event for event in source.events if event[0] == "mv"]
+    assert not [event for event in source.events if event[0] == "get_file"]
+    assert [event[:3] for event in source.events if event[0] == "info"] == [
+        ("info", 1, "/docs")
+    ]
 
 
 def test_mv_reports_mutation_exception_as_uncertain_residue() -> None:
