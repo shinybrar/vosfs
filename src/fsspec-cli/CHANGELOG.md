@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+* **fsspec-cli:** add source-free `basename string` lexical command (#123)
+
 ### Changed
 
 * Parameterize private command orchestration with concrete command labels

@@ -10,12 +10,20 @@ from typing import TypeAlias
 import typer
 from fsspec import AbstractFileSystem
 
+from ._basename import (
+    _BasenameCommand,
+    _run_basename,
+)
+from ._basename import (
+    _raw_arguments as _basename_raw_arguments,
+)
 from ._diagnostics import _render_diagnostic_prefix
 from ._ls import _LsCommand, _raw_arguments, _run_ls
 
 AsyncFilesystemSource: TypeAlias = Callable[
     [], AbstractAsyncContextManager[AbstractFileSystem]
 ]
+_BASENAME_COMMAND = "basename"
 _LS_COMMAND = "ls"
 
 
@@ -64,6 +72,18 @@ class App:
         @self.typer_app.callback()
         def root() -> None:
             pass
+
+        @self.typer_app.command(
+            _BASENAME_COMMAND,
+            cls=_BasenameCommand,
+            context_settings={
+                "allow_extra_args": True,
+                "ignore_unknown_options": True,
+            },
+        )
+        def basename(ctx: typer.Context) -> None:
+            raw_arguments = _basename_raw_arguments(ctx)
+            _run_basename(_BASENAME_COMMAND, raw_arguments)
 
         @self.typer_app.command(
             _LS_COMMAND,

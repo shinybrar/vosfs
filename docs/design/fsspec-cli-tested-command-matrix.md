@@ -47,7 +47,7 @@ One matrix row identifies one claim through these fields:
 | Field | Required meaning |
 | --- | --- |
 | Command profile | The linked, locked observable command-and-option contract. |
-| Scope | `source` when filesystem behavior is exercised; `command preflight` when rejection completes before source entry. |
+| Scope | `source` when filesystem behavior is exercised; `command preflight` when rejection completes before source entry; `source-free command` when a lexical command completes without source entry. |
 | Source form | The configured source and whether it yields native or adapted async behavior. For command preflight, this is `not entered`. |
 | Status | Exactly one of `pass`, `fail`, `unsupported`, or `unverified`. |
 | Required gates | The hermetic and, where applicable, live evidence needed for this row. |
@@ -204,9 +204,58 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic and live OpenCADC | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110), [L-2026-07-16-29536609626](#l-2026-07-16-29536609626) |
 | [`ls -l` strict rejection](fsspec-cli-ls-long-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
+| [`basename string`](fsspec-cli-basename-command-profile.md) | source-free command | `not entered` | `pass` | `pass` | Hermetic | [H-2026-07-17-29564531624](#h-2026-07-17-29564531624) |
+| [`basename string`](fsspec-cli-basename-command-profile.md) option/operand rejection | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29564531624](#h-2026-07-17-29564531624) |
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.
+
+### H-2026-07-17-29564531624
+
+This successful exact-commit CI run observed `fsspec-cli` 0.1.1 at
+[commit `afc7a1a8b11261acc5fb56664733f9ecd30f89d6`](https://github.com/shinybrar/vosfs/commit/afc7a1a8b11261acc5fb56664733f9ecd30f89d6)
+with fsspec 2026.6.0 and Typer 0.27.0. No backend participates in either
+basename row. The complete resolved dependency set is recoverable from the
+[commit-pinned `uv.lock`](https://github.com/shinybrar/vosfs/blob/afc7a1a8b11261acc5fb56664733f9ecd30f89d6/uv.lock).
+
+The hermetic gate exercised the production `App` seam with a source factory
+that raises if called. The positive `source-free command` case completed a
+successful lexical `basename` over source-looking text without entering a
+source. The negative `command preflight` case rejected an unsupported option
+with empty stdout, the locked diagnostic, exit status `2`, and zero source
+calls. The installed-wheel jobs rebuilt and tested the member outside the
+workspace with declared runtime dependencies only.
+
+The gate ran from 2026-07-17T07:53:20Z through 2026-07-17T07:54:42Z in
+[GitHub Actions run 29564531624](https://github.com/shinybrar/vosfs/actions/runs/29564531624).
+Every leg used runner 2.335.1 and provisioner `20260707.563`. Runner image
+versions below come from each job log's `Runner Image` group:
+
+| Python | Operating system | Runner image | Hermetic job | Installed-wheel job |
+| --- | --- | --- | --- | --- |
+| 3.10.20 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87834083031](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083031) | [87834082985](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834082985) |
+| 3.11.15 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87834083020](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083020) | [87834083023](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083023) |
+| 3.12.3 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87834083024](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083024) | [87834083002](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083002) |
+| 3.13.14 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87834083035](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083035) | [87834082973](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834082973) |
+| 3.14.6 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87834083039](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083039) | [87834082976](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834082976) |
+| 3.12.10 | Microsoft Windows Server 2025, 10.0.26100 Datacenter | `windows-2025-vs2026@20260714.173.1` | [87834083013](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083013) | [87834083053](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083053) |
+| 3.12.10 | macOS 26.4, build 25E246 | `macos-26-arm64@20260715.0248.1` | [87834083065](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083065) | [87834083004](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834083004) |
+
+Python patch versions for the Ubuntu 3.12, macOS 3.12, and Windows 3.12
+installed-wheel jobs were not printed in those job logs; the table reuses the
+matching hermetic-leg patch versions from the same workflow matrix cell. The
+aggregate
+[Required job](https://github.com/shinybrar/vosfs/actions/runs/29564531624/job/87834298607)
+passed after quality, hermetic, and installed-wheel dependencies succeeded.
+
+The executable evidence at that commit is the pinned
+[`test_basename.py`](https://github.com/shinybrar/vosfs/blob/afc7a1a8b11261acc5fb56664733f9ecd30f89d6/src/fsspec-cli/tests/test_basename.py),
+[`test_basename_process.py`](https://github.com/shinybrar/vosfs/blob/afc7a1a8b11261acc5fb56664733f9ecd30f89d6/src/fsspec-cli/tests/test_basename_process.py),
+and
+[`test_command_matrix.py::test_basename_string_is_source_free`](https://github.com/shinybrar/vosfs/blob/afc7a1a8b11261acc5fb56664733f9ecd30f89d6/src/fsspec-cli/tests/test_command_matrix.py)
+(which then covered both the positive lexical success and negative option
+rejection surfaces in one test). Later commits keep those surfaces as separate
+matrix tests while preserving this immutable run as the qualifying evidence.
 
 ### H-2026-07-16-29525392759
 

@@ -234,7 +234,11 @@ def main() -> None:
         )
         _run_pytest(
             core_python,
-            [tests / "test_distribution.py", tests / "test_command_matrix.py"],
+            [
+                tests / "test_distribution.py",
+                tests / "test_command_matrix.py",
+                tests / "test_basename.py",
+            ],
             cwd=root / "core-tests",
             environment=environment,
         )
