@@ -19,6 +19,33 @@ Target resolution matches verified same-source `cp`: destination directory gets
 source basename, existing files may replace, and resolved parent must exist as a
 directory.
 
+## Directory admission boundary
+
+Directory `mv` is unsupported. Its rejection cannot be source-free because
+the command must await source `_info` to distinguish a directory from a file.
+After `type == "directory"`, it emits `mv: <source>: is a directory`, exits
+`1`, and MUST NOT resolve the target, stage bytes, or call `_mv`.
+
+No current exact source form admits directory movement: adapted async Local and
+Memory, and native async `vosfs`, declare no awaitable `_mv`. Reusing a
+synthetic file-only `_mv`, synchronous facade, tree walk, copy/delete sequence,
+or inherited default would not prove a source directory operation.
+
+Thus no positive claim exists for destination hierarchy or replacement,
+destination-inside-source containment, links or special/malformed descendants,
+partial failure/residue, or cancellation at a directory mutation boundary.
+The rejection test proves only source inspection, deterministic diagnostic, no
+staging, and no mutation. All directory-move source forms remain `unverified`;
+future admission needs one exact source form with a direct awaitable operation
+and full evidence for every listed boundary.
+
+Evidence: hermetic public-seam rejection test at
+[`e9c9fa98bfc521628092fa7532d8ac8098d36734`](https://github.com/shinybrar/vosfs/commit/e9c9fa98bfc521628092fa7532d8ac8098d36734).
+Pinned stack: `fsspec-cli` 0.1.1, fsspec 2026.6.0, Typer 0.27.0, and vosfs
+0.4.0 on macOS with CPython 3.13.5. On that stack, a source-form declaration
+probe found no direct `_mv` in adapted async Local or Memory or native async
+`vosfs`.
+
 ## Operation and proof
 
 After source existence and target resolution, identical configured name and
