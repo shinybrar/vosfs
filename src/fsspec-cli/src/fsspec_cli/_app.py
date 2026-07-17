@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
 import typer
 from fsspec import AbstractFileSystem
+
+if TYPE_CHECKING:
+    from typer.core import TyperCommand
 
 from ._basename import (
     _BasenameCommand,
@@ -19,6 +22,13 @@ from ._basename import (
 )
 from ._cat import _CatCommand, _run_cat
 from ._diagnostics import _render_diagnostic_prefix
+from ._dirname import (
+    _DirnameCommand,
+    _run_dirname,
+)
+from ._dirname import (
+    _raw_arguments as _dirname_raw_arguments,
+)
 from ._ls import _LsCommand, _raw_arguments, _run_ls
 from ._mkdir import _MkdirCommand, _run_mkdir
 from ._rmdir import _raw_arguments as _rmdir_raw_arguments
@@ -30,6 +40,7 @@ AsyncFilesystemSource: TypeAlias = Callable[
     [], AbstractAsyncContextManager[AbstractFileSystem]
 ]
 _BASENAME_COMMAND = "basename"
+_DIRNAME_COMMAND = "dirname"
 _LS_COMMAND = "ls"
 _CAT_COMMAND = "cat"
 _MKDIR_COMMAND = "mkdir"
@@ -40,6 +51,22 @@ _MKDIR_HELP = (
 )
 _RMDIR_COMMAND = "rmdir"
 _UNLINK_COMMAND = "unlink"
+_SOURCE_FREE_CONTEXT = {
+    "allow_extra_args": True,
+    "ignore_unknown_options": True,
+}
+
+
+def _register_source_free_command(
+    app: typer.Typer,
+    name: str,
+    command_cls: type[TyperCommand],
+    runner: Callable[[str, tuple[str, ...]], None],
+    raw_arguments: Callable[[typer.Context], tuple[str, ...]],
+) -> None:
+    @app.command(name, cls=command_cls, context_settings=_SOURCE_FREE_CONTEXT)
+    def handler(ctx: typer.Context) -> None:
+        runner(name, raw_arguments(ctx))
 
 
 def _validate_source_name(name: object) -> None:
@@ -88,17 +115,20 @@ class App:
         def root() -> None:
             pass
 
-        @self.typer_app.command(
+        _register_source_free_command(
+            self.typer_app,
             _BASENAME_COMMAND,
-            cls=_BasenameCommand,
-            context_settings={
-                "allow_extra_args": True,
-                "ignore_unknown_options": True,
-            },
+            _BasenameCommand,
+            _run_basename,
+            _basename_raw_arguments,
         )
-        def basename(ctx: typer.Context) -> None:
-            raw_arguments = _basename_raw_arguments(ctx)
-            _run_basename(_BASENAME_COMMAND, raw_arguments)
+        _register_source_free_command(
+            self.typer_app,
+            _DIRNAME_COMMAND,
+            _DirnameCommand,
+            _run_dirname,
+            _dirname_raw_arguments,
+        )
 
         @self.typer_app.command(
             _LS_COMMAND,

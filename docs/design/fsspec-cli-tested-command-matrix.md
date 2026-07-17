@@ -212,6 +212,8 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [`basename string suffix`](fsspec-cli-basename-suffix-command-profile.md) | source-free command | `not entered` | `pass` | `pass` | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [`basename string`](fsspec-cli-basename-command-profile.md) option/operand rejection | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29564531624](#h-2026-07-17-29564531624) |
 | [`basename string suffix`](fsspec-cli-basename-suffix-command-profile.md) third-operand rejection | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | Hermetic `test_command_matrix.py` on this change |
+| [`dirname string`](fsspec-cli-dirname-command-profile.md) | source-free command | `not entered` | `pass` | `pass` | Hermetic | Hermetic `test_command_matrix.py` on this change |
+| [`dirname string`](fsspec-cli-dirname-command-profile.md) option/operand rejection | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | Hermetic `test_command_matrix.py` on this change |
 | [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `local / adapted async` | `pass` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `memory / adapted async` | `pass` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic and live OpenCADC | Hermetic mocked transport present; live evidence absent |

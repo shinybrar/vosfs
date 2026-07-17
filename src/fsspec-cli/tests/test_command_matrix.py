@@ -276,6 +276,48 @@ def test_basename_option_rejection_is_source_free() -> None:
     assert source_calls == 0
 
 
+def test_dirname_string_is_source_free() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = CliRunner().invoke(
+        App({"memory": source_must_not_run}).typer_app,
+        ["dirname", "memory:/docs/a.txt"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "memory:/docs\n",
+        "",
+    )
+    assert source_calls == 0
+
+
+def test_dirname_option_rejection_is_source_free() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = CliRunner().invoke(
+        App({"memory": source_must_not_run}).typer_app,
+        ["dirname", "-a", "a"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "dirname: -a: unsupported option\n",
+    )
+    assert source_calls == 0
+
+
 def test_adapted_local_plain_cat_profile(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     root.mkdir()
