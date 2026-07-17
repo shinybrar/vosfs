@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import MappingProxyType
 from typing import NoReturn
 
 import pytest
+from fsspec_cli import _cp
 
 from ._support import (
     _invoke_cp,
@@ -747,6 +750,90 @@ def test_cp_reports_verification_cleanup_failure(monkeypatch) -> None:
 
 class _ControlFlow(BaseException):
     pass
+
+
+def test_stream_verification_waits_for_pipe_reader_before_failed_download(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = _file_source(
+        get_file_by_path={"/docs/copy.txt": OSError("download-failed")},
+    )
+    filesystem = _RecordingFileSystem(source, 1)
+    staged = tmp_path / "source"
+    staged.write_bytes(b"payload")
+    reader_opened = threading.Event()
+    pipe_paths: list[str] = []
+    get_before_reader = False
+    real_open = os.open
+    real_mkfifo = os.mkfifo
+
+    def record_mkfifo(
+        path: str,
+        mode: int = 0o666,
+        *,
+        dir_fd: int | None = None,
+    ) -> None:
+        pipe_paths.append(path)
+        real_mkfifo(path, mode, dir_fd=dir_fd)
+
+    def record_open(
+        path: str,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+        if path in pipe_paths and flags & os.O_ACCMODE == os.O_RDONLY:
+            reader_opened.set()
+        return descriptor
+
+    async def fail_before_reader_guard(
+        rpath: str,
+        lpath: str,
+        **kwargs: object,
+    ) -> None:
+        nonlocal get_before_reader
+        del rpath, lpath, kwargs
+        get_before_reader = not reader_opened.is_set()
+        message = "download-failed"
+        raise OSError(message)
+
+    def unblock_legacy_reader() -> None:
+        if not pipe_paths:
+            return
+        try:
+            descriptor = real_open(pipe_paths[0], os.O_WRONLY | os.O_NONBLOCK)
+        except OSError:
+            return
+        os.close(descriptor)
+
+    monkeypatch.setattr(os, "mkfifo", record_mkfifo)
+    monkeypatch.setattr(os, "open", record_open)
+    monkeypatch.setattr(filesystem, "_get_file", fail_before_reader_guard)
+    timer = threading.Timer(0.1, unblock_legacy_reader)
+    timer.start()
+    try:
+        result = asyncio.run(
+            asyncio.wait_for(
+                _cp._stream_remote_matches_file(
+                    filesystem,
+                    "/docs/copy.txt",
+                    str(staged),
+                ),
+                timeout=1,
+            )
+        )
+    finally:
+        timer.cancel()
+        timer.join()
+
+    assert result[0] is False
+    assert isinstance(result[1], OSError)
+    assert result[2] is None
+    assert result[3] is None
+    assert not get_before_reader
 
 
 @pytest.mark.parametrize(

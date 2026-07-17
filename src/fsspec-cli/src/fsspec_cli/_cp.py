@@ -8,6 +8,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
@@ -292,8 +293,35 @@ def _create_verification_pipe() -> tuple[str | None, str | None, Exception | Non
     return pipe, directory, None
 
 
-def _pipe_matches_file(pipe: str, staged: str) -> tuple[bool, Exception | None]:
-    return _files_match(pipe, staged)
+def _pipe_matches_file(
+    pipe: str,
+    staged: str,
+    loop: asyncio.AbstractEventLoop,
+    ready: asyncio.Future[Exception | None],
+    transfer_started: threading.Event,
+) -> tuple[bool, Exception | None]:
+    try:
+        descriptor = os.open(pipe, os.O_RDONLY)
+    except Exception as error:  # noqa: BLE001 - local verification boundary.
+        loop.call_soon_threadsafe(ready.set_result, error)
+        return False, error
+
+    loop.call_soon_threadsafe(ready.set_result, None)
+    transfer_started.wait()
+    try:
+        with (
+            os.fdopen(descriptor, "rb") as pipe_handle,
+            Path(staged).open("rb") as staged_handle,
+        ):
+            while True:
+                pipe_chunk = pipe_handle.read(_COMPARE_CHUNK)
+                staged_chunk = staged_handle.read(_COMPARE_CHUNK)
+                if pipe_chunk != staged_chunk:
+                    return False, None
+                if not pipe_chunk:
+                    return True, None
+    except Exception as error:  # noqa: BLE001 - local comparison boundary.
+        return False, error
 
 
 def _open_matches_file(
@@ -327,7 +355,28 @@ def _release_pipe_reader(pipe: str) -> None:
         os.close(descriptor)
 
 
-async def _stream_remote_matches_file(
+def _close_pipe_keepalive(descriptor: int) -> None:
+    with suppress(OSError):
+        os.close(descriptor)
+
+
+async def _finish_pipe_reader(
+    reader: asyncio.Task[tuple[bool, Exception | None]],
+    ready: asyncio.Future[Exception | None],
+    transfer_started: threading.Event,
+    pipe: str,
+    keepalive: int,
+) -> None:
+    ready_error = await asyncio.shield(ready)
+    transfer_started.set()
+    _close_pipe_keepalive(keepalive)
+    if ready_error is None:
+        _release_pipe_reader(pipe)
+    with suppress(BaseException):
+        await asyncio.shield(reader)
+
+
+async def _stream_remote_matches_file(  # noqa: PLR0915 - explicit FIFO cleanup paths.
     filesystem: AsyncFileSystem,
     remote: str,
     staged: str,
@@ -336,22 +385,62 @@ async def _stream_remote_matches_file(
     if creation_error is not None or pipe is None or directory is None:
         return False, creation_error, None, None
 
-    reader = asyncio.create_task(asyncio.to_thread(_pipe_matches_file, pipe, staged))
-    await asyncio.sleep(0)
+    try:
+        keepalive = os.open(pipe, os.O_RDWR | os.O_NONBLOCK)
+    except Exception as error:  # noqa: BLE001 - local verification boundary.
+        pipe_cleanup = _remove_temporary(pipe)
+        directory_cleanup = _remove_directory(directory)
+        return False, error, None, pipe_cleanup or directory_cleanup
+
+    ready: asyncio.Future[Exception | None] = asyncio.get_running_loop().create_future()
+    transfer_started = threading.Event()
+    reader = asyncio.create_task(
+        asyncio.to_thread(
+            _pipe_matches_file,
+            pipe,
+            staged,
+            asyncio.get_running_loop(),
+            ready,
+            transfer_started,
+        )
+    )
     transfer_error: Exception | None = None
     matched = False
     compare_error: Exception | None = None
     cleanup_error: Exception | None = None
     try:
         try:
+            ready_error = await asyncio.shield(ready)
+        except BaseException:
+            cleanup = asyncio.create_task(
+                _finish_pipe_reader(reader, ready, transfer_started, pipe, keepalive)
+            )
+            with suppress(BaseException):
+                await asyncio.shield(cleanup)
+            raise
+        if ready_error is not None:
+            transfer_started.set()
+            _close_pipe_keepalive(keepalive)
+            keepalive = -1
+            matched, compare_error = await reader
+            return matched, None, compare_error, None
+        transfer_started.set()
+        try:
             await filesystem._get_file(remote, pipe)  # noqa: SLF001
         except Exception as error:  # noqa: BLE001 - verification download boundary.
             transfer_error = error
         except BaseException:
-            _release_pipe_reader(pipe)
-            with suppress(BaseException):
-                await asyncio.shield(reader)
+            await _finish_pipe_reader(
+                reader,
+                ready,
+                transfer_started,
+                pipe,
+                keepalive,
+            )
+            keepalive = -1
             raise
+        _close_pipe_keepalive(keepalive)
+        keepalive = -1
         if transfer_error is not None:
             _release_pipe_reader(pipe)
         matched, compare_error = await reader
@@ -364,6 +453,8 @@ async def _stream_remote_matches_file(
                 staged,
             )
     finally:
+        if keepalive >= 0:
+            _close_pipe_keepalive(keepalive)
         pipe_cleanup = _remove_temporary(pipe)
         directory_cleanup = _remove_directory(directory)
         cleanup_error = pipe_cleanup or directory_cleanup
