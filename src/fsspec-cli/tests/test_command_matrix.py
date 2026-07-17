@@ -31,6 +31,8 @@ from ._matrix_support import (
 )
 from ._support import _source_must_not_run
 
+_SYNC_MV_MESSAGE = "public sync mv must not be called"
+
 
 @pytest.fixture(autouse=True)
 def _prohibit_unplanned_network(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -734,6 +736,101 @@ def test_cp_option_rejection_is_source_free() -> None:
 
 
 def test_rm_force_profile_option_rejection_is_source_free() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke(
+        App({"memory": source_must_not_run}),
+        "rm",
+        ["-f", "-i", "memory:/docs/notes.txt"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "rm: -i: unsupported option\n",
+    )
+    assert source_calls == 0
+
+
+def test_adapted_local_mv_remains_unverified_without_exact_operation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    source_path = root / "notes.txt"
+    target_path = root / "moved.txt"
+    source_path.write_bytes(b"payload")
+    source = _ProbedSource(
+        lambda: AsyncFileSystemWrapper(
+            LocalFileSystem(skip_instance_cache=True),
+            asynchronous=True,
+        )
+    )
+
+    def reject_sync_mv(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError(_SYNC_MV_MESSAGE)
+
+    monkeypatch.setattr(AsyncFileSystemWrapper, "mv", reject_sync_mv)
+    result = _invoke(
+        App({"local": source}),
+        "mv",
+        [f"local:{source_path}", f"local:{target_path}"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        f"mv: local:{target_path}: unsupported operation\n",
+    )
+    assert "_mv" not in type(source.filesystems[0]).__dict__
+    assert source_path.read_bytes() == b"payload"
+    assert not target_path.exists()
+    assert not any(call.operation == "get_file" for call in source.calls)
+
+
+def test_adapted_memory_mv_remains_unverified_without_exact_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+
+    def make_filesystem() -> AsyncFileSystemWrapper:
+        MemoryFileSystem.clear_instance_cache()
+        filesystem = MemoryFileSystem()
+        filesystem.pipe_file("/docs/notes.txt", b"payload")
+        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
+
+    source = _ProbedSource(make_filesystem)
+
+    def reject_sync_mv(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError(_SYNC_MV_MESSAGE)
+
+    monkeypatch.setattr(AsyncFileSystemWrapper, "mv", reject_sync_mv)
+    result = _invoke(
+        App({"memory": source}),
+        "mv",
+        ["memory:/docs/notes.txt", "memory:/docs/moved.txt"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "mv: memory:/docs/moved.txt: unsupported operation\n",
+    )
+    filesystem = source.filesystems[0]
+    assert "_mv" not in type(filesystem).__dict__
+    assert filesystem.sync_fs.cat("/docs/notes.txt") == b"payload"
+    assert not filesystem.sync_fs.exists("/docs/moved.txt")
+    assert not any(call.operation == "get_file" for call in source.calls)
+
+
+def test_rm_option_rejection_is_source_free() -> None:
     source_calls = 0
 
     def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
