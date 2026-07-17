@@ -503,6 +503,54 @@ def test_cat_removes_temporary_on_get_file_cancellation(
     assert traceback is not None
 
 
+@pytest.mark.parametrize(
+    "control",
+    [asyncio.CancelledError(), _ControlFlow("stop")],
+)
+def test_cat_reports_cleanup_failure_on_get_file_cancellation(
+    control: BaseException,
+    monkeypatch,
+) -> None:
+    temps: list[str] = []
+    diagnostics: list[tuple[str, str, Exception]] = []
+    source = _RecordingSource([])
+    real_unlink = Path.unlink
+
+    def tracking_hook(rpath: str, lpath: str) -> None:
+        del rpath
+        temps.append(lpath)
+        Path(lpath).write_bytes(b"secret")
+        raise control
+
+    def fail_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if temps and self == Path(temps[0]):
+            message = "unlink-denied"
+            raise OSError(message)
+        real_unlink(self, *args, **kwargs)
+
+    def capture_render(command: str, operand: object, error: Exception) -> None:
+        diagnostics.append((command, getattr(operand, "spelling", ""), error))
+
+    source.get_file_hook = tracking_hook
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+    monkeypatch.setattr("fsspec_cli._cat._render_staging_failure", capture_render)
+
+    with pytest.raises(type(control)) as caught:
+        _invoke_cat(["memory:/blob"], sources={"memory": source})
+
+    assert type(caught.value) is type(control)
+    if not isinstance(control, asyncio.CancelledError):
+        assert caught.value is control
+    assert len(temps) == 1
+    assert Path(temps[0]).exists()
+    assert len(diagnostics) == 1
+    assert diagnostics[0][0] == "cat"
+    assert diagnostics[0][1] == "memory:/blob"
+    assert isinstance(diagnostics[0][2], OSError)
+    assert str(diagnostics[0][2]) == "unlink-denied"
+    real_unlink(Path(temps[0]))
+
+
 def test_cat_continues_after_temporary_open_failure(monkeypatch) -> None:
     source = _RecordingSource(
         [],
@@ -607,10 +655,57 @@ def test_cat_continues_after_temporary_close_failure(monkeypatch) -> None:
     )
 
     assert result.exit_code == 1
-    assert result.stdout_bytes == b"dataOK"
+    # Failed staging operand emits zero bytes (per-operand atomicity).
+    assert result.stdout_bytes == b"OK"
     assert result.stderr == (
         "cat: memory:/bad: staging failure (OSError): close-denied\n"
     )
+
+
+def test_cat_continues_after_delayed_temporary_read_failure(monkeypatch) -> None:
+    source = _RecordingSource(
+        [],
+        get_file_by_path={"/bad": b"partial-secret", "/ok": b"OK"},
+    )
+
+    class _DelayedFailHandle:
+        def __init__(self) -> None:
+            self._reads = 0
+
+        def read(self, size: int = -1) -> bytes:
+            del size
+            self._reads += 1
+            if self._reads == 1:
+                return b"partial"
+            message = "late-read-denied"
+            raise OSError(message)
+
+        def close(self) -> None:
+            return None
+
+    real_open = Path.open
+    failed = False
+
+    def fail_late_read_open(self: Path, *args: object, **kwargs: object):
+        nonlocal failed
+        if not failed and self.name.startswith("fsspec-cli-cat-") and "rb" in args:
+            failed = True
+            return _DelayedFailHandle()
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_late_read_open)
+    result = _invoke_cat(
+        ["memory:/bad", "memory:/ok"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout_bytes == b"OK"
+    assert result.stderr == (
+        "cat: memory:/bad: staging failure (OSError): late-read-denied\n"
+    )
+    assert "partial" not in result.stdout_bytes.decode("latin1")
+    assert "secret" not in result.stderr
 
 
 def test_cat_reports_cleanup_failure_after_download_failure(monkeypatch) -> None:
@@ -644,9 +739,11 @@ def test_cat_reports_cleanup_failure_after_download_failure(monkeypatch) -> None
 
 def test_cat_unlinks_temporary_when_os_close_fails(monkeypatch) -> None:
     temps: list[str] = []
+    closed: list[int] = []
     source = _RecordingSource([], get_file_content=b"secret")
     real_mkstemp = tempfile.mkstemp
     real_close = os.close
+    attempts = 0
 
     def tracking_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
         descriptor, path = real_mkstemp(*args, **kwargs)
@@ -654,10 +751,13 @@ def test_cat_unlinks_temporary_when_os_close_fails(monkeypatch) -> None:
         return descriptor, path
 
     def fail_close(fd: int) -> None:
-        if temps:
-            real_close(fd)
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            # True pre-close failure: descriptor still open and must be released.
             message = "close-denied"
             raise OSError(message)
+        closed.append(fd)
         real_close(fd)
 
     monkeypatch.setattr(tempfile, "mkstemp", tracking_mkstemp)
@@ -671,5 +771,7 @@ def test_cat_unlinks_temporary_when_os_close_fails(monkeypatch) -> None:
     )
     assert len(temps) == 1
     assert not Path(temps[0]).exists()
+    assert attempts >= 2
+    assert closed
     assert [event[0] for event in source.events] == ["factory", "enter", "info", "exit"]
     assert "secret" not in result.stderr
