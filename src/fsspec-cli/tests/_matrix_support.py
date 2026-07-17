@@ -89,13 +89,11 @@ class _ProbedSource(Generic[_FilesystemT]):
         )
         return _ProbedContext(self, source_id)
 
-    def instrument(self, source_id: int, filesystem: _FilesystemT) -> None:
-        original_info = filesystem._info
-        original_ls = filesystem._ls
-        original_get_file = filesystem._get_file
-        original_mkdir = getattr(filesystem, "_mkdir", None)
-        original_rmdir = getattr(filesystem, "_rmdir", None)
-
+    def _wrap_info(
+        self,
+        source_id: int,
+        original_info: Callable[..., Awaitable[object]],
+    ) -> Callable[..., Awaitable[object]]:
         async def info(path: str, **kwargs: object) -> object:
             self.calls.append(
                 FilesystemCall(
@@ -115,6 +113,13 @@ class _ProbedSource(Generic[_FilesystemT]):
             self.info_results.append((source_id, result))
             return result
 
+        return info
+
+    def _wrap_ls(
+        self,
+        source_id: int,
+        original_ls: Callable[..., Awaitable[object]],
+    ) -> Callable[..., Awaitable[object]]:
         async def ls(
             path: str,
             detail: bool = True,  # noqa: FBT002 - mirrors the fsspec hook.
@@ -138,6 +143,13 @@ class _ProbedSource(Generic[_FilesystemT]):
             self.ls_results.append((source_id, result))
             return result
 
+        return ls
+
+    def _wrap_get_file(
+        self,
+        source_id: int,
+        original_get_file: Callable[..., Awaitable[object]],
+    ) -> Callable[..., Awaitable[object]]:
         async def get_file(rpath: str, lpath: str, **kwargs: object) -> object:
             self.calls.append(
                 FilesystemCall(
@@ -158,6 +170,14 @@ class _ProbedSource(Generic[_FilesystemT]):
             self.get_file_results.append((source_id, rpath))
             return result
 
+        return get_file
+
+    def _wrap_mkdir(
+        self,
+        source_id: int,
+        filesystem: _FilesystemT,
+        original_mkdir: Callable[..., Awaitable[None]] | None,
+    ) -> Callable[..., Awaitable[None]]:
         async def mkdir(
             path: str,
             create_parents: bool = True,  # noqa: FBT002 - mirrors the fsspec hook.
@@ -183,6 +203,14 @@ class _ProbedSource(Generic[_FilesystemT]):
                 self.errors.append((source_id, "mkdir", error))
                 raise
 
+        return mkdir
+
+    def _wrap_rmdir(
+        self,
+        source_id: int,
+        filesystem: _FilesystemT,
+        original_rmdir: Callable[..., Awaitable[None]] | None,
+    ) -> Callable[..., Awaitable[None]]:
         async def rmdir(path: str, **kwargs: object) -> None:
             self.calls.append(
                 FilesystemCall(
@@ -203,11 +231,38 @@ class _ProbedSource(Generic[_FilesystemT]):
                 self.errors.append((source_id, "rmdir", error))
                 raise
 
-        setattr(filesystem, "_info", info)  # noqa: B010 - instrument this instance.
-        setattr(filesystem, "_ls", ls)  # noqa: B010 - instrument this instance.
-        setattr(filesystem, "_get_file", get_file)  # noqa: B010 - instrument.
-        setattr(filesystem, "_mkdir", mkdir)  # noqa: B010 - instrument this instance.
-        setattr(filesystem, "_rmdir", rmdir)  # noqa: B010 - instrument this instance.
+        return rmdir
+
+    def instrument(self, source_id: int, filesystem: _FilesystemT) -> None:
+        setattr(  # noqa: B010 - instrument this instance.
+            filesystem,
+            "_info",
+            self._wrap_info(source_id, filesystem._info),
+        )
+        setattr(  # noqa: B010 - instrument this instance.
+            filesystem,
+            "_ls",
+            self._wrap_ls(source_id, filesystem._ls),
+        )
+        setattr(  # noqa: B010 - instrument.
+            filesystem,
+            "_get_file",
+            self._wrap_get_file(source_id, filesystem._get_file),
+        )
+        setattr(  # noqa: B010 - instrument this instance.
+            filesystem,
+            "_mkdir",
+            self._wrap_mkdir(
+                source_id, filesystem, getattr(filesystem, "_mkdir", None)
+            ),
+        )
+        setattr(  # noqa: B010 - instrument this instance.
+            filesystem,
+            "_rmdir",
+            self._wrap_rmdir(
+                source_id, filesystem, getattr(filesystem, "_rmdir", None)
+            ),
+        )
 
 
 class _ProbedContext(
@@ -584,6 +639,7 @@ def _exercise_mkdir_memory_over_eager_failure(
         call.operation == "info" and call.path == missing_parent
         for call in source.calls
     )
+
 
 def _exercise_rmdir_locked_profile(
     source_name: str,

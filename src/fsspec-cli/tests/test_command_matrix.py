@@ -276,6 +276,7 @@ def test_adapted_memory_plain_cat_profile(monkeypatch: pytest.MonkeyPatch) -> No
     assert all(isinstance(fs.sync_fs, MemoryFileSystem) for fs in source.filesystems)
     assert all(fs.asynchronous is True for fs in source.filesystems)
 
+
 def test_adapted_local_base_rmdir_profile_uses_native_temporary_storage(
     tmp_path: Path,
 ) -> None:

@@ -399,6 +399,7 @@ def test_native_vosfs_base_mkdir_profile_uses_only_mocked_transport() -> None:
     ]
     assert all(transport.closed for transport in transports)
 
+
 def test_native_vosfs_base_rmdir_profile_uses_only_mocked_transport() -> None:
     transports: list[_RmdirMockTransport] = []
 
