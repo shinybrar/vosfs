@@ -234,11 +234,11 @@ def test_rm_force_accepts_repeated_and_grouped_flags(arguments: list[str]) -> No
     [
         "-R",
         "-r",
-        "-v",
         "-i",
         "-l",
         "--force",
         "--recursive",
+        "--verbose",
         "-A",
         "-h",
         "--help=value",
@@ -246,6 +246,11 @@ def test_rm_force_accepts_repeated_and_grouped_flags(arguments: list[str]) -> No
         "-fd",
         "-Rf",
         "-fi",
+        "-fv",
+        "-vf",
+        "-vv",
+        "-dv",
+        "-vd",
     ],
 )
 def test_rm_rejects_every_option_without_entering_sources(option: str) -> None:
@@ -871,7 +876,10 @@ def test_rm_reports_source_exit_failures_in_reverse_order() -> None:
     )
 
 
-@pytest.mark.parametrize("arguments", [["--help"], ["-d", "--help"], ["-f", "--help"]])
+@pytest.mark.parametrize(
+    "arguments",
+    [["--help"], ["-d", "--help"], ["-f", "--help"], ["-v", "--help"]],
+)
 def test_rm_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
     result = _invoke_rm(arguments)
 
@@ -897,6 +905,15 @@ def test_rm_help_describes_force_profile() -> None:
     assert "rm -f ignores files already missing before removal" in " ".join(
         plain_help.split()
     )
+    assert result.stderr == ""
+
+
+def test_rm_help_describes_verbose_profile() -> None:
+    result = _invoke_rm(["--help"])
+
+    assert result.exit_code == 0
+    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
+    assert "rm -v prints each confirmed removal" in " ".join(plain_help.split())
     assert result.stderr == ""
 
 
@@ -1282,3 +1299,370 @@ def test_rm_d_rejects_root_and_final_dot_paths_before_source_entry(path: str) ->
     assert result.stdout == ""
     assert "rejected path" in result.stderr
     assert source_calls == 0
+
+
+def test_rm_verbose_prints_one_confirmed_removal() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
+
+    result = _invoke_rm(
+        ["-v", "memory:/docs/notes.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "memory:/docs/notes.txt\n"
+    assert result.stderr == ""
+    assert [event[0] for event in events if event[0] in {"info", "rm_file"}] == [
+        "info",
+        "rm_file",
+        "info",
+    ]
+
+
+def test_rm_verbose_prints_many_confirmed_removals_in_order() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
+
+    result = _invoke_rm(
+        ["-v", "memory:/docs/a.txt", "memory:/docs/b.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "memory:/docs/a.txt\nmemory:/docs/b.txt\n"
+    assert result.stderr == ""
+    assert [event[2] for event in events if event[0] == "rm_file"] == [
+        "/docs/a.txt",
+        "/docs/b.txt",
+    ]
+
+
+def test_rm_verbose_keeps_base_rm_silent_without_flag() -> None:
+    result = _invoke_rm(
+        ["memory:/docs/notes.txt"],
+        sources={"memory": _RecordingSource([])},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+
+
+def test_rm_verbose_prints_nothing_for_missing_directory_or_other_types() -> None:
+    source = _RecordingSource(
+        [],
+        info_by_path={
+            "/docs/missing.txt": FileNotFoundError("missing"),
+            "/docs/dir": {"type": "directory"},
+            "/docs/link": {"type": "link"},
+        },
+    )
+
+    result = _invoke_rm(
+        [
+            "-v",
+            "memory:/docs/missing.txt",
+            "memory:/docs/dir",
+            "memory:/docs/link",
+        ],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "rm: memory:/docs/missing.txt: not found\n"
+        "rm: memory:/docs/dir: is a directory\n"
+        "rm: memory:/docs/link: incompatible result\n"
+    )
+
+
+def test_rm_verbose_prints_nothing_for_uncertain_post_state() -> None:
+    source = _RecordingSource([], rm_file_error=PermissionError())
+
+    result = _invoke_rm(
+        ["-v", "memory:/docs/notes.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "rm: memory:/docs/notes.txt: uncertain mutation state\n"
+
+
+def test_rm_verbose_interleaves_success_output_and_diagnostics() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(
+        events,
+        info_by_path={
+            "/docs/good": {"type": "file"},
+            "/docs/bad": {"type": "directory"},
+            "/docs/later": {"type": "file"},
+        },
+    )
+
+    result = _invoke_rm(
+        [
+            "-v",
+            "memory:/docs/good",
+            "memory:/docs/bad",
+            "memory:/docs/later",
+        ],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == "memory:/docs/good\nmemory:/docs/later\n"
+    assert result.stderr == "rm: memory:/docs/bad: is a directory\n"
+    assert [event[2] for event in events if event[0] == "rm_file"] == [
+        "/docs/good",
+        "/docs/later",
+    ]
+
+
+def test_rm_verbose_uses_distinct_sources() -> None:
+    events: list[tuple[object, ...]] = []
+    alpha = _RecordingSource(events)
+    beta = _RecordingSource(events)
+
+    result = _invoke_rm(
+        ["-v", "alpha:/one", "beta:/two"],
+        sources={"alpha": alpha, "beta": beta},
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "alpha:/one\nbeta:/two\n"
+    assert result.stderr == ""
+    assert alpha.call_count == beta.call_count == 1
+
+
+def test_rm_verbose_stops_later_mutation_after_stdout_failure(
+    monkeypatch,
+) -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
+    written: list[bytes] = []
+
+    def fail_after_first(spelling: str) -> None:
+        chunk = f"{spelling}\n".encode()
+        written.append(chunk)
+        if len(written) == 1:
+            return
+        message = "disk full"
+        raise OSError(message)
+
+    monkeypatch.setattr("fsspec_cli._rm._write_verbose_line", fail_after_first)
+
+    result = _invoke_rm(
+        ["-v", "memory:/docs/a.txt", "memory:/docs/b.txt", "memory:/docs/c.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == "rm: output: output failure (OSError): disk full\n"
+    assert written == [b"memory:/docs/a.txt\n", b"memory:/docs/b.txt\n"]
+    assert [event[2] for event in events if event[0] == "rm_file"] == [
+        "/docs/a.txt",
+        "/docs/b.txt",
+    ]
+
+
+def test_rm_verbose_reports_short_write_and_stops_later_mutation(
+    monkeypatch,
+) -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
+
+    class _PrefixStdout:
+        def write(self, chunk: bytes) -> int:
+            return max(0, len(chunk) - 1)
+
+        def flush(self) -> None:
+            return None
+
+    monkeypatch.setattr("fsspec_cli._rm._binary_stdout", _PrefixStdout)
+
+    result = _invoke_rm(
+        ["-v", "memory:/docs/a.txt", "memory:/docs/b.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == "rm: output: output failure (OSError): short write\n"
+    assert [event[2] for event in events if event[0] == "rm_file"] == ["/docs/a.txt"]
+
+
+def test_rm_verbose_keeps_broken_pipe_silent_but_reports_exit_failure(
+    monkeypatch,
+) -> None:
+    broken_pipe = BrokenPipeError()
+    source = _RecordingSource([], exit_error=OSError("cleanup"))
+
+    def break_stdout(spelling: str) -> None:
+        del spelling
+        raise broken_pipe
+
+    monkeypatch.setattr("fsspec_cli._rm._write_verbose_line", break_stdout)
+    result = _invoke_rm(
+        ["-v", "memory:/docs/notes.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "rm: memory: source exit failure (OSError): cleanup\n"
+    exception_type, exception, traceback = source.exit_calls[0]
+    assert exception_type is BrokenPipeError
+    assert exception is broken_pipe
+    assert traceback is not None
+
+
+def test_rm_verbose_preserves_backend_error_when_diagnostic_write_fails(
+    monkeypatch,
+) -> None:
+    backend_error = PermissionError("denied")
+    renderer_error = RuntimeError("stderr failed")
+    source = _RecordingSource([], info_error=backend_error)
+
+    def fail_diagnostic(
+        _message: object = None,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        del args
+        if kwargs.get("err") is True:
+            raise renderer_error
+        raise AssertionError
+
+    monkeypatch.setattr(typer, "echo", fail_diagnostic)
+
+    result = _invoke_rm(
+        ["-v", "memory:/file"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.exception is renderer_error
+    assert result.stdout == ""
+    assert result.stderr == ""
+    exception_type, exception, traceback = source.exit_calls[0]
+    assert exception_type is PermissionError
+    assert exception is backend_error
+    assert traceback is not None
+
+
+def test_rm_verbose_preserves_cancellation() -> None:
+    control = asyncio.CancelledError()
+    source = _RecordingSource([], rm_file_error=control)
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        _invoke_rm(["-v", "memory:/docs/notes.txt"], sources={"memory": source})
+
+    assert caught.value is control
+    exception_type, exception, traceback = source.exit_calls[0]
+    assert exception_type is asyncio.CancelledError
+    assert exception is control
+    assert traceback is not None
+
+
+def test_rm_verbose_reports_cleanup_failure() -> None:
+    source = _RecordingSource([], exit_error=OSError("cleanup failed"))
+
+    result = _invoke_rm(
+        ["-v", "memory:/docs/notes.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == "memory:/docs/notes.txt\n"
+    assert (
+        result.stderr == "rm: memory: source exit failure (OSError): cleanup failed\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["-v"],
+        ["-v", "-v", "memory:/file"],
+        ["-f", "-v", "memory:/file"],
+        ["-v", "-f", "memory:/file"],
+        ["-d", "-v", "memory:/file"],
+        ["-v", "-d", "memory:/file"],
+        ["-fv", "memory:/file"],
+        ["memory:/file", "-v"],
+    ],
+)
+def test_rm_verbose_rejects_unsupported_shapes_before_source_entry(
+    arguments: list[str],
+) -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> object:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke_rm(arguments, sources={"memory": source_must_not_run})
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert source_calls == 0
+
+
+def test_rm_verbose_rejects_root_and_final_dot_paths_before_source_entry() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> object:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke_rm(
+        ["-v", "memory:/."],
+        sources={"memory": source_must_not_run},
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == "rm: memory:/.: rejected path\n"
+    assert source_calls == 0
+
+
+def test_rm_verbose_rejects_malformed_mappings_with_zero_factories() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> object:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke_rm(
+        ["-v", "not-a-mapping"],
+        sources={"memory": source_must_not_run},
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == "rm: not-a-mapping: invalid mapped filesystem operand\n"
+    assert source_calls == 0
+
+
+def test_rm_verbose_accepts_operand_after_option_terminator() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
+
+    result = _invoke_rm(["-v", "--", "name:/file"], sources={"name": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "name:/file\n",
+        "",
+    )
+    assert [event[0] for event in events] == [
+        "factory",
+        "enter",
+        "info",
+        "rm_file",
+        "info",
+        "exit",
+    ]

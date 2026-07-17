@@ -1077,6 +1077,37 @@ def _exercise_rm_force_profile(
     ]
 
 
+def _exercise_rm_verbose_profile(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    parent_path: str,
+    *,
+    file_name: str = "notes.txt",
+) -> None:
+    app = App({source_name: source})
+    file_path = f"{parent_path}/{file_name}"
+    missing_path = f"{parent_path}/missing-verbose.txt"
+    calls_before = len(source.calls)
+    success = _invoke_rm(app, ["-v", f"{source_name}:{file_path}"])
+    missing = _invoke_rm(app, ["-v", f"{source_name}:{missing_path}"])
+
+    assert (success.exit_code, success.stdout, success.stderr) == (
+        0,
+        f"{source_name}:{file_path}\n",
+        "",
+    )
+    assert (missing.exit_code, missing.stdout, missing.stderr) == (
+        1,
+        "",
+        f"rm: {source_name}:{missing_path}: not found\n",
+    )
+    calls = source.calls[calls_before:]
+    assert [call.path for call in calls if call.operation == "rm_file"] == [file_path]
+    assert any(call.operation == "info" and call.path == file_path for call in calls)
+    assert any(call.operation == "info" and call.path == missing_path for call in calls)
+    assert not any(call.operation in {"rm", "rmdir", "ls"} for call in calls)
+
+
 def _exercise_cp_locked_profile(  # noqa: PLR0913 - matrix probe knobs.
     source_name: str,
     source: _ProbedSource[_FilesystemT],

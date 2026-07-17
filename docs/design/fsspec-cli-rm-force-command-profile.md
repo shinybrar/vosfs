@@ -22,8 +22,8 @@ output. Base file-only `rm` without `-f` remains a separate profile and still
 requires one mapped filesystem operand.
 
 `--` ends option parsing. `-f` after an operand, `-i`, `-d`, `-R`/`-r`, `-v`,
-mixed groups, and long options are unsupported. Unsupported option tokens fail
-with status `2` before source entry.
+`-fv`/`-vf`, mixed groups, and long options are unsupported. Unsupported option
+tokens fail with status `2` before source entry.
 
 ## 2. Backend operation semantics
 
