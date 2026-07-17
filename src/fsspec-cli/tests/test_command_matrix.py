@@ -199,6 +199,50 @@ def test_mkdir_pm_option_rejection_is_source_free() -> None:
     assert source_calls == 0
 
 
+def test_mkdir_parents_option_rejection_is_source_free() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke(
+        App({"memory": source_must_not_run}),
+        "mkdir",
+        ["--parents", "memory:/docs/new"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "mkdir: --parents: unsupported option\n",
+    )
+    assert source_calls == 0
+
+
+def test_mkdir_p_after_operand_rejection_is_source_free() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke(
+        App({"memory": source_must_not_run}),
+        "mkdir",
+        ["memory:/docs/a", "-p", "memory:/docs/b"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "mkdir: -p: unsupported option\n",
+    )
+    assert source_calls == 0
+
+
 def test_adapted_local_mkdir_p_profile_uses_native_temporary_storage(
     tmp_path: Path,
 ) -> None:

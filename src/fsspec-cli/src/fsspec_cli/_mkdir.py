@@ -83,18 +83,25 @@ def _preflight(
     create_parents = False
     operands = []
     options_active = True
+    seen_operand = False
+    after_double_dash = False
 
     for argument in raw_arguments:
         if options_active and argument == "--":
             options_active = False
+            after_double_dash = True
             continue
-        if options_active and argument.startswith("-") and argument != "-":
-            if argument == "--parents":
-                create_parents = True
-                continue
+
+        is_option_like = argument.startswith("-") and argument != "-"
+
+        if options_active and is_option_like:
             if all(character == "p" for character in argument[1:]):
                 create_parents = True
                 continue
+            rendered = _render_diagnostic_value(argument)
+            _usage_error(command, f"{rendered}: unsupported option")
+
+        if seen_operand and is_option_like and not after_double_dash:
             rendered = _render_diagnostic_value(argument)
             _usage_error(command, f"{rendered}: unsupported option")
 
@@ -124,6 +131,9 @@ def _preflight(
             )
 
         operands.append(_MappedOperand(spelling=argument, name=name, path=path))
+        seen_operand = True
+        if options_active:
+            options_active = False
 
     if not operands:
         _usage_error(command, "missing mapped filesystem operand")

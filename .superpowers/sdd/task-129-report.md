@@ -31,6 +31,22 @@ Full CONTRIBUTING gate passed locally:
   post-verify (`uncertain state`) rather than `file exists`; matrix accepts both.
 - Matrix rows remain `unverified` until CI run on merge commit.
 
+## Review fixes (2026-07-17)
+
+Important review findings addressed:
+
+- Reject `--parents` and other long options source-free; only `-p` admitted.
+- Reject `-p` after first operand; no retroactive `create_parents` on earlier paths.
+- Direct `-p` lifecycle tests: multi-source ordering, repeated operands,
+  cancellation during `_makedirs`, reverse cleanup.
+- Mode/umask divergence note added to matrix rows and CHANGELOG.
+
+Validation after fixes:
+
+- `uv run pre-commit run --all-files` passed
+- `uv run pytest` (405 passed)
+- `uv run --package fsspec-cli pytest src/fsspec-cli/tests` (503 passed)
+
 ## Merge gate
 
 Blocked by #108 / `fsspec-cli-v0.1.0` tag per #129 merge gate (start blocker only).

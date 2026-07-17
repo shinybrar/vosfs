@@ -45,9 +45,9 @@ _LS_COMMAND = "ls"
 _CAT_COMMAND = "cat"
 _MKDIR_COMMAND = "mkdir"
 _MKDIR_HELP = (
-    "Create directories with optional parent creation (-p/--parents). A passing "
-    "result claims only source-default creation semantics, not POSIX mode or "
-    "umask behavior."
+    "Create directories with optional parent creation (-p). A passing result "
+    "claims only source-default creation semantics, not POSIX mode or umask "
+    "behavior."
 )
 _RMDIR_COMMAND = "rmdir"
 _UNLINK_COMMAND = "unlink"

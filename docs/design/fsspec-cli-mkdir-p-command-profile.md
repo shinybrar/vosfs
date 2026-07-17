@@ -26,7 +26,7 @@ This contract defines parent-creating directory creation through the fsspec-owne
 composite:
 
 ```text
-mkdir -p [--parents] [--] name:/path...
+mkdir -p [-p] [--] name:/path...
 ```
 
 The command operates only on invocation-owned filesystems yielded by configured
@@ -35,7 +35,8 @@ and does not branch on backend type.
 
 The supported surface is deliberately smaller than POSIX Issue 8:
 
-- `-p` or `--parents` MUST be present before operands;
+- `-p` MUST be present before operands; long options such as `--parents` are
+  unsupported;
 - at least one mapped filesystem operand is required;
 - `-m`, grouped parent/mode options, and other long forms remain unsupported;
   and
@@ -59,11 +60,11 @@ Before any source factory call, context entry, backend call, or command output,
 the command MUST validate option syntax, operand presence, operand grammar, and
 mapped filesystem names.
 
-`--` ends option parsing. `-p` and `--parents` are idempotent when repeated or
-grouped. A grouped option token is valid only when every option character is
-`p`; otherwise the complete token is reported as unsupported. Typer's
-framework-owned `--help` short circuit is explicitly exempt from this command
-compatibility profile.
+`--` ends option parsing. `-p` is idempotent when repeated or grouped. A grouped
+option token is valid only when every option character is `p`; otherwise the
+complete token is reported as unsupported. Option tokens after the first operand
+are unsupported. Typer's framework-owned `--help` short circuit is explicitly
+exempt from this command compatibility profile.
 
 The first preflight error in argument order MUST produce one diagnostic and
 exit `2`. No source may be entered and no stdout output written before it.
@@ -145,8 +146,9 @@ match the plain `ls` profile and
 
 Hermetic matrix probes exercise adapted async Local, adapted async Memory, and
 native async `vosfs` through the production `App` seam. Source-free rejection
-tests prove `-m`, mixed option groups, and other unsupported forms complete
-during command preflight without entering a source.
+tests prove `-m`, `--parents`, mixed option groups, options after operands, and
+other unsupported forms complete during command preflight without entering a
+source.
 
 Live OpenCADC evidence is not required for this profile in v1; native `vosfs`
 hermetic evidence does not broaden into a general service guarantee.

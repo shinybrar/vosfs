@@ -263,7 +263,7 @@ def test_mkdir_rejects_a_missing_mapped_filesystem_operand() -> None:
 
 @pytest.mark.parametrize(
     "option",
-    ["-m", "-pm", "--mode", "-h", "--help=value"],
+    ["-m", "-pm", "--parents", "--mode", "-h", "--help=value"],
 )
 def test_mkdir_rejects_unsupported_options_without_entering_sources(
     option: str,
@@ -511,7 +511,6 @@ def test_mkdir_p_succeeds_when_root_already_exists() -> None:
     [
         ["-p", "memory:/docs/new"],
         ["-pp", "memory:/docs/new"],
-        ["--parents", "memory:/docs/new"],
         ["-p", "-p", "memory:/docs/new"],
     ],
 )
@@ -527,6 +526,98 @@ def test_mkdir_p_accepts_grouped_and_repeated_parent_options(
     assert result.stdout == ""
     assert result.stderr == ""
     assert any(event[0] == "makedirs" for event in events)
+
+
+def test_mkdir_p_rejects_parent_option_after_first_operand() -> None:
+    result = _invoke_mkdir(["memory:/docs/a", "-p", "memory:/docs/b"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == "mkdir: -p: unsupported option\n"
+
+
+def test_mkdir_p_acquires_distinct_sources_before_reusing_them() -> None:
+    events: list[tuple[object, ...]] = []
+    shared_source = _RecordingSource(events)
+
+    result = _invoke_mkdir(
+        ["-p", "alpha:/one", "beta:/two", "alpha:/three"],
+        sources={
+            "beta": shared_source,
+            "alpha": shared_source,
+            "unused": _source_must_not_run,
+        },
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert [(event[0], *event[1:-1]) for event in events] == [
+        ("factory",),
+        ("enter", 1),
+        ("factory",),
+        ("enter", 2),
+        ("makedirs", 1, "/one", True),
+        ("info", 1, "/one"),
+        ("makedirs", 2, "/two", True),
+        ("info", 2, "/two"),
+        ("makedirs", 1, "/three", True),
+        ("info", 1, "/three"),
+        ("exit", 2),
+        ("exit", 1),
+    ]
+
+
+def test_mkdir_p_treats_repeated_operands_as_idempotent_success() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
+
+    result = _invoke_mkdir(
+        ["-p", "memory:/docs/new", "memory:/docs/new"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert [event[0] for event in events].count("makedirs") == 2
+
+
+@pytest.mark.parametrize(
+    "control",
+    [asyncio.CancelledError(), _ControlFlow("stop")],
+)
+def test_mkdir_p_preserves_control_flow_unchanged(control: BaseException) -> None:
+    source = _RecordingSource([], makedirs_error=control)
+
+    with pytest.raises(type(control)) as caught:
+        _invoke_mkdir(["-p", "memory:/docs/new"], sources={"memory": source})
+
+    assert type(caught.value) is type(control)
+    if not isinstance(control, asyncio.CancelledError):
+        assert caught.value is control
+    exception_type, exception, traceback = source.exit_calls[0]
+    assert exception_type is type(control)
+    assert exception is control
+    assert traceback is not None
+
+
+def test_mkdir_p_reports_source_exit_failures_in_reverse_order() -> None:
+    events: list[tuple[object, ...]] = []
+    alpha = _RecordingSource(events, exit_error=OSError("alpha exit"))
+    beta = _RecordingSource(events, exit_error=RuntimeError("beta exit"))
+
+    result = _invoke_mkdir(
+        ["-p", "alpha:/one", "beta:/two"],
+        sources={"alpha": alpha, "beta": beta},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "mkdir: beta: source exit failure (RuntimeError): beta exit\n"
+        "mkdir: alpha: source exit failure (OSError): alpha exit\n"
+    )
 
 
 def test_mkdir_p_continues_after_partial_success() -> None:
