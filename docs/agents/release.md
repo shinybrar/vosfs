@@ -15,7 +15,9 @@ path-prefixed outputs `src/fsspec-cli--release_created`,
 The root package excludes `fsspec-cli`-owned paths and the shared `uv.lock` from
 its commit analysis. The component package owns its version, changelog, and
 `fsspec-cli-vX.Y.Z` tag lineage. `.release-please-manifest.json` records the last
-released version of each package. Both entries create draft GitHub releases with
+released version of each package. Both packages use ordinary SemVer bumping: a
+breaking change bumps the major version and a feature bumps the minor version,
+even before `1.0.0`. Both entries create draft GitHub releases with
 `force-tag-creation`, so the Git tag exists immediately for the publication
 workflow and for previous-release discovery instead of waiting for the draft to
 be published.
