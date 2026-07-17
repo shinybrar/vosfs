@@ -30,9 +30,11 @@ This contract defines the first copy reduced profile:
 cp [--] source:/file source:/target
 ```
 
-Both operands MUST use the same configured source name. The source MUST be
-source-reported `type == "file"`. Cross-source, multi-source, directory source,
-recursive copy, and every option remain outside this profile.
+Both operands use the same configured source name. The source MUST be
+source-reported `type == "file"`. For distinct configured names, use
+[verified cross-source `cp`](fsspec-cli-cross-source-cp-command-profile.md).
+Multi-source, directory source, recursive copy, and every option remain outside
+this profile.
 
 A passing row proves target resolution, replacement, bytes, diagnostics,
 cleanup, and partial-state reporting only. Mode-less sources do not prove POSIX
@@ -56,8 +58,7 @@ creation, or stdout byte, the command MUST validate:
 1. option syntax;
 2. the presence of exactly two operands;
 3. every operand's grammar;
-4. every mapped filesystem name; and
-5. equal configured source names.
+4. every mapped filesystem name.
 
 `--` ends option parsing. Typer's framework-owned `--help` short circuit is
 explicitly exempt. Every other command option is unsupported.
@@ -69,7 +70,6 @@ explicitly exempt. Every other command option is unsupported.
 | Unsupported option token | `cp: <option token>: unsupported option` |
 | Malformed operand | `cp: <operand>: invalid mapped filesystem operand` |
 | Unknown mapped name | `cp: <operand>: unknown filesystem (known: <name>, ...)` |
-| Distinct configured names | `cp: cross-source copy unsupported` |
 
 ## 3. Target resolution
 
@@ -125,7 +125,7 @@ cp: <mapped operand>: <stable category>
 | Pre-mutation any other backend exception | `backend failure (<class>): <message>` |
 | `_cp_file` exception | `uncertain mutation state; destination residue may remain` |
 | Post-copy type/size/byte mismatch | `verification failure; destination residue may remain` |
-| Local staging/compare/cleanup failure after copy | `staging failure (<class>): <message>; destination residue may remain` |
+| Local staging/compare/cleanup failure after copy | `staging failure (<class>); destination residue may remain` |
 
 ## 6. Exit status
 
@@ -133,11 +133,12 @@ cp: <mapped operand>: <stable category>
 | ---: | --- |
 | `0` | Byte-verified copy completed and the source was retained. |
 | `1` | Source-lifecycle, backend, verification, staging, residue, or cleanup failure. |
-| `2` | Usage, option, mapped-operand, mapped-name, or cross-source preflight failed. |
+| `2` | Usage, option, mapped-operand, or mapped-name preflight failed. |
 
 ## 7. Downstream ownership
 
 - [Tested command matrix contract](fsspec-cli-tested-command-matrix.md) owns
   source-form dispositions and immutable evidence IDs.
-- Cross-source copy, multi-source copy, and recursive `-R` remain separate
-  issues (#138, #139, #140).
+- [Cross-source `cp`](fsspec-cli-cross-source-cp-command-profile.md) owns
+  distinct configured-name copy. Multi-source copy and recursive `-R` remain
+  separate issues (#139, #140).

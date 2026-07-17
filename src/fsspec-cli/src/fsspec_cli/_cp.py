@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import locale
 import os
+import shutil
 import sys
 import tempfile
+import threading
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -119,8 +123,6 @@ def _preflight(
 
     source = _validate_mapped_operand(command, operands[0], known_names)
     destination = _validate_mapped_operand(command, operands[1], known_names)
-    if source.name != destination.name:
-        _usage_error(command, "cross-source copy unsupported")
 
     return _CpRequest(source=source, destination=destination)
 
@@ -269,6 +271,196 @@ def _files_match(left: str, right: str) -> tuple[bool, Exception | None]:
         return False, error
 
 
+def _remove_directory(path: str) -> Exception | None:
+    try:
+        Path(path).rmdir()
+    except Exception as error:  # noqa: BLE001 - local staging cleanup boundary.
+        return error
+    return None
+
+
+def _create_verification_pipe() -> tuple[str | None, str | None, Exception | None]:
+    try:
+        directory = tempfile.mkdtemp(prefix="fsspec-cli-cp-verify-")
+        pipe = str(Path(directory) / "destination")
+        os.mkfifo(pipe, mode=0o600)
+    except Exception as error:  # noqa: BLE001 - local verification boundary.
+        if "pipe" in locals():
+            _remove_temporary(pipe)
+        if "directory" in locals():
+            _remove_directory(directory)
+        return None, None, error
+    return pipe, directory, None
+
+
+def _pipe_matches_file(
+    pipe: str,
+    staged: str,
+    loop: asyncio.AbstractEventLoop,
+    ready: asyncio.Future[Exception | None],
+    transfer_started: threading.Event,
+) -> tuple[bool, Exception | None]:
+    try:
+        descriptor = os.open(pipe, os.O_RDONLY)
+    except Exception as error:  # noqa: BLE001 - local verification boundary.
+        loop.call_soon_threadsafe(ready.set_result, error)
+        return False, error
+
+    loop.call_soon_threadsafe(ready.set_result, None)
+    transfer_started.wait()
+    try:
+        with (
+            os.fdopen(descriptor, "rb") as pipe_handle,
+            Path(staged).open("rb") as staged_handle,
+        ):
+            while True:
+                pipe_chunk = pipe_handle.read(_COMPARE_CHUNK)
+                staged_chunk = staged_handle.read(_COMPARE_CHUNK)
+                if pipe_chunk != staged_chunk:
+                    return False, None
+                if not pipe_chunk:
+                    return True, None
+    except Exception as error:  # noqa: BLE001 - local comparison boundary.
+        return False, error
+
+
+def _open_matches_file(
+    filesystem: AsyncFileSystem,
+    remote: str,
+    staged: str,
+) -> tuple[bool, Exception | None]:
+    backend = getattr(filesystem, "sync_fs", filesystem)
+    try:
+        with (
+            backend.open(remote, "rb") as remote_handle,
+            Path(staged).open("rb") as staged_handle,
+        ):
+            while True:
+                remote_chunk = remote_handle.read(_COMPARE_CHUNK)
+                staged_chunk = staged_handle.read(_COMPARE_CHUNK)
+                if remote_chunk != staged_chunk:
+                    return False, None
+                if not remote_chunk:
+                    return True, None
+    except Exception as error:  # noqa: BLE001 - local verification boundary.
+        return False, error
+
+
+def _release_pipe_reader(pipe: str) -> None:
+    try:
+        descriptor = os.open(pipe, os.O_WRONLY | os.O_NONBLOCK)
+    except OSError:
+        return
+    else:
+        os.close(descriptor)
+
+
+def _close_pipe_keepalive(descriptor: int) -> None:
+    with suppress(OSError):
+        os.close(descriptor)
+
+
+async def _finish_pipe_reader(
+    reader: asyncio.Task[tuple[bool, Exception | None]],
+    ready: asyncio.Future[Exception | None],
+    transfer_started: threading.Event,
+    pipe: str,
+    keepalive: int,
+) -> None:
+    ready_error = await asyncio.shield(ready)
+    transfer_started.set()
+    _close_pipe_keepalive(keepalive)
+    if ready_error is None:
+        _release_pipe_reader(pipe)
+    with suppress(BaseException):
+        await asyncio.shield(reader)
+
+
+async def _stream_remote_matches_file(  # noqa: PLR0915 - explicit FIFO cleanup paths.
+    filesystem: AsyncFileSystem,
+    remote: str,
+    staged: str,
+) -> tuple[bool, Exception | None, Exception | None, Exception | None]:
+    pipe, directory, creation_error = _create_verification_pipe()
+    if creation_error is not None or pipe is None or directory is None:
+        return False, creation_error, None, None
+
+    try:
+        keepalive = os.open(pipe, os.O_RDWR | os.O_NONBLOCK)
+    except Exception as error:  # noqa: BLE001 - local verification boundary.
+        pipe_cleanup = _remove_temporary(pipe)
+        directory_cleanup = _remove_directory(directory)
+        return False, error, None, pipe_cleanup or directory_cleanup
+
+    ready: asyncio.Future[Exception | None] = asyncio.get_running_loop().create_future()
+    transfer_started = threading.Event()
+    reader = asyncio.create_task(
+        asyncio.to_thread(
+            _pipe_matches_file,
+            pipe,
+            staged,
+            asyncio.get_running_loop(),
+            ready,
+            transfer_started,
+        )
+    )
+    transfer_error: Exception | None = None
+    matched = False
+    compare_error: Exception | None = None
+    cleanup_error: Exception | None = None
+    try:
+        try:
+            ready_error = await asyncio.shield(ready)
+        except BaseException:
+            cleanup = asyncio.create_task(
+                _finish_pipe_reader(reader, ready, transfer_started, pipe, keepalive)
+            )
+            with suppress(BaseException):
+                await asyncio.shield(cleanup)
+            raise
+        if ready_error is not None:
+            transfer_started.set()
+            _close_pipe_keepalive(keepalive)
+            keepalive = -1
+            matched, compare_error = await reader
+            return matched, None, compare_error, None
+        transfer_started.set()
+        try:
+            await filesystem._get_file(remote, pipe)  # noqa: SLF001
+        except Exception as error:  # noqa: BLE001 - verification download boundary.
+            transfer_error = error
+        except BaseException:
+            await _finish_pipe_reader(
+                reader,
+                ready,
+                transfer_started,
+                pipe,
+                keepalive,
+            )
+            keepalive = -1
+            raise
+        _close_pipe_keepalive(keepalive)
+        keepalive = -1
+        if transfer_error is not None:
+            _release_pipe_reader(pipe)
+        matched, compare_error = await reader
+        if isinstance(transfer_error, shutil.SpecialFileError):
+            transfer_error = None
+            matched, compare_error = await asyncio.to_thread(
+                _open_matches_file,
+                filesystem,
+                remote,
+                staged,
+            )
+    finally:
+        if keepalive >= 0:
+            _close_pipe_keepalive(keepalive)
+        pipe_cleanup = _remove_temporary(pipe)
+        directory_cleanup = _remove_directory(directory)
+        cleanup_error = pipe_cleanup or directory_cleanup
+    return matched, transfer_error, compare_error, cleanup_error
+
+
 async def _verify_copy(  # noqa: PLR0911 - explicit verify outcomes.
     filesystem: AsyncFileSystem,
     source_path: str,
@@ -352,6 +544,140 @@ async def _verify_copy(  # noqa: PLR0911 - explicit verify outcomes.
     return None
 
 
+async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - explicit copy outcomes.
+    request: _CpRequest,
+    source_filesystem: AsyncFileSystem,
+    destination_filesystem: AsyncFileSystem,
+) -> _CpFailure | None:
+    try:
+        source_info = await source_filesystem._info(request.source.path)  # noqa: SLF001
+    except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
+        return _CpFailure(request.source, backend_error=error)
+
+    if not isinstance(source_info, Mapping) or not isinstance(
+        source_info.get("type"), str
+    ):
+        return _CpFailure(request.source, incompatible="result")
+    if source_info["type"] == "directory":
+        return _CpFailure(request.source, incompatible="directory")
+    expected_size = _require_file_size(source_info)
+    if expected_size is None:
+        return _CpFailure(request.source, incompatible="result")
+
+    resolved, resolution_failure = await _resolve_destination(
+        request.destination,
+        request.source.path,
+        destination_filesystem,
+    )
+    if resolution_failure is not None:
+        return resolution_failure
+
+    if source_filesystem is destination_filesystem and request.source.path == resolved:
+        return _CpFailure(request.source, incompatible="same_path")
+
+    temporary, staging_error = await _stage_remote(
+        source_filesystem,
+        request.source.path,
+        "fsspec-cli-cp-",
+    )
+    if staging_error is not None or temporary is None:
+        return _CpFailure(
+            request.source,
+            backend_error=staging_error,
+            category="staging failure",
+        )
+
+    mutated = False
+    try:
+        try:
+            staged_size = Path(temporary).stat().st_size  # noqa: ASYNC240
+        except Exception as error:  # noqa: BLE001 - local staging boundary.
+            return _CpFailure(
+                request.source,
+                backend_error=error,
+                category="staging failure",
+            )
+        if staged_size != expected_size:
+            return _CpFailure(request.source, category="verification failure")
+
+        try:
+            await destination_filesystem._put_file(  # noqa: SLF001
+                temporary, resolved, mode="overwrite"
+            )
+            mutated = True
+        except Exception as error:  # noqa: BLE001 - mutation may leave residue.
+            mutated = True
+            return _CpFailure(
+                request.destination,
+                backend_error=error,
+                uncertain=True,
+                residue=True,
+            )
+
+        try:
+            info = await destination_filesystem._info(resolved)  # noqa: SLF001
+        except Exception as error:  # noqa: BLE001 - post-copy verify boundary.
+            return _CpFailure(
+                request.destination,
+                backend_error=error,
+                category="verification failure",
+                residue=True,
+            )
+        if _require_file_size(info) != expected_size:
+            return _CpFailure(
+                request.destination,
+                category="verification failure",
+                residue=True,
+            )
+
+        (
+            matched,
+            transfer_error,
+            compare_error,
+            cleanup_error,
+        ) = await _stream_remote_matches_file(
+            destination_filesystem,
+            resolved,
+            temporary,
+        )
+        if transfer_error is not None:
+            return _CpFailure(
+                request.destination,
+                backend_error=transfer_error,
+                category="staging failure",
+                residue=True,
+            )
+        if compare_error is not None:
+            return _CpFailure(
+                request.destination,
+                backend_error=compare_error,
+                category="staging failure",
+                residue=True,
+            )
+        if cleanup_error is not None:
+            return _CpFailure(
+                request.destination,
+                backend_error=cleanup_error,
+                category="staging failure",
+                residue=True,
+            )
+        if not matched:
+            return _CpFailure(
+                request.destination,
+                category="verification failure",
+                residue=True,
+            )
+    finally:
+        cleanup_error = _remove_temporary(temporary)
+        if cleanup_error is not None and sys.exc_info()[0] is None:
+            return _CpFailure(  # noqa: B012 - cleanup failure replaces return only.
+                request.destination if mutated else request.source,
+                backend_error=cleanup_error,
+                category="staging failure",
+                residue=mutated,
+            )
+
+
 async def _confirmed_cp_file(  # noqa: PLR0911 - explicit copy outcomes.
     request: _CpRequest,
     filesystem: AsyncFileSystem,
@@ -413,8 +739,7 @@ def _render_operand_diagnostic(
 
 def _render_staging_category(error: Exception) -> str:
     rendered_class = _render_diagnostic_value(type(error).__name__)
-    rendered_message = _render_diagnostic_value(str(error))
-    return f"staging failure ({rendered_class}): {rendered_message}"
+    return f"staging failure ({rendered_class})"
 
 
 def _render_failure(  # noqa: C901 - stable diagnostic categories.
@@ -471,12 +796,22 @@ async def _run_cp(
     succeeded = False
     failure: _CpFailure | None = None
     try:
-        filesystems = await invocation.acquire((request.source.name,))
+        names = (request.source.name,)
+        if request.source.name != request.destination.name:
+            names += (request.destination.name,)
+        filesystems = await invocation.acquire(names)
         if filesystems is not None:
-            failure = await _confirmed_cp_file(
-                request,
-                filesystems[request.source.name],
-            )
+            if request.source.name == request.destination.name:
+                failure = await _confirmed_cp_file(
+                    request,
+                    filesystems[request.source.name],
+                )
+            else:
+                failure = await _confirmed_cross_source_cp_file(
+                    request,
+                    filesystems[request.source.name],
+                    filesystems[request.destination.name],
+                )
             if failure is not None:
                 _render_failure(command, failure)
             succeeded = failure is None

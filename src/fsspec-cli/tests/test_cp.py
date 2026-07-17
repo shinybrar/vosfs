@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import MappingProxyType
 from typing import NoReturn
 
 import pytest
+from fsspec_cli import _cp
 
-from ._support import _invoke_cp, _RecordingSource, _source_must_not_run
+from ._support import (
+    _invoke_cp,
+    _RecordingFileSystem,
+    _RecordingSource,
+    _source_must_not_run,
+)
 
 
 def _file_source(  # noqa: PLR0913 - compact recording fixture.
@@ -55,6 +64,173 @@ def test_cp_copies_one_file_without_stdout() -> None:
     cp_events = [event for event in events if event[0] == "cp_file"]
     assert len(cp_events) == 1
     assert cp_events[0][2:4] == ("/docs/notes.txt", "/docs/copy.txt")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"",
+        b"\0\xff cross-source",
+        b"x" * (1 << 20),
+    ],
+    ids=["empty", "binary", "large"],
+)
+def test_cp_copies_payload_between_distinct_configured_sources(payload: bytes) -> None:
+    source = _file_source(content=payload)
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
+
+    result = _invoke_cp(
+        ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+        sources={"source": source, "destination": destination},
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert source.file_contents["/docs/notes.txt"] == payload
+    assert destination.file_contents["/out/copy.txt"] == payload
+    assert [event[0] for event in source.events].count("get_file") == 1
+    assert [event[0] for event in destination.events].count("put_file") == 1
+    assert [event[0] for event in destination.events].count("get_file") == 1
+
+
+def test_cp_rejects_cross_source_same_path_on_shared_backend_before_mutation() -> None:
+    source = _file_source()
+    filesystem = _RecordingFileSystem(source, 1)
+
+    @asynccontextmanager
+    async def shared_filesystem() -> _RecordingFileSystem:
+        yield filesystem
+
+    result = _invoke_cp(
+        ["left:/docs/notes.txt", "right:/docs/notes.txt"],
+        sources={"left": shared_filesystem, "right": shared_filesystem},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: left:/docs/notes.txt: same path\n",
+    )
+    assert not any(event[0] in {"get_file", "put_file"} for event in source.events)
+
+
+def test_cp_rejects_same_size_wrong_cross_source_destination() -> None:
+    source = _file_source(content=b"correct")
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
+
+    def corrupt_upload(_local_path: str, remote_path: str) -> None:
+        filesystem = destination.contexts[0].filesystem
+        filesystem._file_contents[remote_path] = b"corrupt"
+        destination.file_contents[remote_path] = b"corrupt"
+
+    destination.put_file_by_path = {"/out/copy.txt": corrupt_upload}
+    result = _invoke_cp(
+        ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+        sources={"source": source, "destination": destination},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "cp: destination:/out/copy.txt: verification failure; "
+        "destination residue may remain\n"
+    )
+    assert source.file_contents["/docs/notes.txt"] == b"correct"
+    assert destination.file_contents["/out/copy.txt"] == b"corrupt"
+
+
+def test_cp_hides_local_temporary_path_in_cross_source_staging_diagnostic() -> None:
+    staged_paths: list[str] = []
+
+    def fail_staging(local_path: str) -> None:
+        staged_paths.append(local_path)
+        raise OSError(f"local staging failed: {local_path}")  # noqa: EM102, TRY003
+
+    source = _file_source(get_file_by_path={"/docs/notes.txt": fail_staging})
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
+
+    result = _invoke_cp(
+        ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+        sources={"source": source, "destination": destination},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == "cp: source:/docs/notes.txt: staging failure (OSError)\n"
+    assert len(staged_paths) == 1
+    assert staged_paths[0] not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "destination_info",
+    [
+        MappingProxyType({"type": "directory", "size": 0}),
+        MappingProxyType({"type": "file", "size": 3}),
+    ],
+    ids=["wrong-type", "truncated"],
+)
+def test_cp_rejects_invalid_cross_source_destination_after_upload(
+    destination_info: MappingProxyType,
+) -> None:
+    source = _file_source(content=b"abcdef")
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+        post_info_by_path={"/out/copy.txt": destination_info},
+    )
+
+    result = _invoke_cp(
+        ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+        sources={"source": source, "destination": destination},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "cp: destination:/out/copy.txt: verification failure; "
+        "destination residue may remain\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "download_error",
+    [OSError("download-failed"), BrokenPipeError()],
+    ids=["download-failure", "broken-pipe"],
+)
+def test_cp_reports_cross_source_verification_download_failure(
+    download_error: OSError,
+) -> None:
+    source = _file_source()
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+        get_file_by_path={"/out/copy.txt": download_error},
+    )
+
+    result = _invoke_cp(
+        ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+        sources={"source": source, "destination": destination},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "cp: destination:/out/copy.txt: staging failure "
+        f"({type(download_error).__name__}); "
+        "destination residue may remain\n"
+    )
 
 
 def test_cp_appends_basename_when_destination_is_directory() -> None:
@@ -174,31 +350,39 @@ def test_cp_rejects_directory_source() -> None:
     assert [event[0] for event in source.events].count("cp_file") == 0
 
 
-def test_cp_rejects_cross_source_without_entering_factories() -> None:
+def test_cp_acquires_destination_before_cross_source_backend_work() -> None:
+    source = _file_source()
+
     result = _invoke_cp(
-        ["alpha:/one", "beta:/two"],
-        sources={"alpha": _source_must_not_run, "beta": _source_must_not_run},
+        ["alpha:/docs/notes.txt", "beta:/two"],
+        sources={"alpha": source, "beta": _source_must_not_run},
     )
 
-    assert result.exit_code == 2
+    assert result.exit_code == 1
     assert result.stdout == ""
-    assert result.stderr == "cp: cross-source copy unsupported\n"
+    assert "beta: source factory failure" in result.stderr
+    assert [event[0] for event in source.events] == ["factory", "enter", "exit"]
 
 
-def test_cp_rejects_two_names_even_when_backends_are_similar() -> None:
+def test_cp_uses_distinct_names_even_when_backends_are_similar() -> None:
     left = _file_source()
-    right = _file_source()
+    right = _file_source(
+        source_path="/other.txt",
+        parent="/docs",
+        directories={"/", "/docs"},
+    )
 
     result = _invoke_cp(
         ["alpha:/docs/notes.txt", "beta:/docs/copy.txt"],
         sources={"alpha": left, "beta": right},
     )
 
-    assert result.exit_code == 2
+    assert result.exit_code == 0
     assert result.stdout == ""
-    assert result.stderr == "cp: cross-source copy unsupported\n"
-    assert left.call_count == 0
-    assert right.call_count == 0
+    assert result.stderr == ""
+    assert left.call_count == 1
+    assert right.call_count == 1
+    assert right.file_contents["/docs/copy.txt"] == b"payload"
 
 
 def test_cp_rejects_missing_operands() -> None:
@@ -417,7 +601,7 @@ def test_cp_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
     result = _invoke_cp(arguments)
 
     assert result.exit_code == 0
-    assert result.stdout != ""
+    assert "cross-source" in result.stdout
 
 
 def test_cp_cancels_without_claiming_success() -> None:
@@ -522,7 +706,7 @@ def test_cp_reports_source_staging_failure_during_verification() -> None:
 
     assert result.exit_code == 1
     assert result.stderr == (
-        "cp: memory:/docs/copy.txt: staging failure (OSError): staging-source; "
+        "cp: memory:/docs/copy.txt: staging failure (OSError); "
         "destination residue may remain\n"
     )
 
@@ -539,7 +723,7 @@ def test_cp_reports_destination_staging_failure_during_verification() -> None:
 
     assert result.exit_code == 1
     assert result.stderr == (
-        "cp: memory:/docs/copy.txt: staging failure (OSError): staging-dest; "
+        "cp: memory:/docs/copy.txt: staging failure (OSError); "
         "destination residue may remain\n"
     )
 
@@ -560,42 +744,132 @@ def test_cp_reports_compare_failure_during_verification(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert result.stderr == (
-        "cp: memory:/docs/copy.txt: staging failure (OSError): compare-failed; "
+        "cp: memory:/docs/copy.txt: staging failure (OSError); "
         "destination residue may remain\n"
     )
 
 
 def test_cp_reports_verification_cleanup_failure(monkeypatch) -> None:
     source = _file_source()
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
     real_unlink = Path.unlink
     unlink_attempts = 0
 
     def fail_unlink(self: Path, *args: object, **kwargs: object) -> None:
         nonlocal unlink_attempts
-        if self.name.startswith(("fsspec-cli-cp-src-", "fsspec-cli-cp-dst-")):
+        if self.name == "destination":
             unlink_attempts += 1
-            if unlink_attempts == 1:
-                message = "unlink-denied"
-                raise OSError(message)
+            message = "unlink-denied"
+            raise OSError(message)
+        if self.name.startswith("fsspec-cli-cp-"):
+            unlink_attempts += 1
         real_unlink(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", fail_unlink)
 
     result = _invoke_cp(
-        ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
-        sources={"memory": source},
+        ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+        sources={"source": source, "destination": destination},
     )
 
     assert result.exit_code == 1
     assert result.stderr == (
-        "cp: memory:/docs/copy.txt: staging failure (OSError): unlink-denied; "
+        "cp: destination:/out/copy.txt: staging failure (OSError); "
         "destination residue may remain\n"
     )
-    assert unlink_attempts >= 1
+    assert unlink_attempts == 2
 
 
 class _ControlFlow(BaseException):
     pass
+
+
+def test_stream_verification_waits_for_pipe_reader_before_failed_download(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = _file_source(
+        get_file_by_path={"/docs/copy.txt": OSError("download-failed")},
+    )
+    filesystem = _RecordingFileSystem(source, 1)
+    staged = tmp_path / "source"
+    staged.write_bytes(b"payload")
+    reader_opened = threading.Event()
+    pipe_paths: list[str] = []
+    get_before_reader = False
+    real_open = os.open
+    real_mkfifo = os.mkfifo
+
+    def record_mkfifo(
+        path: str,
+        mode: int = 0o666,
+        *,
+        dir_fd: int | None = None,
+    ) -> None:
+        pipe_paths.append(path)
+        real_mkfifo(path, mode, dir_fd=dir_fd)
+
+    def record_open(
+        path: str,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+        if path in pipe_paths and flags & os.O_ACCMODE == os.O_RDONLY:
+            reader_opened.set()
+        return descriptor
+
+    async def fail_before_reader_guard(
+        rpath: str,
+        lpath: str,
+        **kwargs: object,
+    ) -> None:
+        nonlocal get_before_reader
+        del rpath, lpath, kwargs
+        get_before_reader = not reader_opened.is_set()
+        message = "download-failed"
+        raise OSError(message)
+
+    def unblock_legacy_reader() -> None:
+        if not pipe_paths:
+            return
+        try:
+            descriptor = real_open(pipe_paths[0], os.O_WRONLY | os.O_NONBLOCK)
+        except OSError:
+            return
+        os.close(descriptor)
+
+    monkeypatch.setattr(os, "mkfifo", record_mkfifo)
+    monkeypatch.setattr(os, "open", record_open)
+    monkeypatch.setattr(filesystem, "_get_file", fail_before_reader_guard)
+    timer = threading.Timer(0.1, unblock_legacy_reader)
+    timer.start()
+    try:
+        result = asyncio.run(
+            asyncio.wait_for(
+                _cp._stream_remote_matches_file(
+                    filesystem,
+                    "/docs/copy.txt",
+                    str(staged),
+                ),
+                timeout=1,
+            )
+        )
+    finally:
+        timer.cancel()
+        timer.join()
+
+    assert result[0] is False
+    assert isinstance(result[1], OSError)
+    assert result[2] is None
+    assert result[3] is None
+    assert not get_before_reader
 
 
 @pytest.mark.parametrize(
@@ -633,11 +907,16 @@ def test_cp_removes_temporary_on_first_verification_get_file_cancellation(
     "control",
     [asyncio.CancelledError(), _ControlFlow("stop")],
 )
-def test_cp_removes_both_temporaries_on_second_verification_get_file_cancellation(
+def test_cp_removes_source_stage_and_verification_pipe_on_cancellation(
     control: BaseException,
 ) -> None:
     temps: list[str] = []
     source = _file_source()
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
 
     def stage_source(lpath: str) -> None:
         temps.append(lpath)
@@ -648,22 +927,20 @@ def test_cp_removes_both_temporaries_on_second_verification_get_file_cancellatio
         Path(lpath).write_bytes(b"payload")
         raise control
 
-    source.get_file_by_path = {
-        "/docs/notes.txt": stage_source,
-        "/docs/copy.txt": cancel_destination_stage,
-    }
+    source.get_file_by_path = {"/docs/notes.txt": stage_source}
+    destination.get_file_by_path = {"/out/copy.txt": cancel_destination_stage}
 
     with pytest.raises(type(control)) as caught:
         _invoke_cp(
-            ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
-            sources={"memory": source},
+            ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+            sources={"source": source, "destination": destination},
         )
 
     assert type(caught.value) is type(control)
     if not isinstance(control, asyncio.CancelledError):
         assert caught.value is control
     assert len(temps) == 2
-    assert "fsspec-cli-cp-src-" in temps[0]
-    assert "fsspec-cli-cp-dst-" in temps[1]
+    assert "fsspec-cli-cp-" in temps[0]
+    assert "fsspec-cli-cp-dst-" not in temps[1]
     assert not Path(temps[0]).exists()
     assert not Path(temps[1]).exists()
