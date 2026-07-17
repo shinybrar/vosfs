@@ -271,6 +271,10 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Positively evidenced same-source multi-file `mv`](fsspec-cli-same-source-multi-file-mv-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic exact-operation classification | Same `_mv` requirement as two-operand; hermetic `test_vosfs_command_matrix.py` |
 | [Same-source multi-file `mv` shape rejection](fsspec-cli-same-source-multi-file-mv-command-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | Hermetic `test_mv.py` multi-file preflight cases on this change |
 | [Cross-source `mv` strict rejection](fsspec-cli-cross-source-mv-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | Hermetic `test_mv.py::test_mv_rejects_cross_source_without_factories_or_mutation` on this change |
+| [Reduced BSD/macOS `stat`](fsspec-cli-bsd-macos-stat-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | Profile locked by #145; production command is #146 |
+| [Reduced BSD/macOS `stat`](fsspec-cli-bsd-macos-stat-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | Incomplete `_info` shape; must not sparse-pass |
+| [Reduced BSD/macOS `stat`](fsspec-cli-bsd-macos-stat-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | Incomplete `_info` shape; must not sparse-pass |
+| [Reduced `stat` option/operand rejection](fsspec-cli-bsd-macos-stat-command-profile.md#11-rejected-flags-and-shapes-source-free) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | Planned source-free rejection; no production command in #145 |
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.
