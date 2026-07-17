@@ -61,7 +61,8 @@ _MV_HELP = (
     "Move one same-source mapped file with result verification. A passing result "
     "proves target resolution, replacement, destination bytes, source absence, "
     "diagnostics, cleanup, and partial-state reporting only — not atomic rename, "
-    "identity preservation, or generic metadata preservation."
+    "identity preservation, or generic metadata preservation. Cross-source moves "
+    "are unsupported."
 )
 _MKDIR_COMMAND = "mkdir"
 _MKDIR_HELP = (
