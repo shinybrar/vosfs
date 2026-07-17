@@ -219,3 +219,18 @@ __marimo__/
 
 # Local git worktrees
 .worktrees/
+
+# Local AI coding agents
+/.aider*
+/.amazonq/
+/.augment/
+/.claude/
+/.cline/
+/.codex/
+/.continue/
+/.cursor/
+/.gemini/
+/.qodo/
+/.roo/
+/.superpowers/
+/.windsurf/
