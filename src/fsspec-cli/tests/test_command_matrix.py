@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 
 from ._matrix_support import (
     _block_network,
+    _exercise_cat_profile,
     _exercise_locked_profile,
     _invoke,
     _ProbedSource,
@@ -161,3 +162,47 @@ def test_basename_option_rejection_is_source_free() -> None:
         "basename: -a: unsupported option\n",
     )
     assert source_calls == 0
+
+
+def test_adapted_local_plain_cat_profile(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    payload = bytes(range(256)) + b"\nno-final"
+    target = root / "blob.bin"
+    target.write_bytes(payload)
+    path = _local_command_path(target)
+    source = _ProbedSource(
+        lambda: AsyncFileSystemWrapper(
+            LocalFileSystem(skip_instance_cache=True),
+            asynchronous=True,
+        )
+    )
+
+    _exercise_cat_profile("local", source, path, payload=payload)
+
+    assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
+    assert all(isinstance(fs.sync_fs, LocalFileSystem) for fs in source.filesystems)
+    assert all(fs.asynchronous is True for fs in source.filesystems)
+
+
+def test_adapted_memory_plain_cat_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+    payload = b"\xff\xfe\0memory-cat"
+
+    def make_filesystem() -> AsyncFileSystemWrapper:
+        MemoryFileSystem.store.clear()
+        MemoryFileSystem.pseudo_dirs[:] = [""]
+        MemoryFileSystem.clear_instance_cache()
+        filesystem = MemoryFileSystem()
+        filesystem.pipe_file("/docs/blob.bin", payload)
+        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
+
+    source = _ProbedSource(make_filesystem)
+
+    _exercise_cat_profile("memory", source, "/docs/blob.bin", payload=payload)
+
+    assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
+    assert all(isinstance(fs.sync_fs, MemoryFileSystem) for fs in source.filesystems)
+    assert all(fs.asynchronous is True for fs in source.filesystems)

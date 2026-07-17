@@ -5,6 +5,8 @@
 ### Features
 
 * **fsspec-cli:** add source-free `basename string` lexical command (#123)
+* Add mapped-file `cat` with whole-object `_get_file` staging and bounded
+  binary stdout.
 
 ### Changed
 

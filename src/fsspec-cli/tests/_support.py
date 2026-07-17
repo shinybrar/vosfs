@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Mapping
+from pathlib import Path
 from types import MappingProxyType
 from typing import NoReturn
 
@@ -75,6 +76,39 @@ class _RecordingFileSystem(AsyncFileSystem):
             raise self.source.ls_error
         return self.source.ls_result
 
+    async def _get_file(
+        self,
+        rpath: str,
+        lpath: str,
+        **kwargs: object,
+    ) -> None:
+        del kwargs
+        self.source.events.append(
+            (
+                "get_file",
+                self.source_id,
+                rpath,
+                id(asyncio.get_running_loop()),
+            )
+        )
+        if rpath in self.source.get_file_by_path:
+            scripted = self.source.get_file_by_path[rpath]
+            if isinstance(scripted, BaseException):
+                raise scripted
+            if callable(scripted):
+                scripted(lpath)
+                return
+            with Path(lpath).open("wb") as handle:  # noqa: ASYNC230
+                handle.write(scripted)
+            return
+        if self.source.get_file_error is not None:
+            raise self.source.get_file_error
+        if self.source.get_file_hook is not None:
+            self.source.get_file_hook(rpath, lpath)
+            return
+        with Path(lpath).open("wb") as handle:  # noqa: ASYNC230
+            handle.write(self.source.get_file_content)
+
 
 class _RecordingSource:
     def __init__(  # noqa: PLR0913 - configurable external-boundary recording fake.
@@ -89,6 +123,10 @@ class _RecordingSource:
         exit_error: BaseException | None = None,
         info_by_path: Mapping[str, object] | None = None,
         ls_by_path: Mapping[str, object] | None = None,
+        get_file_content: bytes = b"",
+        get_file_error: BaseException | None = None,
+        get_file_by_path: Mapping[str, object] | None = None,
+        get_file_hook: object | None = None,
     ) -> None:
         self.events = events
         self.info_result = info_result
@@ -99,6 +137,10 @@ class _RecordingSource:
         self.exit_error = exit_error
         self.info_by_path = info_by_path or {}
         self.ls_by_path = ls_by_path or {}
+        self.get_file_content = get_file_content
+        self.get_file_error = get_file_error
+        self.get_file_by_path = get_file_by_path or {}
+        self.get_file_hook = get_file_hook
         self.exit_calls: list[tuple[object, object, object]] = []
         self.contexts: list[_RecordingContext] = []
         self.call_count = 0
