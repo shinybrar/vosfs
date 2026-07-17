@@ -45,6 +45,11 @@ uv build --package vosfs
 uv build --package fsspec-cli
 ```
 
+## Git
+
+- Commit: `3bf864b` — `feat(fsspec-cli): add optional basename suffix operand (#124)`
+- PR: [shinybrar/vosfs#159](https://github.com/shinybrar/vosfs/pull/159)
+
 ## Out of scope honored
 
 - No GNU multi-string modes, extension lists, pattern syntax, case folding,
