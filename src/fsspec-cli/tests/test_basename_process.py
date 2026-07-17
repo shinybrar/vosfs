@@ -53,6 +53,50 @@ def _run_redirected() -> subprocess.CompletedProcess[bytes]:
     )
 
 
+def _assert_redirected_output(
+    command: list[str],
+    *,
+    expected_stdout: bytes,
+) -> None:
+    redirected = subprocess.run(  # noqa: S603 - fixed interpreter and child source.
+        command,
+        cwd=_REPO_ROOT,
+        env=_environment(),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=_TIMEOUT,
+        check=False,
+    )
+    assert redirected.returncode == 0
+    assert redirected.stdout == expected_stdout
+    assert redirected.stderr == b""
+
+
+def test_public_seam_repeated_suffix_matches_redirected_output_verbatim() -> None:
+    operand = "foo.txt.txt"
+    suffix = ".txt"
+    expected_stdout = b"foo.txt" + _NATIVE_NEWLINE
+    command = [sys.executable, str(_CHILD_PATH), operand, suffix]
+    _assert_redirected_output(command, expected_stdout=expected_stdout)
+
+
+def test_public_seam_embedded_newline_suffix_matches_redirected_output_verbatim() -> (
+    None
+):
+    operand = "prefix\ntail"
+    suffix = "\ntail"
+    expected_stdout = b"prefix" + _NATIVE_NEWLINE
+    command = [sys.executable, str(_CHILD_PATH), operand, suffix]
+    _assert_redirected_output(command, expected_stdout=expected_stdout)
+
+
+def test_public_seam_option_looking_suffix_matches_redirected_output_verbatim() -> None:
+    operand = "foo-l"
+    expected_stdout = b"foo" + _NATIVE_NEWLINE
+    command = [sys.executable, str(_CHILD_PATH), operand, "--", "-l"]
+    _assert_redirected_output(command, expected_stdout=expected_stdout)
+
+
 def test_public_seam_suffix_tty_matches_redirected_output_verbatim() -> None:
     operand = "file.txt"
     suffix = ".txt"

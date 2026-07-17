@@ -142,6 +142,8 @@ def test_basename_rejects_a_third_operand() -> None:
         ("/a/b/c.txt", ".txt", "c\n"),
         ("memory:/path/y.z", ".z", "y\n"),
         ("café.txt", ".txt", "café\n"),
+        ("foo.txt.txt", ".txt", "foo.txt\n"),
+        ("naïve", "ïve", "na\n"),
         ("repeat", "eat", "rep\n"),
         ("a/b/", "b", "b\n"),
         ("///", "/", "/\n"),
@@ -169,7 +171,7 @@ def test_basename_removes_a_matching_suffix_after_base_extraction(
         ("short", "longer", "short\n"),
         ("foo.bar", "", "foo.bar\n"),
         ("foo.bar", ".baz", "foo.bar\n"),
-        ("repeat", "eat", "rep\n"),
+        ("repeat", "pea", "repeat\n"),
     ],
 )
 def test_basename_leaves_the_extracted_basename_unchanged_for_nonmatching_suffixes(
@@ -190,6 +192,24 @@ def test_basename_applies_suffix_after_base_extraction_for_embedded_newlines() -
 
     assert result.exit_code == 0
     assert result.stdout == "dir\nname\n"
+    assert result.stderr == ""
+
+
+def test_basename_removes_a_matching_suffix_with_embedded_newline() -> None:
+    operand = "prefix\ntail"
+    suffix = "\ntail"
+    result = _invoke_basename([operand, suffix])
+
+    assert result.exit_code == 0
+    assert result.stdout == "prefix\n"
+    assert result.stderr == ""
+
+
+def test_basename_honors_the_option_delimiter_for_an_option_looking_suffix() -> None:
+    result = _invoke_basename(["foo-l", "--", "-l"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "foo\n"
     assert result.stderr == ""
 
 

@@ -27,9 +27,7 @@ def _source_must_not_run() -> NoReturn:
 def main() -> None:
     _block_network(_ProcessMonkeyPatch())
     operand = sys.argv.pop(1)
-    arguments = ["basename", operand]
-    if len(sys.argv) > 1:
-        arguments.append(sys.argv.pop(1))
+    arguments = ["basename", operand, *sys.argv[1:]]
     App({"memory": _source_must_not_run}).typer_app(
         prog_name="basename-process-child",
         args=arguments,
