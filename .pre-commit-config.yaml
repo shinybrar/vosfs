@@ -48,7 +48,7 @@ repos:
         entry: uv run --locked pymarkdown --disable-rules MD013,MD030,MD033,MD046 scan
         language: unsupported
         types: [markdown]
-        exclude: ^CHANGELOG\.md$
+        exclude: ^(CHANGELOG\.md|src/fsspec-cli/CHANGELOG\.md)$
 
       - id: commitizen
         name: Commitizen message
