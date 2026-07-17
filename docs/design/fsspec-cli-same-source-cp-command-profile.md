@@ -71,6 +71,9 @@ explicitly exempt. Every other command option is unsupported.
 | Malformed operand | `cp: <operand>: invalid mapped filesystem operand` |
 | Unknown mapped name | `cp: <operand>: unknown filesystem (known: <name>, ...)` |
 
+`cp -R` is source-free unsupported under the locked
+[recursive-copy rejection profile](fsspec-cli-recursive-cp-rejection-profile.md).
+
 ## 3. Target resolution
 
 After acquiring the one referenced source, the command MUST:

@@ -602,6 +602,7 @@ def test_cp_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
 
     assert result.exit_code == 0
     assert "cross-source" in result.stdout
+    assert "Recursive (-R) copy is unsupported." in result.stdout
 
 
 def test_cp_cancels_without_claiming_success() -> None:
