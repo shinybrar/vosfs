@@ -15,6 +15,42 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  matrix:
+    name: Resolve test matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - name: Resolve matrix for the triggering event
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          # Pull requests validate the fast path: Python 3.12 across all three
+          # operating systems. Pushes to main and manual dispatches expand Linux
+          # to the full supported Python range (3.10-3.14).
+          pull_request='{"include":[
+            {"os":"ubuntu-latest","python":"3.12"},
+            {"os":"macos-latest","python":"3.12"},
+            {"os":"windows-latest","python":"3.12"}
+          ]}'
+          full='{"include":[
+            {"os":"ubuntu-latest","python":"3.10"},
+            {"os":"ubuntu-latest","python":"3.11"},
+            {"os":"ubuntu-latest","python":"3.12"},
+            {"os":"ubuntu-latest","python":"3.13"},
+            {"os":"ubuntu-latest","python":"3.14"},
+            {"os":"macos-latest","python":"3.12"},
+            {"os":"windows-latest","python":"3.12"}
+          ]}'
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            matrix="$pull_request"
+          else
+            matrix="$full"
+          fi
+          echo "matrix=$(jq -c . <<<"$matrix")" >> "$GITHUB_OUTPUT"
+
   quality:
     name: Quality
     runs-on: ubuntu-latest
@@ -27,7 +63,7 @@ jobs:
       - name: Install uv and Python
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
-          enable-cache: false
+          enable-cache: true
           python-version: "3.12"
 
       - name: Check exact lockfile
@@ -50,25 +86,11 @@ jobs:
 
   test:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python }})
+    needs: matrix
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            python: "3.10"
-          - os: ubuntu-latest
-            python: "3.11"
-          - os: ubuntu-latest
-            python: "3.12"
-          - os: ubuntu-latest
-            python: "3.13"
-          - os: ubuntu-latest
-            python: "3.14"
-          - os: macos-latest
-            python: "3.12"
-          - os: windows-latest
-            python: "3.12"
+      matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
     steps:
       - name: Check out source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -78,7 +100,8 @@ jobs:
       - name: Install uv and Python
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
-          enable-cache: false
+          enable-cache: true
+          cache-suffix: py${{ matrix.python }}
           python-version: ${{ matrix.python }}
 
       - name: Run deterministic offline tests
@@ -89,25 +112,11 @@ jobs:
 
   fsspec-cli-wheel:
     name: Installed fsspec-cli wheel (${{ matrix.os }}, Python ${{ matrix.python }})
+    needs: matrix
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            python: "3.10"
-          - os: ubuntu-latest
-            python: "3.11"
-          - os: ubuntu-latest
-            python: "3.12"
-          - os: ubuntu-latest
-            python: "3.13"
-          - os: ubuntu-latest
-            python: "3.14"
-          - os: macos-latest
-            python: "3.12"
-          - os: windows-latest
-            python: "3.12"
+      matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
     steps:
       - name: Check out source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -117,7 +126,8 @@ jobs:
       - name: Install uv and Python
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
-          enable-cache: false
+          enable-cache: true
+          cache-suffix: py${{ matrix.python }}
           python-version: ${{ matrix.python }}
 
       - name: Test installed wheels outside the workspace
@@ -145,7 +155,7 @@ jobs:
       - name: Install uv and Python
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
-          enable-cache: false
+          enable-cache: true
           python-version: "3.12"
 
       - name: Mint a short-lived proxy certificate
@@ -179,17 +189,18 @@ jobs:
   required:
     name: Required
     if: always()
-    needs: [quality, test, fsspec-cli-wheel, live-integration]
+    needs: [matrix, quality, test, fsspec-cli-wheel, live-integration]
     runs-on: ubuntu-latest
     steps:
       - name: Require every dependency to succeed
         env:
+          MATRIX_RESULT: ${{ needs.matrix.result }}
           QUALITY_RESULT: ${{ needs.quality.result }}
           TEST_RESULT: ${{ needs.test.result }}
           WHEEL_RESULT: ${{ needs.fsspec-cli-wheel.result }}
           LIVE_RESULT: ${{ needs.live-integration.result }}
         run: |
-          for result in "$QUALITY_RESULT" "$TEST_RESULT" "$WHEEL_RESULT"; do
+          for result in "$MATRIX_RESULT" "$QUALITY_RESULT" "$TEST_RESULT" "$WHEEL_RESULT"; do
             if [[ "$result" != "success" ]]; then
               echo "Required CI dependency concluded: $result" >&2
               exit 1
