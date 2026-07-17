@@ -25,14 +25,17 @@ Source `_info` must report `type == "file"` and non-negative integer `size`.
 Destination resolution, existing-parent requirement, replacement rules, and
 diagnostics match [verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md).
 
-Command creates a secure local source temporary, downloads source through
-`_get_file`, closes it, uploads through destination `_put_file(...,
+Command creates one secure local source staging temporary, downloads source
+through `_get_file`, closes it, uploads through destination `_put_file(...,
 mode="overwrite")`, then requires destination `_info` file type and original
-source size. It re-downloads destination into a separate secure temporary and
-compares both files byte-for-byte in bounded chunks. If both configured names
-yield the same filesystem object and resolved path, it rejects `same path`
-before staging or upload. Staging errors disclose only error class, never local
-temporary paths or source content.
+source size. It verifies destination by bounded streaming comparison against
+that same source temporary: destination bytes flow through a secure FIFO (or
+backend open stream when FIFO is unsupported), so no second full destination
+disk temporary exists. FIFO/pipe and source temporary cleanup runs after
+success, verification failure, and unlink faults; cleanup errors remain
+failures. If both configured names yield the same filesystem object and
+resolved path, it rejects `same path` before staging or upload. Staging errors
+disclose only error class, never local temporary paths or source content.
 
 Successful status `0` proves source retention, destination type, byte count,
 and content. Failed upload or later verification reports destination residue
