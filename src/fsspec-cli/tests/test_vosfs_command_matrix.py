@@ -13,6 +13,7 @@ from ._matrix_support import (
     _exercise_cat_profile,
     _exercise_locked_profile,
     _exercise_mkdir_p_locked_profile,
+    _exercise_rm_locked_profile,
     _exercise_rmdir_locked_profile,
     _exercise_unlink_locked_profile,
     _ProbedSource,
@@ -608,4 +609,31 @@ def test_native_vosfs_unlink_profile_uses_only_mocked_transport() -> None:
     assert all(fs.asynchronous is True for fs in source.filesystems)
     assert all(fs._pool.closed is True for fs in source.filesystems)
     assert "/docs/notes.txt" not in transports[0].nodes
+    assert all(transport.closed for transport in transports)
+
+
+def test_native_vosfs_base_rm_profile_uses_only_mocked_transport() -> None:
+    transports: list[_UnlinkMockTransport] = []
+
+    def make_filesystem() -> VOSpaceFileSystem:
+        transport = _UnlinkMockTransport()
+        transports.append(transport)
+        return VOSpaceFileSystem(
+            _BASE_URL,
+            transport=transport,
+            asynchronous=True,
+            skip_instance_cache=True,
+            trust_env=False,
+        )
+
+    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+
+    _exercise_rm_locked_profile("vos", source, "/docs")
+
+    assert all(isinstance(fs, VOSpaceFileSystem) for fs in source.filesystems)
+    assert all(fs.asynchronous is True for fs in source.filesystems)
+    assert all(fs._pool.closed is True for fs in source.filesystems)
+    assert "/docs/notes.txt" not in transports[0].nodes
+    assert "/docs/guide.md" not in transports[1].nodes
+    assert "/docs/.hidden" not in transports[1].nodes
     assert all(transport.closed for transport in transports)

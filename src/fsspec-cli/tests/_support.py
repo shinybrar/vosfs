@@ -55,6 +55,16 @@ def _invoke_unlink(
     return CliRunner().invoke(App(sources).typer_app, ["unlink", *arguments])
 
 
+def _invoke_rm(
+    arguments: list[str],
+    *,
+    sources: dict[str, AsyncFilesystemSource] | None = None,
+) -> Result:
+    if sources is None:
+        sources = {"memory": _source_must_not_run}
+    return CliRunner().invoke(App(sources).typer_app, ["rm", *arguments])
+
+
 class _RecordingFileSystem(AsyncFileSystem):
     cachable = False
 
@@ -258,7 +268,7 @@ class _RecordingFileSystem(AsyncFileSystem):
             ("rmdir", self.source_id, path, id(asyncio.get_running_loop()))
         )
         if self.source.trap_rmdir:
-            message = "_rmdir must not be called by unlink"
+            message = "_rmdir must not be called by file-only removal"
             raise AssertionError(message)
         if path in self.source.rmdir_by_path:
             scripted = self.source.rmdir_by_path[path]
@@ -280,6 +290,7 @@ class _RecordingFileSystem(AsyncFileSystem):
                 raise scripted
         elif self.source.rm_file_error is not None:
             raise self.source.rm_file_error
+        self._removed_paths.add(path)
         self._pending_unlink_verify.add(path)
 
     async def _rm(self, path: str, **kwargs: object) -> None:
@@ -287,7 +298,7 @@ class _RecordingFileSystem(AsyncFileSystem):
         self.source.events.append(
             ("rm", self.source_id, path, id(asyncio.get_running_loop()))
         )
-        message = "_rm must not be called by unlink"
+        message = "_rm must not be called by file-only removal"
         raise AssertionError(message)
 
 

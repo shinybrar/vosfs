@@ -19,6 +19,9 @@
   or umask behavior.
 * **fsspec-cli:** add base empty-directory `rmdir` ([#130](https://github.com/shinybrar/vosfs/issues/130))
 * **fsspec-cli:** add XSI `unlink` for one mapped file ([#131](https://github.com/shinybrar/vosfs/issues/131))
+* **fsspec-cli:** add base file-only `rm` ([#132](https://github.com/shinybrar/vosfs/issues/132)).
+  Reuses the unlink confirmed `_rm_file` absence boundary for one or more files;
+  force, directory, recursion, verbose, and interactive options remain unsupported.
 
 ### Changed
 

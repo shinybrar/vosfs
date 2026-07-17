@@ -9,9 +9,9 @@ Hosts embed its Typer application through the sole behavioral seam,
 for one command invocation.
 
 The current command surface covers plain `ls`, source-free `basename string`
-with optional `suffix`, source-free `dirname string`, mapped-file `cat`, base `mkdir`, parent-creating `mkdir -p`, base `rmdir`, and XSI
+with optional `suffix`, source-free `dirname string`, mapped-file `cat`, base `mkdir`, parent-creating `mkdir -p`, base `rmdir`, base file-only `rm`, and XSI
 `unlink`. Commands share source-free argument preflight and the synchronous
-Typer-to-asyncio boundary; `ls`, `cat`, `mkdir`, `rmdir`, and `unlink` also
+Typer-to-asyncio boundary; `ls`, `cat`, `mkdir`, `rmdir`, `rm`, and `unlink` also
 use invocation-owned source lifecycle. The `basename` slice accepts one or two
 argv tokens, no options, POSIX Issue 8 basename semantics with optional suffix
 removal after base extraction, zero source entry, and deterministic stdout with
@@ -34,7 +34,7 @@ source-default creation semantics, not POSIX mode or umask behavior. Base
 `rmdir` removes one or more empty directories through `_info`, exact `_rmdir`,
 and a distinguishable post-removal absence proof. It rejects configured source
 roots and final dot components before source entry, emits no stdout, and
-continues after ordinary operand failure without claiming rollback. XSI `unlink`
+continues after ordinary operand failure without claiming rollback. Base file-only `rm` removes one or more source-reported files through the same confirmed `_rm_file` and absence boundary as XSI `unlink`, with whole-argv root and final-dot guards, all-source acquisition before mutation, and sequential continuation after ordinary operand failure. It rejects every option, including `-f`/`-d`/`-R`/`-v`/`-i`, and never aliases recursive `_rm`. `type == "file"` is only fsspec's common type shape; implicit permission-based POSIX prompting is unavailable. XSI `unlink`
 awaits `_info`, `_rm_file`, and a distinguishable absence proof for exactly one
 source-reported file. It rejects root and final dot components before source
 entry and never aliases recursive `rm` behavior. Rendering is deterministic,
