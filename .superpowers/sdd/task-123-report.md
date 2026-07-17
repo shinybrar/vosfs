@@ -127,3 +127,29 @@ uv run pre-commit run --files src/fsspec-cli/tests/test_basename.py
 
 - Commit: `2ede3bf` — `test(fsspec-cli): disable color for basename help assertions`
 - Pushed: `feat/issue-123` updates PR #153
+
+## CI fix pass (Rich box corners)
+
+Status: **DONE**
+
+### Box-corner CI problem
+
+CI run [29565564489](https://github.com/shinybrar/vosfs/actions/runs/29565564489) failed installed-wheel gate on Windows: Rich `--help` used square box corners (`┌┐└┘`) while golden help locked rounded corners (`╭╮╰╯`). `NO_COLOR`/`TERM=dumb` from `2ede3bf` fixed ANSI only.
+
+### Box-corner CI fix
+
+`test_basename_leaves_exact_help_to_the_framework` normalizes square box corners to rounded via `_normalize_box_drawing()` before comparing to `_EXACT_BASENAME_HELP`. Exit `0`, empty stderr, zero source calls unchanged. `NO_COLOR`/`TERM=dumb` kept.
+
+### Box-corner CI validation
+
+```text
+uv run --package fsspec-cli pytest \
+  src/fsspec-cli/tests/test_basename.py \
+  src/fsspec-cli/tests/test_distribution.py -q
+-> 33 passed, 6 skipped
+```
+
+### Box-corner CI git
+
+- Commit: `32d3ba4` — `test(fsspec-cli): normalize box corners in basename help lock`
+- Pushed: `feat/issue-123` updates PR #153
