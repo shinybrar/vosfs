@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import locale
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -17,11 +18,13 @@ from ._ls import (
     _shield_help_values,
     _usage_error,
 )
+from ._rmdir import _remove_empty_directory, _RmdirFailure
+from ._rmdir import _render_failure as _render_rmdir_failure
 from ._sources import _SourceInvocation
 from ._unlink import _confirmed_rm_file, _render_failure, _UnlinkFailure
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Mapping
+    from collections.abc import Collection
 
     from fsspec.asyn import AsyncFileSystem
     from typer._click import Context
@@ -32,6 +35,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class _RmRequest:
     force: bool
+    directory: bool
     operands: tuple[_MappedOperand, ...]
 
 
@@ -59,6 +63,7 @@ def _preflight(  # noqa: C901 - locked option and operand diagnostics.
     known_names: Collection[str],
 ) -> _RmRequest:
     force = False
+    directory = False
     operands = []
     options_active = True
     seen_operand = False
@@ -71,7 +76,13 @@ def _preflight(  # noqa: C901 - locked option and operand diagnostics.
             continue
         is_option_like = argument.startswith("-") and argument != "-"
         if options_active and is_option_like:
+            if argument == "-d" and not force and not directory:
+                directory = True
+                continue
             if all(character == "f" for character in argument[1:]):
+                if directory:
+                    rendered = _render_diagnostic_value(argument)
+                    _usage_error(command, f"{rendered}: unsupported option")
                 force = True
                 continue
             rendered = _render_diagnostic_value(argument)
@@ -117,21 +128,46 @@ def _preflight(  # noqa: C901 - locked option and operand diagnostics.
     if not operands and not force:
         _usage_error(command, "missing mapped filesystem operand")
 
-    return _RmRequest(force=force, operands=tuple(operands))
+    return _RmRequest(force=force, directory=directory, operands=tuple(operands))
+
+
+async def _remove_directory_entry(
+    operand: _MappedOperand,
+    filesystem: AsyncFileSystem,
+) -> _UnlinkFailure | _RmdirFailure | None:
+    try:
+        info = await filesystem._info(operand.path)  # noqa: SLF001
+    except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
+        return _UnlinkFailure(operand, backend_error=error)
+
+    if not isinstance(info, Mapping) or not isinstance(info.get("type"), str):
+        return _UnlinkFailure(operand, incompatible="result")
+    if info["type"] == "file":
+        return await _confirmed_rm_file(operand, filesystem)
+    if info["type"] == "directory":
+        return await _remove_empty_directory(operand, filesystem)
+    return _UnlinkFailure(operand, incompatible="result")
 
 
 async def _trace_operands(
     request: _RmRequest,
     filesystems: Mapping[str, AsyncFileSystem],
-) -> tuple[_UnlinkFailure, ...]:
+) -> tuple[_UnlinkFailure | _RmdirFailure, ...]:
     failures = []
     for operand in request.operands:
-        result = await _confirmed_rm_file(operand, filesystems[operand.name])
-        if isinstance(result, _UnlinkFailure) and not (
-            request.force
-            and not result.uncertain
-            and isinstance(result.backend_error, FileNotFoundError)
-        ):
+        filesystem = filesystems[operand.name]
+        if request.directory:
+            result = await _remove_directory_entry(operand, filesystem)
+        else:
+            result = await _confirmed_rm_file(operand, filesystem)
+        if (
+            isinstance(result, _UnlinkFailure)
+            and not (
+                request.force
+                and not result.uncertain
+                and isinstance(result.backend_error, FileNotFoundError)
+            )
+        ) or isinstance(result, _RmdirFailure):
             failures.append(result)
     return tuple(failures)
 
@@ -144,14 +180,17 @@ async def _run_rm(
     request = _preflight(command, raw_arguments, sources)
     invocation = _SourceInvocation(command, sources)
     succeeded = False
-    failures: tuple[_UnlinkFailure, ...] = ()
+    failures: tuple[_UnlinkFailure | _RmdirFailure, ...] = ()
     try:
         names = dict.fromkeys(operand.name for operand in request.operands)
         filesystems = await invocation.acquire(names)
         if filesystems is not None:
             failures = await _trace_operands(request, filesystems)
             for failure in failures:
-                _render_failure(command, failure)
+                if isinstance(failure, _RmdirFailure):
+                    _render_rmdir_failure(command, failure)
+                else:
+                    _render_failure(command, failure)
             succeeded = not failures
     finally:
         active_exc_info = sys.exc_info()
