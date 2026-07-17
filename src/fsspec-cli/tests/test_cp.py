@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import MappingProxyType
 from typing import NoReturn
 
@@ -440,3 +441,224 @@ def test_cp_uses_exact_configured_name_identity() -> None:
 
     assert result.exit_code == 0
     assert source.call_count == 1
+
+
+def test_cp_reports_same_size_wrong_destination_as_verification_failure() -> None:
+    source = _file_source(content=b"abcdef")
+
+    def corrupt_same_size(path1: str, path2: str) -> None:
+        filesystem = source.contexts[0].filesystem
+        wrong = b"x" * len(filesystem._file_contents[path1])
+        filesystem._file_contents[path2] = wrong
+        source.file_contents[path2] = wrong
+
+    source.cp_file_hook = corrupt_same_size
+
+    result = _invoke_cp(
+        ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "cp: memory:/docs/copy.txt: verification failure; "
+        "destination residue may remain\n"
+    )
+    assert source.file_contents["/docs/copy.txt"] == b"xxxxxx"
+
+
+def test_cp_reports_post_copy_destination_type_mismatch() -> None:
+    source = _file_source(
+        post_info_by_path={
+            "/docs/copy.txt": MappingProxyType({"type": "directory", "size": 0})
+        },
+    )
+
+    result = _invoke_cp(
+        ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "cp: memory:/docs/copy.txt: verification failure; "
+        "destination residue may remain\n"
+    )
+
+
+def test_cp_reports_post_copy_destination_info_failure() -> None:
+    source = _file_source(
+        post_info_by_path={
+            "/docs/copy.txt": PermissionError("verify-denied"),
+        }
+    )
+
+    result = _invoke_cp(
+        ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "cp: memory:/docs/copy.txt: verification failure; "
+        "destination residue may remain\n"
+    )
+
+
+def test_cp_reports_source_staging_failure_during_verification() -> None:
+    source = _file_source(
+        get_file_by_path={"/docs/notes.txt": OSError("staging-source")},
+    )
+
+    result = _invoke_cp(
+        ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "cp: memory:/docs/copy.txt: staging failure (OSError): staging-source; "
+        "destination residue may remain\n"
+    )
+
+
+def test_cp_reports_destination_staging_failure_during_verification() -> None:
+    source = _file_source(
+        get_file_by_path={"/docs/copy.txt": OSError("staging-dest")},
+    )
+
+    result = _invoke_cp(
+        ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "cp: memory:/docs/copy.txt: staging failure (OSError): staging-dest; "
+        "destination residue may remain\n"
+    )
+
+
+def test_cp_reports_compare_failure_during_verification(monkeypatch) -> None:
+    source = _file_source()
+
+    def fail_compare(left: str, right: str) -> tuple[bool, Exception | None]:
+        del left, right
+        return False, OSError("compare-failed")
+
+    monkeypatch.setattr("fsspec_cli._cp._files_match", fail_compare)
+
+    result = _invoke_cp(
+        ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "cp: memory:/docs/copy.txt: staging failure (OSError): compare-failed; "
+        "destination residue may remain\n"
+    )
+
+
+def test_cp_reports_verification_cleanup_failure(monkeypatch) -> None:
+    source = _file_source()
+    real_unlink = Path.unlink
+    unlink_attempts = 0
+
+    def fail_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        nonlocal unlink_attempts
+        if self.name.startswith(("fsspec-cli-cp-src-", "fsspec-cli-cp-dst-")):
+            unlink_attempts += 1
+            if unlink_attempts == 1:
+                message = "unlink-denied"
+                raise OSError(message)
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+
+    result = _invoke_cp(
+        ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "cp: memory:/docs/copy.txt: staging failure (OSError): unlink-denied; "
+        "destination residue may remain\n"
+    )
+    assert unlink_attempts >= 1
+
+
+class _ControlFlow(BaseException):
+    pass
+
+
+@pytest.mark.parametrize(
+    "control",
+    [asyncio.CancelledError(), _ControlFlow("stop")],
+)
+def test_cp_removes_temporary_on_first_verification_get_file_cancellation(
+    control: BaseException,
+) -> None:
+    temps: list[str] = []
+    source = _file_source()
+
+    def cancel_source_stage(lpath: str) -> None:
+        temps.append(lpath)
+        Path(lpath).write_bytes(b"payload")
+        raise control
+
+    source.get_file_by_path = {"/docs/notes.txt": cancel_source_stage}
+
+    with pytest.raises(type(control)) as caught:
+        _invoke_cp(
+            ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
+            sources={"memory": source},
+        )
+
+    assert type(caught.value) is type(control)
+    if not isinstance(control, asyncio.CancelledError):
+        assert caught.value is control
+    assert len(temps) == 1
+    assert "fsspec-cli-cp-src-" in temps[0]
+    assert not Path(temps[0]).exists()
+
+
+@pytest.mark.parametrize(
+    "control",
+    [asyncio.CancelledError(), _ControlFlow("stop")],
+)
+def test_cp_removes_both_temporaries_on_second_verification_get_file_cancellation(
+    control: BaseException,
+) -> None:
+    temps: list[str] = []
+    source = _file_source()
+
+    def stage_source(lpath: str) -> None:
+        temps.append(lpath)
+        Path(lpath).write_bytes(b"payload")
+
+    def cancel_destination_stage(lpath: str) -> None:
+        temps.append(lpath)
+        Path(lpath).write_bytes(b"payload")
+        raise control
+
+    source.get_file_by_path = {
+        "/docs/notes.txt": stage_source,
+        "/docs/copy.txt": cancel_destination_stage,
+    }
+
+    with pytest.raises(type(control)) as caught:
+        _invoke_cp(
+            ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
+            sources={"memory": source},
+        )
+
+    assert type(caught.value) is type(control)
+    if not isinstance(control, asyncio.CancelledError):
+        assert caught.value is control
+    assert len(temps) == 2
+    assert "fsspec-cli-cp-src-" in temps[0]
+    assert "fsspec-cli-cp-dst-" in temps[1]
+    assert not Path(temps[0]).exists()
+    assert not Path(temps[1]).exists()

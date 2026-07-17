@@ -238,6 +238,9 @@ async def _stage_remote(
     except Exception as error:  # noqa: BLE001 - staging download boundary.
         cleanup = _remove_temporary(temporary)
         return None, cleanup if cleanup is not None else error
+    except BaseException:
+        _remove_temporary(temporary)
+        raise
     return temporary, None
 
 
@@ -304,11 +307,15 @@ async def _verify_copy(  # noqa: PLR0911 - explicit verify outcomes.
             residue=True,
         )
 
-    dest_temp, dest_error = await _stage_remote(
-        filesystem,
-        destination_path,
-        "fsspec-cli-cp-dst-",
-    )
+    try:
+        dest_temp, dest_error = await _stage_remote(
+            filesystem,
+            destination_path,
+            "fsspec-cli-cp-dst-",
+        )
+    except BaseException:
+        _remove_temporary(source_temp)
+        raise
     if dest_error is not None or dest_temp is None:
         cleanup = _remove_temporary(source_temp)
         return _CpFailure(
