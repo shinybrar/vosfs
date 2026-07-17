@@ -324,6 +324,64 @@ def test_rm_force_preserves_uncertain_mutation_failure() -> None:
     assert result.stderr == "rm: memory:/docs/notes.txt: uncertain mutation state\n"
 
 
+def test_rm_force_keeps_post_mutation_not_found_uncertain() -> None:
+    source = _RecordingSource([], rm_file_error=FileNotFoundError("raced removal"))
+
+    result = _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "rm: memory:/docs/notes.txt: uncertain mutation state\n"
+
+
+def test_rm_force_uses_distinct_sources_and_skips_missing_operands() -> None:
+    events: list[tuple[object, ...]] = []
+    alpha = _RecordingSource(
+        events,
+        info_by_path={"/docs/missing.txt": FileNotFoundError("missing")},
+    )
+    beta = _RecordingSource(events)
+
+    result = _invoke_rm(
+        ["-f", "alpha:/docs/missing.txt", "beta:/docs/notes.txt"],
+        sources={"alpha": alpha, "beta": beta},
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert alpha.call_count == beta.call_count == 1
+    assert [event[2] for event in events if event[0] == "rm_file"] == [
+        "/docs/notes.txt"
+    ]
+
+
+def test_rm_force_preserves_cancellation() -> None:
+    control = asyncio.CancelledError()
+    source = _RecordingSource([], rm_file_error=control)
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+
+    assert caught.value is control
+    exception_type, exception, traceback = source.exit_calls[0]
+    assert exception_type is asyncio.CancelledError
+    assert exception is control
+    assert traceback is not None
+
+
+def test_rm_force_reports_cleanup_failure() -> None:
+    source = _RecordingSource([], exit_error=OSError("cleanup failed"))
+
+    result = _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert (
+        result.stderr == "rm: memory: source exit failure (OSError): cleanup failed\n"
+    )
+
+
 def test_rm_accepts_operand_after_option_terminator() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
