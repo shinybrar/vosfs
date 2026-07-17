@@ -232,6 +232,10 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [XSI `unlink`](fsspec-cli-unlink-command-profile.md) | source | `local / adapted async` | `unverified` | `pass` | Hermetic | — |
 | [XSI `unlink`](fsspec-cli-unlink-command-profile.md) | source | `memory / adapted async` | `unverified` | `pass` | Hermetic | — |
 | [XSI `unlink`](fsspec-cli-unlink-command-profile.md) | source | `vosfs / native async` | `unverified` | `pass` | Hermetic | — |
+| [Base file-only `rm`](fsspec-cli-base-rm-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | Hermetic `test_command_matrix.py` on this change |
+| [Base file-only `rm`](fsspec-cli-base-rm-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | Hermetic `test_command_matrix.py` on this change |
+| [Base file-only `rm`](fsspec-cli-base-rm-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic | Hermetic `test_vosfs_command_matrix.py` on this change |
+| [Base file-only `rm` option rejection](fsspec-cli-base-rm-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | Hermetic `test_command_matrix.py` on this change |
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.

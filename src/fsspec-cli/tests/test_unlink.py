@@ -435,9 +435,13 @@ def test_unlink_never_calls_rm_or_rmdir_primitives() -> None:
     filesystem = source.contexts[0].filesystem
 
     async def prove_traps() -> None:
-        with pytest.raises(AssertionError, match="_rm must not be called by unlink"):
+        with pytest.raises(
+            AssertionError, match="_rm must not be called by file-only removal"
+        ):
             await filesystem._rm("/docs/notes.txt")
-        with pytest.raises(AssertionError, match="_rmdir must not be called by unlink"):
+        with pytest.raises(
+            AssertionError, match="_rmdir must not be called by file-only removal"
+        ):
             await filesystem._rmdir("/docs")
 
     asyncio.run(prove_traps())

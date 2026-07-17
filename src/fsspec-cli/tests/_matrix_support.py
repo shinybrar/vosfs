@@ -319,7 +319,7 @@ class _ProbedSource(Generic[_FilesystemT]):
                     id(asyncio.get_running_loop()),
                 )
             )
-            message = "_rm must not be called by unlink"
+            message = "_rm must not be called by file-only removal"
             raise AssertionError(message)
 
         return rm
@@ -449,6 +449,10 @@ def _invoke_rmdir(app: App, arguments: list[str]) -> Result:
 
 def _invoke_unlink(app: App, arguments: list[str]) -> Result:
     return _invoke(app, "unlink", arguments)
+
+
+def _invoke_rm(app: App, arguments: list[str]) -> Result:
+    return _invoke(app, "rm", arguments)
 
 
 def _exercise_locked_profile(
@@ -926,4 +930,71 @@ def _exercise_unlink_locked_profile(
     assert not any(call.operation == "ls" for call in source.calls)
     assert not any(call.operation in {"rm", "rmdir"} for call in source.calls)
     assert len(source.errors) == 2
+    assert {operation for _source_id, operation, _error in source.errors} == {"info"}
+
+
+def _exercise_rm_locked_profile(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    parent_path: str,
+    *,
+    file_name: str = "notes.txt",
+) -> None:
+    app = App({source_name: source})
+    file_path = f"{parent_path}/{file_name}"
+    missing_path = f"{parent_path}/missing.txt"
+    directory_path = parent_path
+    second_path = f"{parent_path}/guide.md"
+    third_path = f"{parent_path}/.hidden"
+
+    success = _invoke_rm(app, [f"{source_name}:{file_path}"])
+    many = _invoke_rm(
+        app,
+        [f"{source_name}:{second_path}", f"{source_name}:{third_path}"],
+    )
+    missing = _invoke_rm(app, [f"{source_name}:{missing_path}"])
+    directory = _invoke_rm(app, [f"{source_name}:{directory_path}"])
+
+    assert (success.exit_code, success.stdout, success.stderr) == (0, "", "")
+    assert (many.exit_code, many.stdout, many.stderr) == (0, "", "")
+    assert (missing.exit_code, missing.stdout, missing.stderr) == (
+        1,
+        "",
+        f"rm: {source_name}:{missing_path}: not found\n",
+    )
+    assert (directory.exit_code, directory.stdout, directory.stderr) == (
+        1,
+        "",
+        f"rm: {source_name}:{directory_path}: is a directory\n",
+    )
+    assert [event.stage for event in source.lifecycle] == [
+        "factory",
+        "enter",
+        "exit",
+        "factory",
+        "enter",
+        "exit",
+        "factory",
+        "enter",
+        "exit",
+        "factory",
+        "enter",
+        "exit",
+    ]
+    rm_file_calls = [call for call in source.calls if call.operation == "rm_file"]
+    assert [call.path for call in rm_file_calls] == [
+        file_path,
+        second_path,
+        third_path,
+    ]
+    info_calls = [call for call in source.calls if call.operation == "info"]
+    assert sum(1 for call in info_calls if call.path == file_path) >= 2
+    assert any(call.path == second_path for call in info_calls)
+    assert any(call.path == third_path for call in info_calls)
+    assert any(call.path == missing_path for call in info_calls)
+    assert any(call.path == directory_path for call in info_calls)
+    assert not any(call.operation == "ls" for call in source.calls)
+    assert not any(call.operation in {"rm", "rmdir"} for call in source.calls)
+    # Post-check FileNotFoundError for each successful removal plus missing preflight.
+    assert len(source.errors) == 4
     assert {operation for _source_id, operation, _error in source.errors} == {"info"}

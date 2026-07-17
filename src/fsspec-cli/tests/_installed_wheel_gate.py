@@ -244,6 +244,8 @@ def main() -> None:
                 tests / "test_cat_process.py",
                 tests / "test_rmdir.py",
                 tests / "test_mkdir.py",
+                tests / "test_rm.py",
+                tests / "test_unlink.py",
             ],
             cwd=root / "core-tests",
             environment=environment,
