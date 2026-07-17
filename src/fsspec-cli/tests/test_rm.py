@@ -256,6 +256,30 @@ def test_rm_rejects_every_option_without_entering_sources(option: str) -> None:
     assert result.stderr == f"rm: {option}: unsupported option\n"
 
 
+@pytest.mark.parametrize("option", ["-R", "-r"])
+def test_rm_recursive_options_are_equivalent_source_free_rejections(
+    option: str,
+) -> None:
+    factory_calls = 0
+
+    def source_must_not_run() -> object:
+        nonlocal factory_calls
+        factory_calls += 1
+        raise AssertionError
+
+    result = _invoke_rm(
+        [option, "memory:/docs"],
+        sources={"memory": source_must_not_run},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        f"rm: {option}: unsupported option\n",
+    )
+    assert factory_calls == 0
+
+
 @pytest.mark.parametrize(
     ("error_factory", "category"),
     [
