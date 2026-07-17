@@ -2,7 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-Status: **Locked reduced compatibility profile (research only; no production command yet)**
+Status: **Locked reduced compatibility profile (production command shipped by #146)**
 
 Question: [Define a reduced BSD and macOS stat compatibility profile](https://github.com/shinybrar/vosfs/issues/145)
 
@@ -241,13 +241,11 @@ Canonical matrix rows for planning are recorded in
 until #146 supplies qualifying evidence. Missing evidence stays `unverified`,
 never `pass`.
 
-## 8. README / help / changelog language (drafts for #146)
+## 8. README / help / changelog language
 
-Do not publish these in user docs until the production command exists
-(`CONTRIBUTING.md`: do not document commands that do not exist). Issue #146 MUST
-apply equivalent wording when the command ships.
+Issue #146 ships equivalent wording with the production command.
 
-**README draft (fragment):**
+**README (fragment):**
 
 > Reduced BSD/macOS-shaped `stat` accepts only `stat [--] name:/path...`, awaits
 > `_info` once per operand, and prints one fixed line per successful

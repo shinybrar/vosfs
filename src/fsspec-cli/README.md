@@ -14,8 +14,10 @@ for one command invocation.
 The current command surface covers plain `ls`, source-free `basename string`
 with optional `suffix`, source-free `dirname string`, mapped-file `cat`, verified
 two-operand and multi-source file `cp`, base `mkdir`, parent-creating `mkdir -p`,
-base `rmdir`, base file-only `rm`, and XSI `unlink`. Commands share source-free argument preflight and the synchronous
-Typer-to-asyncio boundary; `ls`, `cat`, `cp`, `mkdir`, `rmdir`, `rm`, and `unlink` also
+base `rmdir`, base file-only `rm`, XSI `unlink`, and reduced BSD/macOS-shaped
+`stat`. Commands share source-free argument preflight and the synchronous
+Typer-to-asyncio boundary; `ls`, `cat`, `cp`, `mkdir`, `rmdir`, `rm`, `unlink`,
+and `stat` also
 use invocation-owned source lifecycle. Same-source and cross-source `cp -R`
 remain source-free unsupported; `cp` does not traverse directories. The `basename` slice accepts one or two
 argv tokens, no options, POSIX Issue 8 basename semantics with optional suffix
@@ -81,9 +83,15 @@ available source composites lack a verifiable complete-result contract. `type ==
 prompting is unavailable. XSI `unlink`
 awaits `_info`, `_rm_file`, and a distinguishable absence proof for exactly one
 source-reported file. It rejects root and final dot components before source
-entry and never aliases recursive `rm` behavior. Rendering is deterministic,
-ordinary operand failures continue with stable diagnostics, and output failures
-preserve their accepted-byte boundary. Backend compatibility claims remain
+entry and never aliases recursive `rm` behavior. Reduced BSD/macOS-shaped `stat`
+accepts only `stat [--] name:/path...`, awaits `_info` once per operand, and
+prints one fixed line per successful non-link file or directory when the locked
+Local-rich metadata shape is present. It is not POSIX `stat`, not GNU `stat`,
+and not full macOS/BSD `stat(1)`. Options and incomplete metadata reject or fail
+closed without placeholders. This command is not evidence for `ls -l`. Rendering
+is deterministic, ordinary operand failures continue with stable diagnostics, and
+output failures preserve their accepted-byte boundary. Backend compatibility
+claims remain
 `unverified` until their source-form gates run. The package has no console entry
 point or module executable.
 

@@ -26,6 +26,8 @@ from ._matrix_support import (
     _exercise_rm_locked_profile,
     _exercise_rm_verbose_profile,
     _exercise_rmdir_locked_profile,
+    _exercise_stat_incomplete_profile,
+    _exercise_stat_locked_profile,
     _exercise_unlink_locked_profile,
     _invoke,
     _invoke_cat,
@@ -1054,5 +1056,82 @@ def test_rm_option_rejection_is_source_free() -> None:
         2,
         "",
         "rm: -i: unsupported option\n",
+    )
+    assert source_calls == 0
+
+
+def test_adapted_local_stat_profile_uses_native_temporary_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TZ", "UTC")
+    import time
+
+    time.tzset()
+    root = tmp_path / "docs"
+    root.mkdir()
+    file_path = root / "notes.txt"
+    file_path.write_text("abc", encoding="utf-8")
+    directory_path = root / "subdir"
+    directory_path.mkdir()
+    source = _ProbedSource(
+        lambda: AsyncFileSystemWrapper(
+            LocalFileSystem(skip_instance_cache=True),
+            asynchronous=True,
+        )
+    )
+
+    _exercise_stat_locked_profile(
+        "local",
+        source,
+        _local_command_path(file_path),
+        _local_command_path(directory_path),
+    )
+
+    assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
+    assert all(isinstance(fs.sync_fs, LocalFileSystem) for fs in source.filesystems)
+    assert all(fs.asynchronous is True for fs in source.filesystems)
+
+
+def test_adapted_memory_stat_profile_fails_closed_on_incomplete_info(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+
+    def make_filesystem() -> AsyncFileSystemWrapper:
+        MemoryFileSystem.store.clear()
+        MemoryFileSystem.pseudo_dirs[:] = [""]
+        MemoryFileSystem.clear_instance_cache()
+        filesystem = MemoryFileSystem()
+        filesystem.pipe_file("/docs/notes.txt", b"abc")
+        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
+
+    source = _ProbedSource(make_filesystem)
+
+    _exercise_stat_incomplete_profile("memory", source, "/docs/notes.txt")
+
+    assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
+    assert all(isinstance(fs.sync_fs, MemoryFileSystem) for fs in source.filesystems)
+
+
+def test_stat_option_rejection_is_source_free() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke(
+        App({"memory": source_must_not_run}),
+        "stat",
+        ["-l", "memory:/docs/notes.txt"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "stat: -l: unsupported option\n",
     )
     assert source_calls == 0

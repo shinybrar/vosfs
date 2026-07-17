@@ -39,6 +39,8 @@ from ._rm import _raw_arguments as _rm_raw_arguments
 from ._rm import _RmCommand, _run_rm
 from ._rmdir import _raw_arguments as _rmdir_raw_arguments
 from ._rmdir import _RmdirCommand, _run_rmdir
+from ._stat import _raw_arguments as _stat_raw_arguments
+from ._stat import _run_stat, _StatCommand
 from ._unlink import _raw_arguments as _unlink_raw_arguments
 from ._unlink import _run_unlink, _UnlinkCommand
 
@@ -77,12 +79,14 @@ _MKDIR_HELP = (
 _RMDIR_COMMAND = "rmdir"
 _RM_COMMAND = "rm"
 _UNLINK_COMMAND = "unlink"
+_STAT_COMMAND = "stat"
 _RM_HELP = (
     "Remove source-reported files. rm -d also removes empty directories. rm -f "
     "ignores files already missing before removal, including with zero operands. "
     "rm -v prints each confirmed removal. Recursion and interactive permission "
     "prompts are unavailable."
 )
+_STAT_HELP = "Reduced BSD/macOS-shaped file status over fsspec _info (not POSIX)."
 _SOURCE_FREE_CONTEXT = {
     "allow_extra_args": True,
     "ignore_unknown_options": True,
@@ -144,7 +148,7 @@ class App:
         self.typer_app = typer.Typer(add_completion=False)
         self._register_commands()
 
-    def _register_commands(self) -> None:
+    def _register_commands(self) -> None:  # noqa: C901 - one registration site per command.
         @self.typer_app.callback()
         def root() -> None:
             pass
@@ -271,3 +275,17 @@ class App:
             raw_arguments = _unlink_raw_arguments(ctx)
             _ensure_no_active_event_loop(_UNLINK_COMMAND)
             asyncio.run(_run_unlink(_UNLINK_COMMAND, raw_arguments, self._sources))
+
+        @self.typer_app.command(
+            _STAT_COMMAND,
+            cls=_StatCommand,
+            help=_STAT_HELP,
+            context_settings={
+                "allow_extra_args": True,
+                "ignore_unknown_options": True,
+            },
+        )
+        def stat(ctx: typer.Context) -> None:
+            raw_arguments = _stat_raw_arguments(ctx)
+            _ensure_no_active_event_loop(_STAT_COMMAND)
+            asyncio.run(_run_stat(_STAT_COMMAND, raw_arguments, self._sources))

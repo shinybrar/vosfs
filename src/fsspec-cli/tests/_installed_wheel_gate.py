@@ -242,6 +242,7 @@ def main() -> None:
                 tests / "test_cp.py",
                 tests / "test_mv.py",
                 tests / "test_unlink.py",
+                tests / "test_stat.py",
             ],
             cwd=root / "core-tests",
             environment=environment,
