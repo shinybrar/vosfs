@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.0](https://github.com/shinybrar/vosfs/compare/v0.4.0...v0.5.0) (2026-07-17)
+
+
+### Features
+
+* **fsspec-cli:** add base file-only rm ([#163](https://github.com/shinybrar/vosfs/issues/163)) ([f84e51e](https://github.com/shinybrar/vosfs/commit/f84e51e0dd3d2e210a26b9e5a7f2bf3288e7619c))
+* **fsspec-cli:** add base mkdir without parent creation ([#154](https://github.com/shinybrar/vosfs/issues/154)) ([6243660](https://github.com/shinybrar/vosfs/commit/6243660f668ac9e1a9685b0bf602a8d7132a76d8))
+* **fsspec-cli:** add binary mapped-file cat ([#156](https://github.com/shinybrar/vosfs/issues/156)) ([6df90ff](https://github.com/shinybrar/vosfs/commit/6df90ff3c8a6c1c07f1bb1e3ab892ddaa4fa03a2))
+* **fsspec-cli:** add empty-directory rmdir ([#157](https://github.com/shinybrar/vosfs/issues/157)) ([5567c84](https://github.com/shinybrar/vosfs/commit/5567c84bc1346debe7091d68d17ecde9647a5123))
+* **fsspec-cli:** add mkdir -p through delegated _makedirs ([#129](https://github.com/shinybrar/vosfs/issues/129)) ([#161](https://github.com/shinybrar/vosfs/issues/161)) ([3380746](https://github.com/shinybrar/vosfs/commit/338074602ef2adc5317f4794afc75e1f7025a27e))
+* **fsspec-cli:** add optional basename suffix operand ([#124](https://github.com/shinybrar/vosfs/issues/124)) ([#159](https://github.com/shinybrar/vosfs/issues/159)) ([98b8fe3](https://github.com/shinybrar/vosfs/commit/98b8fe3c3051d5adecf0ab7c8dfdcaa290ddea2f))
+* **fsspec-cli:** add source-free basename string command ([#153](https://github.com/shinybrar/vosfs/issues/153)) ([c074e37](https://github.com/shinybrar/vosfs/commit/c074e370fd3727f1e53b446395829889cf3a03d6))
+* **fsspec-cli:** add source-free dirname string ([#125](https://github.com/shinybrar/vosfs/issues/125)) ([#160](https://github.com/shinybrar/vosfs/issues/160)) ([4cb5e56](https://github.com/shinybrar/vosfs/commit/4cb5e56ffdf57c092c8078eb4ab6f49c7642580c))
+* **fsspec-cli:** add verified same-source two-operand cp ([#137](https://github.com/shinybrar/vosfs/issues/137)) ([#164](https://github.com/shinybrar/vosfs/issues/164)) ([ef371b5](https://github.com/shinybrar/vosfs/commit/ef371b588f5e61cb6b5de6e6034d5eb1a68c3a6f))
+* **fsspec-cli:** add XSI unlink for one mapped file ([#155](https://github.com/shinybrar/vosfs/issues/155)) ([371bf98](https://github.com/shinybrar/vosfs/commit/371bf98504046813e2a601f04f2d8a05c0b27a61))
+* **fsspec-cli:** binary stdin and dash sequencing for cat ([#162](https://github.com/shinybrar/vosfs/issues/162)) ([82ab5d5](https://github.com/shinybrar/vosfs/commit/82ab5d5fab8e9435f2b09eae6e3b7cff5c5c9bde)), closes [#127](https://github.com/shinybrar/vosfs/issues/127)
+
+
+### Bug Fixes
+
+* **ci:** unwedge Windows hangs in cat subprocess tests ([440a6f2](https://github.com/shinybrar/vosfs/commit/440a6f25547b9290bd0ba86e197ee61408d73857))
+
 ## [0.4.0](https://github.com/shinybrar/vosfs/compare/v0.3.3...v0.4.0) (2026-07-17)
 
 
