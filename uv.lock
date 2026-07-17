@@ -678,7 +678,7 @@ wheels = [
 
 [[package]]
 name = "fsspec-cli"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "src/fsspec-cli" }
 dependencies = [
     { name = "fsspec" },
