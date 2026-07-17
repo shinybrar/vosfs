@@ -98,6 +98,7 @@ def test_release_please_tracks_an_unreleased_independent_component() -> None:
     assert ".github/workflows/fsspec-cli-*.yml" in root_package["exclude-paths"]
     assert "docs/design/fsspec-cli-*.md" in root_package["exclude-paths"]
     assert "docs/research/fsspec-cli-*.md" in root_package["exclude-paths"]
+    assert "uv.lock" in root_package["exclude-paths"]
 
 
 def test_component_release_waits_for_exact_ci_and_live_evidence() -> None:
@@ -304,7 +305,8 @@ def test_publication_builds_and_attaches_only_the_component_distributions() -> N
         '"$GITHUB_RUN_ATTEMPT" != "1"',
         "^fsspec-cli-v(0|[1-9][0-9]*)",
         "^([0-9a-f]{40})$",
-        'gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft',
+        'gh release view "$RELEASE_TAG" --json assets,isDraft',
+        "(.assets | length) == 0",
         "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
         "persist-credentials: false",
         "ref: ${{ github.event.client_payload.tag_name }}",
@@ -315,6 +317,8 @@ def test_publication_builds_and_attaches_only_the_component_distributions() -> N
         'gh release upload "$RELEASE_TAG"',
         "dist/fsspec-cli/*.whl",
         "dist/fsspec-cli/*.tar.gz",
+        "Verify exact GitHub Release assets",
+        ".assets | map(.name) | sort",
         'gh release edit "$RELEASE_TAG" --draft=false',
     )
     for fragment in required_fragments:
@@ -334,5 +338,8 @@ def test_publication_builds_and_attaches_only_the_component_distributions() -> N
         "Attach fsspec-cli distributions"
     )
     assert workflow.index("Attach fsspec-cli distributions") < workflow.index(
+        "Verify exact GitHub Release assets"
+    )
+    assert workflow.index("Verify exact GitHub Release assets") < workflow.index(
         "Publish the complete fsspec-cli release"
     )

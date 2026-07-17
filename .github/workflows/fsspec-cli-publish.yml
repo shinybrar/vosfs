@@ -37,9 +37,15 @@ jobs:
             echo "release dispatch requires a full commit SHA" >&2
             exit 1
           fi
-          release_is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)"
+          release_json="$RUNNER_TEMP/fsspec-cli-release-before-upload.json"
+          gh release view "$RELEASE_TAG" --json assets,isDraft > "$release_json"
+          release_is_draft="$(jq -r .isDraft "$release_json")"
           if [[ "$release_is_draft" != "true" ]]; then
             echo "release $RELEASE_TAG is not the draft created by this release run" >&2
+            exit 1
+          fi
+          if ! jq -e '(.assets | length) == 0' "$release_json" >/dev/null; then
+            echo "release $RELEASE_TAG already contains assets" >&2
             exit 1
           fi
           echo "is_draft=$release_is_draft" >> "$GITHUB_OUTPUT"
@@ -92,6 +98,27 @@ jobs:
           gh release upload "$RELEASE_TAG" \
             dist/fsspec-cli/*.whl \
             dist/fsspec-cli/*.tar.gz
+
+      - name: Verify exact GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.client_payload.tag_name }}
+        run: |
+          set -euo pipefail
+          wheels=(dist/fsspec-cli/*.whl)
+          sources=(dist/fsspec-cli/*.tar.gz)
+          [[ ${#wheels[@]} -eq 1 ]]
+          [[ ${#sources[@]} -eq 1 ]]
+          expected_wheel="$(basename "${wheels[0]}")"
+          expected_source="$(basename "${sources[0]}")"
+          release_json="$RUNNER_TEMP/fsspec-cli-release-after-upload.json"
+          gh release view "$RELEASE_TAG" --json assets,isDraft > "$release_json"
+          jq -e \
+            --arg source "$expected_source" \
+            --arg wheel "$expected_wheel" \
+            '.isDraft == true and
+             (.assets | map(.name) | sort) == ([$source, $wheel] | sort)' \
+            "$release_json" >/dev/null
 
       - name: Publish the complete fsspec-cli release
         env:

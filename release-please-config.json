@@ -23,7 +23,8 @@
         "docs/adr/0002-own-async-filesystems-per-invocation.md",
         "docs/adr/0003-acquire-referenced-async-filesystem-sources.md",
         "docs/design/fsspec-cli-*.md",
-        "docs/research/fsspec-cli-*.md"
+        "docs/research/fsspec-cli-*.md",
+        "uv.lock"
       ],
       "extra-files": [
         {

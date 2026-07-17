@@ -259,8 +259,9 @@ set is recoverable from the
 ran the production command matrix and the built-wheel gate on every supported
 leg. The installed-wheel job built the member wheel and source distribution,
 rebuilt the wheel from the source distribution, installed outside the
-workspace with dependency checks, and exercised the same Local, Memory,
-mocked native-`vosfs`, and source-free rejection contracts.
+workspace with dependency checks, and exercised the same
+`local / adapted async`, `memory / adapted async`, mocked
+`vosfs / native async`, and source-free rejection contracts.
 
 | Python | Operating system | Runner image | Hermetic job | Installed-wheel job |
 | --- | --- | --- | --- | --- |
@@ -284,9 +285,9 @@ The trusted read-only live gate observed the same
 [`8cbbfd8f8940f7f4a2f9ff31ea5a130c9b08270e`](https://github.com/shinybrar/vosfs/commit/8cbbfd8f8940f7f4a2f9ff31ea5a130c9b08270e)
 build at 2026-07-16T21:35:45Z in OpenCADC staging. It installed exact isolated
 `fsspec-cli` 0.1.0 and `vosfs` 0.3.3 wheels with fsspec 2026.6.0 and Typer
-0.27.0 on Python 3.12.3, then observed one successful native async plain-`ls`
-call with `_info` followed by `_ls(detail=False)`, nonempty valid output, empty
-stderr, and awaited cleanup.
+0.27.0 on Python 3.12.3, then observed one successful
+`vosfs / native async` plain-`ls` call with `_info` followed by
+`_ls(detail=False)`, nonempty valid output, empty stderr, and awaited cleanup.
 
 [Live run 29536609626](https://github.com/shinybrar/vosfs/actions/runs/29536609626)
 recorded classification `pass` against exact

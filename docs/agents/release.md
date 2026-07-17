@@ -33,7 +33,7 @@ The `fsspec-cli Release` workflow runs only after the trusted read-only
 `fsspec-cli live OpenCADC` workflow passes. Before invoking Release Please, it
 downloads that run's sanitized evidence and verifies all of the following:
 
-1. the live classification is `pass` for native async plain `ls`;
+1. the live classification is `pass` for `vosfs / native async` plain `ls`;
 2. the evidence names a successful `CI` run for the same full commit SHA;
 3. the live run, CI run, current `main`, and evidence all name that SHA; and
 4. the CI aggregate has therefore completed the hermetic, installed-wheel,
@@ -87,7 +87,9 @@ version, updates `latest`, and makes `latest` the default. The Pages workflow
 also accepts an existing exact root tag through `workflow_dispatch` so docs can
 be republished without changing either code-release route.
 
-Do not hand-format either generated changelog. Release Please owns
+The one-time unreleased `0.0.0` bootstrap marker is the only manual content in
+the command-library changelog. Otherwise, do not hand-format either generated
+changelog. Release Please owns
 `CHANGELOG.md` for `vosfs` and `src/fsspec-cli/CHANGELOG.md` for the command
 library from Commitizen-compatible Conventional Commit titles. PyMarkdown
 excludes only the generated root changelog; all general whitespace and
