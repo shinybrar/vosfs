@@ -21,7 +21,9 @@ Issue 8 dirname semantics locked independently. Every valid `ls` operand awaits 
 immediate child names. Mapped-file `cat` awaits `_info`, requires fsspec
 `type == "file"`, stages each object through `_get_file` into one secure
 temporary, and forwards exact binary chunks to stdout with no text conversion.
-Stdin and `-` remain outside the first `cat` profile. Base `mkdir` awaits
+Operand-free `cat` and each `-` operand read the same binary stdin stream at
+that argv position; mapped sources still acquire before any stdin byte when
+files are present. `-u` remains source-free unsupported. Base `mkdir` awaits
 `_mkdir(path, create_parents=False)` and post-verifies `_info(path)` requires
 `type == "directory"`. Successful `mkdir` invocations emit no stdout, continue
 after ordinary per-operand failure, and disclose that passing rows claim only

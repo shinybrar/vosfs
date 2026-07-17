@@ -30,14 +30,15 @@ This contract defines the first binary content profile:
 cat [--] name:/path...
 ```
 
-Stdin, bare `-`, and `-u` remain outside this profile. The command operates only
-on invocation-owned filesystems yielded by configured async filesystem sources
+Stdin and bare `-` are owned by the separate
+[binary stdin and `-` sequencing profile](fsspec-cli-cat-stdin-command-profile.md).
+`-u` remains outside both profiles. The command operates only on
+invocation-owned filesystems yielded by configured async filesystem sources
 through `App(sources).typer_app`. It does not own source configuration or
 authentication and does not branch on backend type.
 
-The profile is deliberately smaller than POSIX Issue 8 `cat`:
+The mapped-file profile is deliberately smaller than POSIX Issue 8 `cat`:
 
-- at least one mapped filesystem operand is required;
 - only entries classified as fsspec `type == "file"` are supported;
 - no options are admitted; and
 - stdout is exact binary concatenation with no text conversion.
@@ -60,9 +61,9 @@ A mapped filesystem operand has the exact form `<name>:/<path>`.
   strip a backend protocol, or infer a default filesystem.
 - Bare paths, `name:`, protocol URLs, and unknown names are invalid.
 
-One or more operands are accepted. Repeated operands remain repeated, and one
-invocation MAY address several configured filesystems. Zero operands is a
-usage error; this profile does not read stdin.
+One or more mapped operands are accepted. Repeated operands remain repeated, and
+one invocation MAY address several configured filesystems. Zero operands and
+bare `-` are defined by the stdin profile, not this mapped-file profile.
 
 ### 2.1 Option and operand preflight
 
@@ -70,15 +71,13 @@ Before any source factory call, context entry, backend call, temporary
 creation, or stdout byte, the command MUST validate:
 
 1. option syntax;
-2. the presence of at least one operand;
-3. every operand's grammar, including rejection of bare `-`; and
-4. every mapped filesystem name.
+2. every mapped operand's grammar; and
+3. every mapped filesystem name.
 
 `--` ends option parsing. Typer's framework-owned `--help` short circuit is
 explicitly exempt from this command compatibility profile. Every command
 option, including `-u`, grouped short options, and long options, is
-unsupported. Bare `-` is an unsupported operand in this profile even after
-`--`.
+unsupported. Bare `-` is admitted only by the stdin profile.
 
 The first preflight error in argument order MUST produce one diagnostic and
 exit `2`. No source may be entered, no backend call made, no temporary created,
@@ -88,9 +87,7 @@ diagnostics, before the diagnostic rendering defined in Section 6:
 
 | Condition | Diagnostic |
 | --- | --- |
-| No operands | `cat: missing mapped filesystem operand` |
 | Unsupported option token | `cat: <option token>: unsupported option` |
-| Bare `-` | `cat: -: unsupported operand` |
 | Malformed operand | `cat: <operand>: invalid mapped filesystem operand` |
 | Unknown mapped name | `cat: <operand>: unknown filesystem (known: <name>, <name>, ...)` |
 
@@ -199,8 +196,9 @@ fewer bytes than requested is an output failure.
 
 - [Tested command matrix contract](fsspec-cli-tested-command-matrix.md) owns
   matrix statuses, versions, and hermetic-versus-live evidence rules.
-- [Binary stdin and `-` sequencing](https://github.com/shinybrar/vosfs/issues/127)
-  owns later stdin admission without changing this mapped-file profile.
+- [Binary stdin and `-` sequencing](fsspec-cli-cat-stdin-command-profile.md)
+  owns stdin admission, dash sequencing, and operand-free reads without
+  changing mapped-file staging rules in this profile.
 
 ## Primary evidence
 

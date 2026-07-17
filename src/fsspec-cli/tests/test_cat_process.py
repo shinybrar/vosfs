@@ -36,12 +36,23 @@ def _environment() -> dict[str, str]:
 def _run_redirected(
     mode: str,
     *operands: str,
+    stdin: bytes | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
+    if stdin is None:
+        return subprocess.run(  # noqa: S603 - fixed interpreter and child source.
+            _command(mode, *operands),
+            cwd=_REPO_ROOT,
+            env=_environment(),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=_TIMEOUT,
+            check=False,
+        )
     return subprocess.run(  # noqa: S603 - fixed interpreter and child source.
         _command(mode, *operands),
         cwd=_REPO_ROOT,
         env=_environment(),
-        stdin=subprocess.DEVNULL,
+        input=stdin,
         capture_output=True,
         timeout=_TIMEOUT,
         check=False,
@@ -120,3 +131,59 @@ def test_cat_output_failure_keeps_already_known_backend_diagnostics() -> None:
     assert result.stderr == (
         b"cat: memory:/missing: not found" + _NATIVE_NEWLINE + _OUTPUT_ERROR
     )
+
+
+def test_public_seam_cat_operand_free_reads_binary_stdin_pipe() -> None:
+    payload = b"\xff\xfe\0pipe-stdin"
+    result = _run_redirected("stdin", stdin=payload)
+
+    assert result.returncode == 0
+    assert result.stdout == payload
+    assert result.stderr == b""
+
+
+def test_public_seam_cat_preserves_file_stdin_file_order_over_pipe() -> None:
+    result = _run_redirected(
+        "mixed",
+        "memory:/left",
+        "-",
+        "memory:/right",
+        stdin=b"S",
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == b"LSR"
+    assert result.stderr == b""
+
+
+def test_public_seam_cat_repeated_dash_second_sees_eof_on_pipe() -> None:
+    payload = b"once-only"
+    result = _run_redirected("repeat-dash", "-", "-", stdin=payload)
+
+    assert result.returncode == 0
+    assert result.stdout == payload
+    assert result.stderr == b""
+
+
+def test_public_seam_cat_broken_pipe_during_stdin_is_silent() -> None:
+    if os.name != "posix":
+        pytest.skip("closed-reader pipe evidence requires POSIX")
+
+    read_fd, write_fd = os.pipe()
+    os.close(read_fd)
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed child command.
+            _command("stdin"),
+            cwd=_REPO_ROOT,
+            env=_environment(),
+            input=b"stdin-bytes",
+            stdout=write_fd,
+            stderr=subprocess.PIPE,
+            timeout=_TIMEOUT,
+            check=False,
+        )
+    finally:
+        os.close(write_fd)
+
+    assert result.returncode == 1
+    assert result.stderr == b""

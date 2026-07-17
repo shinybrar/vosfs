@@ -44,13 +44,21 @@ class _BinaryWriter(Protocol):
 
 
 @dataclass(frozen=True)
+class _StdinOperand:
+    spelling: str = "-"
+
+
+_CatOperand = _MappedOperand | _StdinOperand
+
+
+@dataclass(frozen=True)
 class _CatRequest:
-    operands: tuple[_MappedOperand, ...]
+    operands: tuple[_CatOperand, ...]
 
 
 @dataclass(frozen=True)
 class _StagingFailure:
-    operand: _MappedOperand
+    operand: _CatOperand
     error: Exception
 
 
@@ -65,7 +73,7 @@ def _preflight(
     raw_arguments: tuple[str, ...],
     known_names: Collection[str],
 ) -> _CatRequest:
-    operands = []
+    operands: list[_CatOperand] = []
     options_active = True
 
     for argument in raw_arguments:
@@ -73,8 +81,8 @@ def _preflight(
             options_active = False
             continue
         if argument == "-":
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: unsupported operand")
+            operands.append(_StdinOperand())
+            continue
         if options_active and argument.startswith("-"):
             rendered = _render_diagnostic_value(argument)
             _usage_error(command, f"{rendered}: unsupported option")
@@ -107,7 +115,7 @@ def _preflight(
         operands.append(_MappedOperand(spelling=argument, name=name, path=path))
 
     if not operands:
-        _usage_error(command, "missing mapped filesystem operand")
+        operands.append(_StdinOperand())
 
     return _CatRequest(operands=tuple(operands))
 
@@ -116,6 +124,14 @@ def _binary_stdout() -> _BinaryWriter:
     buffer = getattr(sys.stdout, "buffer", None)
     if buffer is None:
         message = "stdout has no binary buffer"
+        raise OSError(message)
+    return buffer
+
+
+def _binary_stdin() -> BinaryIO:
+    buffer = getattr(sys.stdin, "buffer", None)
+    if buffer is None:
+        message = "stdin has no binary buffer"
         raise OSError(message)
     return buffer
 
@@ -131,7 +147,7 @@ def _write_stdout(chunk: bytes) -> None:
 
 def _render_staging_failure(
     command: str,
-    operand: _MappedOperand,
+    operand: _CatOperand,
     error: Exception,
 ) -> None:
     prefix = _render_diagnostic_prefix(command)
@@ -310,15 +326,15 @@ def _validate_handle(handle: BinaryIO) -> Exception | None:
             return None
 
 
-def _emit_handle(handle: BinaryIO) -> _ForwardResult:
+def _emit_handle(handle: BinaryIO, *, read_is_output: bool) -> _ForwardResult:
     emitted = False
     while True:
         try:
             chunk = handle.read(_OUTPUT_CHUNK)
-        except Exception as error:  # noqa: BLE001 - local staging read boundary.
-            if emitted:
+        except Exception as error:  # noqa: BLE001 - local staging/stdin read boundary.
+            if read_is_output and emitted:
                 return _ForwardResult(output_error=error, wrote_output=True)
-            return _ForwardResult(staging_error=error)
+            return _ForwardResult(staging_error=error, wrote_output=emitted)
         if not chunk:
             return _ForwardResult(wrote_output=emitted)
         try:
@@ -326,6 +342,14 @@ def _emit_handle(handle: BinaryIO) -> _ForwardResult:
         except Exception as error:  # noqa: BLE001 - stdout boundary.
             return _ForwardResult(output_error=error, wrote_output=emitted)
         emitted = True
+
+
+def _forward_stdin() -> _ForwardResult:
+    try:
+        handle = _binary_stdin()
+    except Exception as error:  # noqa: BLE001 - stdin open boundary.
+        return _ForwardResult(staging_error=error)
+    return _emit_handle(handle, read_is_output=False)
 
 
 def _forward_temporary(temporary: str) -> _ForwardResult:
@@ -346,7 +370,7 @@ def _forward_temporary(temporary: str) -> _ForwardResult:
             except Exception as error:  # noqa: BLE001 - local staging seek boundary.
                 forwarded = _ForwardResult(staging_error=error)
             else:
-                forwarded = _emit_handle(handle)
+                forwarded = _emit_handle(handle, read_is_output=True)
     finally:
         try:
             handle.close()
@@ -388,6 +412,53 @@ class _CatProgress:
         return self.staging_cleanup_error
 
 
+def _apply_forward_result(
+    command: str,
+    operand: _CatOperand,
+    forwarded: _ForwardResult,
+    progress: _CatProgress,
+) -> None:
+    if forwarded.staging_error is not None:
+        failure = _StagingFailure(operand, forwarded.staging_error)
+        _render_operand_failure(command, failure)
+        progress.failures.append(failure)
+        return
+    if forwarded.output_error is not None:
+        progress.output_error = forwarded.output_error
+        if not isinstance(forwarded.output_error, BrokenPipeError):
+            _render_output_failure(command, forwarded.output_error)
+
+
+async def _emit_mapped_operand(
+    command: str,
+    operand: _MappedOperand,
+    filesystem: AsyncFileSystem,
+    progress: _CatProgress,
+    ownership: _CatOwnership,
+) -> None:
+    temporary, failure = await _stage_operand(operand, filesystem, ownership)
+    if failure is not None:
+        _render_operand_failure(command, failure)
+        progress.failures.append(failure)
+        return
+    if temporary is None:
+        progress.failures.append(_Failure(operand))
+        _render_operand_failure(command, progress.failures[-1])
+        return
+    try:
+        _apply_forward_result(
+            command,
+            operand,
+            _forward_temporary(temporary),
+            progress,
+        )
+    finally:
+        cleanup_error = _remove_owned_temporary(ownership, temporary)
+        if cleanup_error is not None:
+            progress.staging_cleanup_error = cleanup_error
+            _render_staging_failure(command, operand, cleanup_error)
+
+
 async def _emit_operands(
     command: str,
     request: _CatRequest,
@@ -398,34 +469,16 @@ async def _emit_operands(
     for operand in request.operands:
         if progress.output_error is not None:
             return
-        temporary, failure = await _stage_operand(
+        if isinstance(operand, _StdinOperand):
+            _apply_forward_result(command, operand, _forward_stdin(), progress)
+            continue
+        await _emit_mapped_operand(
+            command,
             operand,
             filesystems[operand.name],
+            progress,
             ownership,
         )
-        if failure is not None:
-            _render_operand_failure(command, failure)
-            progress.failures.append(failure)
-            continue
-        if temporary is None:
-            progress.failures.append(_Failure(operand))
-            _render_operand_failure(command, progress.failures[-1])
-            continue
-        try:
-            forwarded = _forward_temporary(temporary)
-            if forwarded.staging_error is not None:
-                failure = _StagingFailure(operand, forwarded.staging_error)
-                _render_operand_failure(command, failure)
-                progress.failures.append(failure)
-            elif forwarded.output_error is not None:
-                progress.output_error = forwarded.output_error
-                if not isinstance(forwarded.output_error, BrokenPipeError):
-                    _render_output_failure(command, forwarded.output_error)
-        finally:
-            cleanup_error = _remove_owned_temporary(ownership, temporary)
-            if cleanup_error is not None:
-                progress.staging_cleanup_error = cleanup_error
-                _render_staging_failure(command, operand, cleanup_error)
 
 
 async def _run_cat(
@@ -439,7 +492,11 @@ async def _run_cat(
     ownership = _CatOwnership(set(), {}, {})
     succeeded = False
     try:
-        names = dict.fromkeys(operand.name for operand in request.operands)
+        names = dict.fromkeys(
+            operand.name
+            for operand in request.operands
+            if isinstance(operand, _MappedOperand)
+        )
         filesystems = await invocation.acquire(names)
         if filesystems is not None:
             await _emit_operands(command, request, filesystems, progress, ownership)

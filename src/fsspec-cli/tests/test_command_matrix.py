@@ -21,9 +21,11 @@ from ._matrix_support import (
     _exercise_rmdir_locked_profile,
     _exercise_unlink_locked_profile,
     _invoke,
+    _invoke_cat,
     _invoke_ls,
     _ProbedSource,
 )
+from ._support import _source_must_not_run
 
 
 @pytest.fixture(autouse=True)
@@ -360,6 +362,52 @@ def test_adapted_memory_plain_cat_profile(monkeypatch: pytest.MonkeyPatch) -> No
     assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
     assert all(isinstance(fs.sync_fs, MemoryFileSystem) for fs in source.filesystems)
     assert all(fs.asynchronous is True for fs in source.filesystems)
+
+
+def test_cat_u_rejection_is_source_free() -> None:
+    source = _source_must_not_run
+    app = App({"memory": source})
+    result = _invoke_cat(app, ["-u", "memory:/file"])
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "cat: -u: unsupported option\n",
+    )
+
+
+def test_adapted_memory_cat_stdin_dash_mixed_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+
+    def make_filesystem() -> AsyncFileSystemWrapper:
+        MemoryFileSystem.store.clear()
+        MemoryFileSystem.pseudo_dirs[:] = [""]
+        MemoryFileSystem.clear_instance_cache()
+        filesystem = MemoryFileSystem()
+        filesystem.pipe_file("/docs/left.bin", b"L")
+        filesystem.pipe_file("/docs/right.bin", b"R")
+        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
+
+    source = _ProbedSource(make_filesystem)
+    app = App({"memory": source})
+    result = CliRunner().invoke(
+        app.typer_app,
+        ["cat", "memory:/docs/left.bin", "-", "memory:/docs/right.bin"],
+        input=b"S",
+    )
+
+    assert (result.exit_code, result.stdout_bytes, result.stderr) == (0, b"LSR", "")
+    assert [event.stage for event in source.lifecycle] == ["factory", "enter", "exit"]
+    assert [call.operation for call in source.calls] == [
+        "info",
+        "get_file",
+        "info",
+        "get_file",
+    ]
 
 
 def test_adapted_local_base_rmdir_profile_uses_native_temporary_storage(

@@ -42,6 +42,8 @@ class _FileSystem(AsyncFileSystem):
             "/bytes": bytes(range(256)),
             "/prefix": b"abcdefghij",
             "/docs": b"payload",
+            "/left": b"L",
+            "/right": b"R",
         }
         with Path(lpath).open("wb") as handle:  # noqa: ASYNC230
             handle.write(payloads.get(rpath, b"payload"))
@@ -83,7 +85,14 @@ def _configure_stdout(mode: str) -> None:
         sys.stdout = io.TextIOWrapper(_PrefixThenFailure(3), write_through=True)
     elif mode == "runtime-and-fail":
         sys.stdout = io.TextIOWrapper(_PrefixThenFailure(0), write_through=True)
-    elif mode not in {"normal", "bytes", "empty"}:
+    elif mode not in {
+        "normal",
+        "bytes",
+        "empty",
+        "stdin",
+        "mixed",
+        "repeat-dash",
+    }:
         msg = f"unknown child mode: {mode}"
         raise RuntimeError(msg)
 
