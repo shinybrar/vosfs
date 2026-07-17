@@ -31,7 +31,20 @@ def _pin_utc_timezone() -> None:
         time.tzset()
 
 
-# Unresolvable uid/gid keep owner/group decimal so goldens stay host-independent.
+@pytest.fixture(autouse=True)
+def _unresolvable_owner_group(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Goldens use decimal uid/gid; host account DB must not rename them.
+    def missing_user(uid: int) -> None:
+        raise KeyError(uid)
+
+    def missing_group(gid: int) -> None:
+        raise KeyError(gid)
+
+    monkeypatch.setattr("fsspec_cli._stat.pwd.getpwuid", missing_user)
+    monkeypatch.setattr("fsspec_cli._stat.grp.getgrgid", missing_group)
+
+
+# Goldens use unresolvable uid/gid (see _unresolvable_owner_group).
 _RICH_FILE: dict[str, object] = {
     "name": "/stat-file",
     "size": 3,
@@ -196,6 +209,7 @@ def test_stat_rejects_incomplete_memory_shape() -> None:
         {**_RICH_FILE, "nlink": 0},
         {**_RICH_FILE, "mtime": math.nan},
         {**_RICH_FILE, "mtime": math.inf},
+        {**_RICH_FILE, "mtime": 1e100},
         {k: v for k, v in _RICH_FILE.items() if k != "mode"},
     ],
 )
@@ -207,6 +221,26 @@ def test_stat_rejects_malformed_info(info: dict[str, object]) -> None:
     assert result.exit_code == 1
     assert result.stdout == ""
     assert result.stderr == "stat: memory:/stat-file: incompatible result\n"
+
+
+def test_stat_falls_back_to_decimal_when_owner_lookup_overflows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def overflow_user(uid: int) -> None:
+        raise OverflowError(uid)
+
+    def overflow_group(gid: int) -> None:
+        raise OverflowError(gid)
+
+    monkeypatch.setattr("fsspec_cli._stat.pwd.getpwuid", overflow_user)
+    monkeypatch.setattr("fsspec_cli._stat.grp.getgrgid", overflow_group)
+    source = _RecordingSource([], info_result=_RICH_FILE)
+
+    result = _invoke_stat(["memory:/stat-file"], sources={"memory": source})
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    assert result.stdout == _GOLDEN_FILE
 
 
 def test_stat_ignores_extra_info_keys() -> None:

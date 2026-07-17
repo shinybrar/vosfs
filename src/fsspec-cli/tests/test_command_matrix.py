@@ -1061,35 +1061,44 @@ def test_rm_option_rejection_is_source_free() -> None:
 
 
 def test_adapted_local_stat_profile_uses_native_temporary_storage(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("TZ", "UTC")
+    import os
     import time
 
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
     time.tzset()
-    root = tmp_path / "docs"
-    root.mkdir()
-    file_path = root / "notes.txt"
-    file_path.write_text("abc", encoding="utf-8")
-    directory_path = root / "subdir"
-    directory_path.mkdir()
-    source = _ProbedSource(
-        lambda: AsyncFileSystemWrapper(
-            LocalFileSystem(skip_instance_cache=True),
-            asynchronous=True,
+    try:
+        root = tmp_path / "docs"
+        root.mkdir()
+        file_path = root / "notes.txt"
+        file_path.write_text("abc", encoding="utf-8")
+        directory_path = root / "subdir"
+        directory_path.mkdir()
+        source = _ProbedSource(
+            lambda: AsyncFileSystemWrapper(
+                LocalFileSystem(skip_instance_cache=True),
+                asynchronous=True,
+            )
         )
-    )
 
-    _exercise_stat_locked_profile(
-        "local",
-        source,
-        _local_command_path(file_path),
-        _local_command_path(directory_path),
-    )
+        _exercise_stat_locked_profile(
+            "local",
+            source,
+            _local_command_path(file_path),
+            _local_command_path(directory_path),
+        )
 
-    assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
-    assert all(isinstance(fs.sync_fs, LocalFileSystem) for fs in source.filesystems)
-    assert all(fs.asynchronous is True for fs in source.filesystems)
+        assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
+        assert all(isinstance(fs.sync_fs, LocalFileSystem) for fs in source.filesystems)
+        assert all(fs.asynchronous is True for fs in source.filesystems)
+    finally:
+        if previous is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = previous
+        time.tzset()
 
 
 def test_adapted_memory_stat_profile_fails_closed_on_incomplete_info(

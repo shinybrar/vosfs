@@ -266,12 +266,12 @@ Reduced BSD/macOS-shaped file status over fsspec _info (not POSIX).
 > Add reduced BSD/macOS-shaped `stat` over authoritative `_info` fields. Not
 > POSIX; not full host `stat(1)`.
 
-## 9. T25 implementation frontier (#146)
+## 9. T25 implementation record (#146)
 
-Issue #146 MAY merge production code only after this profile stays locked and
-the merge gate (`fsspec-cli-v0.1.0` / #108) is satisfied per issue text.
+Production command shipped by #146 against this locked profile. The issue-text
+merge gate (`fsspec-cli-v0.1.0` / #108) was a merge gate, not a start blocker.
 
-Required implementation work:
+Completed implementation work:
 
 1. Private `_stat.py` + `App` registration only through `App(sources).typer_app`.
 2. Exact T24 argv; reject every Section 1.1 surface source-free.
@@ -283,7 +283,7 @@ Required implementation work:
 7. README/help/changelog agree with this profile; still never claim POSIX.
 8. No reuse as `ls -l` justification.
 
-Out of scope for T25: `-f` language, JSON, recursion, capacity, GNU blend,
+Out of scope remains: `-f` language, JSON, recursion, capacity, GNU blend,
 backend branches, placeholder metadata, directory traversal.
 
 ## 10. Research deliverable boundary

@@ -142,14 +142,14 @@ def _preflight(
 def _owner_name(uid: int) -> str:
     try:
         return pwd.getpwuid(uid).pw_name
-    except KeyError:
+    except (KeyError, OverflowError, OSError):
         return str(uid)
 
 
 def _group_name(gid: int) -> str:
     try:
         return grp.getgrgid(gid).gr_name
-    except KeyError:
+    except (KeyError, OverflowError, OSError):
         return str(gid)
 
 
@@ -202,6 +202,10 @@ def _validate_info(  # noqa: C901, PLR0911, PLR0912 - locked Local-rich shape ch
     else:
         return None
     if not math.isfinite(checked_mtime):
+        return None
+    try:
+        time.localtime(checked_mtime)
+    except (OverflowError, OSError, ValueError):
         return None
     return mapping
 
