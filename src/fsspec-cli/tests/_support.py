@@ -1,7 +1,7 @@
 """Recording filesystem sources for public-seam command tests."""
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import MappingProxyType
 from typing import NoReturn
@@ -438,9 +438,9 @@ class _RecordingSource:
         get_file_content: bytes = b"",
         get_file_error: BaseException | None = None,
         get_file_by_path: Mapping[str, object] | None = None,
-        get_file_hook: object | None = None,
-        cp_file_hook: object | None = None,
-        mv_hook: object | None = None,
+        get_file_hook: Callable[[str, str], None] | None = None,
+        cp_file_hook: Callable[[str, str], None] | None = None,
+        mv_hook: Callable[[str, str], None] | None = None,
         file_contents: Mapping[str, bytes] | None = None,
         directories: set[str] | None = None,
     ) -> None:

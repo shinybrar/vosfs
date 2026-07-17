@@ -323,6 +323,7 @@ def test_mv_cancellation_removes_temps_and_closes_source() -> None:
     with pytest.raises(asyncio.CancelledError):
         _invoke(source, "memory:/docs/notes.txt", "memory:/docs/moved.txt")
     assert len(source.get_file_paths) == 1
-    assert all(not Path(path).exists() for path in source.get_file_paths)
+    source_staging_path = source.get_file_paths[0]
+    assert not Path(source_staging_path).exists()
     assert len(source.exit_calls) == 1
     assert isinstance(source.exit_calls[0][1], asyncio.CancelledError)
