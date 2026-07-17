@@ -213,6 +213,48 @@ def test_basename_string_is_source_free() -> None:
     assert source_calls == 0
 
 
+def test_basename_suffix_is_source_free() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = CliRunner().invoke(
+        App({"memory": source_must_not_run}).typer_app,
+        ["basename", "memory:/docs/a.txt", ".txt"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "a\n",
+        "",
+    )
+    assert source_calls == 0
+
+
+def test_basename_extra_operand_rejection_is_source_free() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = CliRunner().invoke(
+        App({"memory": source_must_not_run}).typer_app,
+        ["basename", "a", "b", "c"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "basename: extra operand\n",
+    )
+    assert source_calls == 0
+
+
 def test_basename_option_rejection_is_source_free() -> None:
     source_calls = 0
 

@@ -14,11 +14,13 @@ if TYPE_CHECKING:
     from typer._click import Context
 
 _RAW_ARGUMENTS = "fsspec_cli.raw_arguments"
+_MAX_OPERANDS = 2
 
 
 @dataclass(frozen=True)
 class _BasenameRequest:
     operand: str
+    suffix: str | None = None
 
 
 class _BasenameCommand(TyperCommand):
@@ -74,10 +76,11 @@ def _preflight(
 
     if not operands:
         _usage_error(command, "missing operand")
-    if len(operands) > 1:
+    if len(operands) > _MAX_OPERANDS:
         _usage_error(command, "extra operand")
 
-    return _BasenameRequest(operand=operands[0])
+    suffix = operands[1] if len(operands) == _MAX_OPERANDS else None
+    return _BasenameRequest(operand=operands[0], suffix=suffix)
 
 
 def _posix_basename_string(string: str) -> str:
@@ -92,6 +95,17 @@ def _posix_basename_string(string: str) -> str:
     return string
 
 
+def _apply_optional_suffix(base: str, suffix: str) -> str:
+    if not suffix or suffix == base:
+        return base
+    if base.endswith(suffix):
+        return base[: -len(suffix)]
+    return base
+
+
 def _run_basename(command: str, raw_arguments: tuple[str, ...]) -> None:
     request = _preflight(command, raw_arguments)
-    typer.echo(_posix_basename_string(request.operand), nl=True, color=True)
+    result = _posix_basename_string(request.operand)
+    if request.suffix is not None:
+        result = _apply_optional_suffix(result, request.suffix)
+    typer.echo(result, nl=True, color=True)

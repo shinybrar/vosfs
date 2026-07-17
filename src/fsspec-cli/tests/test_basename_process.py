@@ -17,12 +17,21 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _TIMEOUT = 5
 _NATIVE_NEWLINE = os.linesep.encode()
 _OPERAND = "dir\nname"
-_EXPECTED_STDOUT = _OPERAND.encode() + _NATIVE_NEWLINE
 _CHILD_PATH = Path(__file__).with_name("_basename_process_child.py")
 
 
-def _command() -> list[str]:
-    return [sys.executable, str(_CHILD_PATH), _OPERAND]
+def _expected_stdout(text: str) -> bytes:
+    return (f"{text}\n").replace("\n", os.linesep).encode()
+
+
+_EXPECTED_STDOUT = _expected_stdout(_OPERAND)
+
+
+def _command(*, suffix: str | None = None) -> list[str]:
+    command = [sys.executable, str(_CHILD_PATH), _OPERAND]
+    if suffix is not None:
+        command.append(suffix)
+    return command
 
 
 def _environment() -> dict[str, str]:
@@ -50,13 +59,84 @@ def _run_redirected() -> subprocess.CompletedProcess[bytes]:
     )
 
 
-def _run_pty() -> tuple[int, bytes, bytes]:
+def _assert_redirected_output(
+    command: list[str],
+    *,
+    expected_stdout: bytes,
+) -> None:
+    redirected = subprocess.run(  # noqa: S603 - fixed interpreter and child source.
+        command,
+        cwd=_REPO_ROOT,
+        env=_environment(),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=_TIMEOUT,
+        check=False,
+    )
+    assert redirected.returncode == 0
+    assert redirected.stdout == expected_stdout
+    assert redirected.stderr == b""
+
+
+def test_public_seam_repeated_suffix_matches_redirected_output_verbatim() -> None:
+    operand = "foo.txt.txt"
+    suffix = ".txt"
+    expected_stdout = b"foo.txt" + _NATIVE_NEWLINE
+    command = [sys.executable, str(_CHILD_PATH), operand, suffix]
+    _assert_redirected_output(command, expected_stdout=expected_stdout)
+
+
+def test_public_seam_embedded_newline_suffix_matches_redirected_output_verbatim() -> (
+    None
+):
+    operand = "prefix\ntail"
+    suffix = "\ntail"
+    expected_stdout = b"prefix" + _NATIVE_NEWLINE
+    command = [sys.executable, str(_CHILD_PATH), operand, suffix]
+    _assert_redirected_output(command, expected_stdout=expected_stdout)
+
+
+def test_public_seam_option_looking_suffix_matches_redirected_output_verbatim() -> None:
+    operand = "foo-l"
+    expected_stdout = b"foo" + _NATIVE_NEWLINE
+    command = [sys.executable, str(_CHILD_PATH), operand, "--", "-l"]
+    _assert_redirected_output(command, expected_stdout=expected_stdout)
+
+
+def test_public_seam_suffix_tty_matches_redirected_output_verbatim() -> None:
+    operand = "file.txt"
+    suffix = ".txt"
+    expected_stdout = b"file" + _NATIVE_NEWLINE
+    command = [sys.executable, str(_CHILD_PATH), operand, suffix]
+
+    redirected = subprocess.run(  # noqa: S603 - fixed interpreter and child source.
+        command,
+        cwd=_REPO_ROOT,
+        env=_environment(),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=_TIMEOUT,
+        check=False,
+    )
+    if os.name != "posix":
+        assert redirected.returncode == 0
+        assert redirected.stdout == expected_stdout
+        assert redirected.stderr == b""
+        return
+
+    returncode, stdout, stderr = _run_pty_command(command)
+
+    assert returncode == redirected.returncode == 0
+    assert stdout == redirected.stdout == expected_stdout
+    assert stderr == redirected.stderr == b""
+
+
+def _run_pty_command(command: list[str]) -> tuple[int, bytes, bytes]:
     if os.name != "posix":
         pytest.skip("PTY evidence requires POSIX")
     if not hasattr(termios, "ONLCR") or not hasattr(termios, "ECHO"):
         pytest.skip("required terminal flags unavailable")
 
-    command = _command()
     master_fd, slave_fd = pty.openpty()
     try:
         attributes = termios.tcgetattr(slave_fd)
@@ -98,7 +178,13 @@ def _run_pty() -> tuple[int, bytes, bytes]:
 
 def test_public_seam_tty_matches_redirected_output_verbatim() -> None:
     redirected = _run_redirected()
-    returncode, stdout, stderr = _run_pty()
+    if os.name != "posix":
+        assert redirected.returncode == 0
+        assert redirected.stdout == _EXPECTED_STDOUT
+        assert redirected.stderr == b""
+        return
+
+    returncode, stdout, stderr = _run_pty_command(_command())
 
     assert returncode == redirected.returncode == 0
     assert stdout == redirected.stdout == _EXPECTED_STDOUT
