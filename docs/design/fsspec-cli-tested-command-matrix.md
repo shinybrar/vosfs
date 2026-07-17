@@ -212,8 +212,8 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [`basename string suffix`](fsspec-cli-basename-suffix-command-profile.md) | source-free command | `not entered` | `pass` | `pass` | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [`basename string`](fsspec-cli-basename-command-profile.md) option/operand rejection | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29564531624](#h-2026-07-17-29564531624) |
 | [`basename string suffix`](fsspec-cli-basename-suffix-command-profile.md) third-operand rejection | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | Hermetic `test_command_matrix.py` on this change |
-| [`dirname string`](fsspec-cli-dirname-command-profile.md) | source-free command | `not entered` | `unverified` | `unverified` | Hermetic | — |
-| [`dirname string`](fsspec-cli-dirname-command-profile.md) option/operand rejection | command preflight | `not entered` | `unverified` | `unverified` | Hermetic negative rejection | — |
+| [`dirname string`](fsspec-cli-dirname-command-profile.md) | source-free command | `not entered` | `pass` | `pass` | Hermetic | [H-2026-07-17-29586387337](#h-2026-07-17-29586387337) |
+| [`dirname string`](fsspec-cli-dirname-command-profile.md) option/operand rejection | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29586387337](#h-2026-07-17-29586387337) |
 | [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `local / adapted async` | `pass` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `memory / adapted async` | `pass` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic and live OpenCADC | Hermetic mocked transport present; live evidence absent |
@@ -320,6 +320,53 @@ and
 (which then covered both the positive lexical success and negative option
 rejection surfaces in one test). Later commits keep those surfaces as separate
 matrix tests while preserving this immutable run as the qualifying evidence.
+
+### H-2026-07-17-29586387337
+
+This successful exact-commit CI run observed `fsspec-cli` 0.1.1 at
+[commit `f4faba8012689211f8a826065678bdf537a42056`](https://github.com/shinybrar/vosfs/commit/f4faba8012689211f8a826065678bdf537a42056)
+with fsspec 2026.6.0 and Typer 0.27.0. No backend participates in either
+dirname row. The complete resolved dependency set is recoverable from the
+[commit-pinned `uv.lock`](https://github.com/shinybrar/vosfs/blob/f4faba8012689211f8a826065678bdf537a42056/uv.lock).
+
+The hermetic gate exercised the production `App` seam with a source factory
+that raises if called. The positive `source-free command` case completed a
+successful lexical `dirname` over source-looking text without entering a
+source. The negative `command preflight` case rejected an unsupported option
+with empty stdout, the locked diagnostic, exit status `2`, and zero source
+calls. The installed-wheel jobs rebuilt and tested the member outside the
+workspace with declared runtime dependencies only.
+
+The gate ran from 2026-07-17T14:03:11Z through 2026-07-17T14:04:44Z in
+[GitHub Actions run 29586387337](https://github.com/shinybrar/vosfs/actions/runs/29586387337).
+Every leg used runner 2.335.1 and provisioner `20260707.563`. Runner image
+versions below come from each job log's `Runner Image` group:
+
+| Python | Operating system | Runner image | Hermetic job | Installed-wheel job |
+| --- | --- | --- | --- | --- |
+| 3.10.20 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87904314015](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904314015) | [87904313801](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313801) |
+| 3.11.15 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87904314012](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904314012) | [87904313836](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313836) |
+| 3.12.3 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87904313756](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313756) | [87904313858](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313858) |
+| 3.13.14 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87904313755](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313755) | [87904313779](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313779) |
+| 3.14.6 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87904313952](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313952) | [87904313869](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313869) |
+| 3.12.10 | Microsoft Windows Server 2025, 10.0.26100 Datacenter | `windows-2025-vs2026@20260714.173.1` | [87904313802](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313802) | [87904313875](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313875) |
+| 3.12.10 | macOS 26.4, build 25E246 | `macos-26-arm64@20260715.0248.1` | [87904313795](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313795) | [87904313716](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904313716) |
+
+Python patch versions for the Ubuntu 3.12, macOS 3.12, and Windows 3.12
+installed-wheel jobs were not printed in those job logs; the table reuses the
+matching hermetic-leg patch versions from the same workflow matrix cell. The
+aggregate
+[Required job](https://github.com/shinybrar/vosfs/actions/runs/29586387337/job/87904647449)
+passed after quality, hermetic, and installed-wheel dependencies succeeded.
+
+The executable evidence at that commit is the pinned
+[`test_dirname.py`](https://github.com/shinybrar/vosfs/blob/f4faba8012689211f8a826065678bdf537a42056/src/fsspec-cli/tests/test_dirname.py),
+[`test_dirname_process.py`](https://github.com/shinybrar/vosfs/blob/f4faba8012689211f8a826065678bdf537a42056/src/fsspec-cli/tests/test_dirname_process.py),
+and
+[`test_command_matrix.py::test_dirname_string_is_source_free`](https://github.com/shinybrar/vosfs/blob/f4faba8012689211f8a826065678bdf537a42056/src/fsspec-cli/tests/test_command_matrix.py)
+(which covers the positive lexical success surface) plus
+[`test_command_matrix.py::test_dirname_option_rejection_is_source_free`](https://github.com/shinybrar/vosfs/blob/f4faba8012689211f8a826065678bdf537a42056/src/fsspec-cli/tests/test_command_matrix.py)
+for the negative preflight surface.
 
 ### H-2026-07-16-29525392759
 
