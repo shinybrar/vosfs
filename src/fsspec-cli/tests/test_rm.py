@@ -1001,6 +1001,38 @@ def test_rm_d_rejects_missing_and_non_qualifying_types(
     )
 
 
+def test_rm_d_rejects_a_source_without_async_rmdir() -> None:
+    events: list[tuple[object, ...]] = []
+    recording = _RecordingSource(events, info_result={"type": "directory"})
+
+    class _StripRmdir:
+        def __call__(self) -> object:
+            manager = recording()
+
+            class _Wrapped:
+                async def __aenter__(self) -> object:
+                    filesystem = await manager.__aenter__()
+                    filesystem._rmdir = None  # type: ignore[method-assign]
+                    return filesystem
+
+                async def __aexit__(self, *exc_info: object) -> object:
+                    return await manager.__aexit__(*exc_info)
+
+            return _Wrapped()
+
+    result = _invoke_rm(
+        ["-d", "memory:/docs/empty"],
+        sources={"memory": _StripRmdir()},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "rm: memory:/docs/empty: unsupported operation\n",
+    )
+    assert not any(event[0] in {"rm", "rm_file", "rmdir", "ls"} for event in events)
+
+
 def test_rm_d_reports_uncertain_empty_directory_removal() -> None:
     source = _RecordingSource(
         [],
