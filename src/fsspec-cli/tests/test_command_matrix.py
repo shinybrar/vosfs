@@ -736,6 +736,27 @@ def test_cp_option_rejection_is_source_free() -> None:
 
 
 def test_rm_force_profile_option_rejection_is_source_free() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke(
+        App({"memory": source_must_not_run}),
+        "rm",
+        ["-f", "-i", "memory:/docs/notes.txt"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "rm: -i: unsupported option\n",
+    )
+    assert source_calls == 0
+
+
 def test_adapted_local_mv_remains_unverified_without_exact_operation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
