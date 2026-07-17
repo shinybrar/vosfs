@@ -260,7 +260,15 @@ def main() -> None:
         }
         _run_pytest(
             vosfs_python,
-            [tests / "test_distribution.py", tests / "test_vosfs_command_matrix.py"],
+            [
+                tests / "test_distribution.py",
+                tests / "test_vosfs_command_matrix.py",
+                tests
+                / (
+                    "test_vosfs_command_matrix.py::"
+                    "test_native_vosfs_rm_d_profile_uses_only_mocked_transport"
+                ),
+            ],
             cwd=root / "vosfs-tests",
             environment=vosfs_environment,
         )

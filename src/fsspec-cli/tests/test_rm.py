@@ -1,8 +1,9 @@
-"""Base file-only ``rm`` tests through the public embedded-command seam."""
+"""Base ``rm``, ``rm -d``, and ``rm -f`` tests through the public seam."""
 
 from __future__ import annotations
 
 import asyncio
+import errno
 import re
 from typing import TYPE_CHECKING, NoReturn
 
@@ -231,7 +232,6 @@ def test_rm_force_accepts_repeated_and_grouped_flags(arguments: list[str]) -> No
 @pytest.mark.parametrize(
     "option",
     [
-        "-d",
         "-R",
         "-r",
         "-v",
@@ -871,12 +871,21 @@ def test_rm_reports_source_exit_failures_in_reverse_order() -> None:
     )
 
 
-@pytest.mark.parametrize("arguments", [["--help"], ["-f", "--help"]])
+@pytest.mark.parametrize("arguments", [["--help"], ["-d", "--help"], ["-f", "--help"]])
 def test_rm_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
     result = _invoke_rm(arguments)
 
     assert result.exit_code == 0
     assert "Usage:" in result.stdout
+    assert result.stderr == ""
+
+
+def test_rm_help_describes_directory_profile() -> None:
+    result = _invoke_rm(["--help"])
+
+    assert result.exit_code == 0
+    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
+    assert "rm -d also removes empty directories" in " ".join(plain_help.split())
     assert result.stderr == ""
 
 
@@ -941,3 +950,335 @@ def test_rm_reuses_unlink_confirmed_removal_boundary() -> None:
     from fsspec_cli._unlink import _confirmed_rm_file as unlink_confirmed
 
     assert rm_confirmed is unlink_confirmed
+
+
+def test_rm_d_removes_mixed_files_and_empty_directories_without_stdout() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(
+        events,
+        info_by_path={
+            "/docs/file.txt": {"type": "file"},
+            "/docs/empty": {"type": "directory"},
+        },
+    )
+
+    result = _invoke_rm(
+        ["-d", "memory:/docs/file.txt", "memory:/docs/empty"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [
+        (event[0], event[2]) for event in events if event[0] in {"rm_file", "rmdir"}
+    ] == [
+        ("rm_file", "/docs/file.txt"),
+        ("rmdir", "/docs/empty"),
+    ]
+    assert not any(event[0] in {"rm", "ls"} for event in events)
+
+
+def test_rm_d_continues_after_non_empty_directory_failure() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(
+        events,
+        info_by_path={
+            "/docs/not-empty": {"type": "directory"},
+            "/docs/file.txt": {"type": "file"},
+        },
+        rmdir_by_path={
+            "/docs/not-empty": OSError(errno.ENOTEMPTY, "directory not empty")
+        },
+    )
+
+    result = _invoke_rm(
+        ["-d", "memory:/docs/not-empty", "memory:/docs/file.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "rm: memory:/docs/not-empty: directory not empty\n"
+    assert [event[2] for event in events if event[0] == "rm_file"] == ["/docs/file.txt"]
+
+
+def test_rm_d_continues_after_an_earlier_success() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(
+        events,
+        info_by_path={
+            "/docs/file.txt": {"type": "file"},
+            "/docs/not-empty": {"type": "directory"},
+        },
+        rmdir_by_path={
+            "/docs/not-empty": OSError(errno.ENOTEMPTY, "directory not empty")
+        },
+    )
+
+    result = _invoke_rm(
+        ["-d", "memory:/docs/file.txt", "memory:/docs/not-empty"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "rm: memory:/docs/not-empty: directory not empty\n"
+    assert [event[2] for event in events if event[0] == "rm_file"] == ["/docs/file.txt"]
+    assert any(
+        event[0] == "rmdir" and event[2] == "/docs/not-empty" for event in events
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            _RecordingSource([], info_error=FileNotFoundError("missing")),
+            "rm: memory:/docs/item: not found\n",
+        ),
+        (
+            _RecordingSource([], info_result={"type": "link"}),
+            "rm: memory:/docs/item: incompatible result\n",
+        ),
+        (
+            _RecordingSource([], info_result={}),
+            "rm: memory:/docs/item: incompatible result\n",
+        ),
+    ],
+)
+def test_rm_d_rejects_missing_and_non_qualifying_types(
+    source: _RecordingSource,
+    expected: str,
+) -> None:
+    result = _invoke_rm(["-d", "memory:/docs/item"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (1, "", expected)
+    assert not any(
+        event[0] in {"rm_file", "rmdir", "rm", "ls"} for event in source.events
+    )
+
+
+def test_rm_d_rejects_a_source_without_async_rmdir() -> None:
+    events: list[tuple[object, ...]] = []
+    recording = _RecordingSource(events, info_result={"type": "directory"})
+
+    class _StripRmdir:
+        def __call__(self) -> object:
+            manager = recording()
+
+            class _Wrapped:
+                async def __aenter__(self) -> object:
+                    filesystem = await manager.__aenter__()
+                    filesystem._rmdir = None  # type: ignore[method-assign]
+                    return filesystem
+
+                async def __aexit__(self, *exc_info: object) -> object:
+                    return await manager.__aexit__(*exc_info)
+
+            return _Wrapped()
+
+    result = _invoke_rm(
+        ["-d", "memory:/docs/empty"],
+        sources={"memory": _StripRmdir()},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "rm: memory:/docs/empty: unsupported operation\n",
+    )
+    assert not any(event[0] in {"rm", "rm_file", "rmdir", "ls"} for event in events)
+
+
+def test_rm_d_reports_uncertain_empty_directory_removal() -> None:
+    source = _RecordingSource(
+        [],
+        info_result={"type": "directory"},
+        post_info_error=PermissionError("verify denied"),
+    )
+
+    result = _invoke_rm(["-d", "memory:/docs/empty"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "rm: memory:/docs/empty: uncertain state\n",
+    )
+
+
+def test_rm_d_preserves_directory_removal_cancellation() -> None:
+    control = asyncio.CancelledError()
+    source = _RecordingSource(
+        [],
+        info_result={"type": "directory"},
+        rmdir_error=control,
+    )
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        _invoke_rm(["-d", "memory:/docs/empty"], sources={"memory": source})
+
+    assert caught.value is control
+
+
+@pytest.mark.parametrize(
+    ("arguments", "option"),
+    [
+        (["-df", "memory:/file"], "-df"),
+        (["-fd", "memory:/file"], "-fd"),
+        (["-d", "-f", "memory:/file"], "-f"),
+        (["-dd", "memory:/file"], "-dd"),
+        (["-d", "-R", "memory:/file"], "-R"),
+        (["-d", "-v", "memory:/file"], "-v"),
+    ],
+)
+def test_rm_d_rejects_unsupported_option_combinations_before_source_entry(
+    arguments: list[str],
+    option: str,
+) -> None:
+    result = _invoke_rm(arguments)
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == f"rm: {option}: unsupported option\n"
+
+
+@pytest.mark.parametrize(
+    "option",
+    ["--directory", "--force", "--recursive", "--verbose"],
+)
+def test_rm_d_rejects_long_options_before_source_entry(option: str) -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> object:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke_rm(
+        ["-d", option, "memory:/file"],
+        sources={"memory": source_must_not_run},
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == f"rm: {option}: unsupported option\n"
+    assert source_calls == 0
+
+
+def test_rm_d_without_operands_rejects_without_source_entry() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> object:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke_rm(["-d"], sources={"memory": source_must_not_run})
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == "rm: missing mapped filesystem operand\n"
+    assert source_calls == 0
+
+
+def test_rm_d_uses_distinct_sources_for_files_and_empty_directories() -> None:
+    events: list[tuple[object, ...]] = []
+    alpha = _RecordingSource(events)
+    beta = _RecordingSource(events, info_result={"type": "directory"})
+
+    result = _invoke_rm(
+        ["-d", "alpha:/docs/notes.txt", "beta:/docs/empty"],
+        sources={"alpha": alpha, "beta": beta},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert alpha.call_count == beta.call_count == 1
+    assert [
+        (event[0], event[2]) for event in events if event[0] in {"rm_file", "rmdir"}
+    ] == [
+        ("rm_file", "/docs/notes.txt"),
+        ("rmdir", "/docs/empty"),
+    ]
+    assert not any(event[0] in {"rm", "ls"} for event in events)
+
+
+@pytest.mark.parametrize(
+    ("error_factory", "category"),
+    [
+        (PermissionError, "permission denied"),
+        (RuntimeError, "backend failure (RuntimeError): "),
+    ],
+)
+def test_rm_d_reports_access_and_service_failures(
+    error_factory: Callable[[], Exception],
+    category: str,
+) -> None:
+    source = _RecordingSource([], info_error=error_factory())
+
+    result = _invoke_rm(["-d", "memory:/docs/item"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == f"rm: memory:/docs/item: {category}\n"
+    assert not any(
+        event[0] in {"rm_file", "rmdir", "rm", "ls"} for event in source.events
+    )
+
+
+def test_rm_d_reports_cleanup_failure() -> None:
+    source = _RecordingSource(
+        [],
+        info_result={"type": "directory"},
+        exit_error=OSError("cleanup failed"),
+    )
+
+    result = _invoke_rm(["-d", "memory:/docs/empty"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert (
+        result.stderr == "rm: memory: source exit failure (OSError): cleanup failed\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "rendered"),
+    [
+        (["-d", "memory:"], "memory:"),
+        (["-d", "memory:relative"], "memory:relative"),
+        (["-d", "/bare"], "/bare"),
+        (["-d", ":/path"], ":/path"),
+        (["-d", "-"], "-"),
+        (["-d", "memory:/bad\0path"], "memory:/bad\\0path"),
+        (["-d", "memory:/bad\npath"], "memory:/bad\\npath"),
+        (["-d", "--", "-f"], "-f"),
+        (["-d", "--", "--"], "--"),
+    ],
+)
+def test_rm_d_rejects_malformed_mapped_filesystem_operands(
+    arguments: list[str],
+    rendered: str,
+) -> None:
+    result = _invoke_rm(arguments)
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == (f"rm: {rendered}: invalid mapped filesystem operand\n")
+
+
+@pytest.mark.parametrize("path", ["memory:/", "memory:/docs/.", "memory:/docs/.."])
+def test_rm_d_rejects_root_and_final_dot_paths_before_source_entry(path: str) -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> object:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke_rm(
+        ["-d", "memory:/file", path], sources={"memory": source_must_not_run}
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "rejected path" in result.stderr
+    assert source_calls == 0

@@ -51,11 +51,13 @@ cleanup, and partial state only — not POSIX mode, ownership, link identity, or
 timestamps. Same-source `mv` uses exact awaitable `_mv` only after source and target resolution, then proves destination bytes and source absence. Distinct configured source names reject source-free with `mv: cross-source move unsupported`; no copy-then-delete fallback exists. It does not claim atomic rename, identity preservation, or generic metadata preservation. Base file-only `rm` removes one or more source-reported files
 through the same confirmed `_rm_file` and absence boundary as XSI `unlink`, with
 whole-argv root and final-dot guards, all-source acquisition before mutation,
-and sequential continuation after ordinary operand failure. Exact `rm -f`
+and sequential continuation after ordinary operand failure. Exact `rm -d`
+also removes source-reported empty directories through `_rmdir`, without
+recursion, listing, or `_rm` fallback; it does not combine with `-f`. Exact `rm -f`
 accepts repeated or grouped force tokens before operands, succeeds source-free
 with zero operands, and treats only pre-mutation `FileNotFoundError` as a silent
 no-op; it never aliases recursive `_rm` or suppresses other failures. Base `rm`
-without `-f` rejects every option, including `-d`/`-R`/`-r`/`-v`/`-i`;
+without `-d` or `-f` rejects every option, including `-R`/`-r`/`-v`/`-i`;
 recursive removal is unsupported because available source composites lack a
 verifiable complete-result contract. `type ==
 "file"` is only fsspec's common type shape; implicit permission-based POSIX

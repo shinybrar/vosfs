@@ -75,9 +75,9 @@ _RMDIR_COMMAND = "rmdir"
 _RM_COMMAND = "rm"
 _UNLINK_COMMAND = "unlink"
 _RM_HELP = (
-    "Remove source-reported files. rm -f ignores files already missing before "
-    "removal, including with zero operands. Directories, recursion, and "
-    "interactive permission prompts are unavailable."
+    "Remove source-reported files. rm -d also removes empty directories. rm -f "
+    "ignores files already missing before removal, including with zero operands. "
+    "Recursion and interactive permission prompts are unavailable."
 )
 _SOURCE_FREE_CONTEXT = {
     "allow_extra_args": True,

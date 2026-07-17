@@ -6,6 +6,7 @@ from urllib.parse import quote, unquote
 
 import httpx
 import pytest
+from fsspec_cli import App
 
 from vosfs import VOSpaceFileSystem
 
@@ -19,6 +20,7 @@ from ._matrix_support import (
     _exercise_rm_locked_profile,
     _exercise_rmdir_locked_profile,
     _exercise_unlink_locked_profile,
+    _invoke_rm,
     _ProbedSource,
 )
 from ._matrix_support import _exercise_mkdir_locked_profile as _exercise_mkdir_profile
@@ -588,6 +590,32 @@ def test_native_vosfs_base_rmdir_profile_uses_only_mocked_transport() -> None:
         "rmdir",
         "rmdir",
     ]
+
+
+def test_native_vosfs_rm_d_profile_uses_only_mocked_transport() -> None:
+    transports: list[_RmdirMockTransport] = []
+
+    def make_filesystem() -> VOSpaceFileSystem:
+        transport = _RmdirMockTransport()
+        transports.append(transport)
+        return VOSpaceFileSystem(
+            _BASE_URL,
+            transport=transport,
+            asynchronous=True,
+            skip_instance_cache=True,
+            trust_env=False,
+        )
+
+    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+
+    result = _invoke_rm(App({"vos": source}), ["-d", "vos:/docs/empty"])
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert all(isinstance(fs, VOSpaceFileSystem) for fs in source.filesystems)
+    assert [call.path for call in source.calls if call.operation == "rmdir"] == [
+        "/docs/empty"
+    ]
+    assert all(transport.closed for transport in transports)
 
 
 def test_native_vosfs_unlink_profile_uses_only_mocked_transport() -> None:

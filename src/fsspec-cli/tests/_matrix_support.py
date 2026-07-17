@@ -1037,6 +1037,30 @@ def _exercise_rm_locked_profile(
     assert {operation for _source_id, operation, _error in source.errors} == {"info"}
 
 
+def _exercise_rm_directory_profile(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    parent_path: str,
+    *,
+    file_name: str = "notes.txt",
+) -> None:
+    app = App({source_name: source})
+    file_path = f"{parent_path}/{file_name}"
+    empty_dir = f"{parent_path}/empty"
+    calls_before = len(source.calls)
+
+    result = _invoke_rm(
+        app,
+        ["-d", f"{source_name}:{file_path}", f"{source_name}:{empty_dir}"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    calls = source.calls[calls_before:]
+    assert [call.path for call in calls if call.operation == "rm_file"] == [file_path]
+    assert [call.path for call in calls if call.operation == "rmdir"] == [empty_dir]
+    assert not any(call.operation in {"rm", "ls"} for call in calls)
+
+
 def _exercise_rm_force_profile(
     source_name: str,
     source: _ProbedSource[_FilesystemT],

@@ -20,6 +20,7 @@ from ._matrix_support import (
     _exercise_mkdir_locked_profile,
     _exercise_mkdir_memory_over_eager_failure,
     _exercise_mkdir_p_locked_profile,
+    _exercise_rm_directory_profile,
     _exercise_rm_force_profile,
     _exercise_rm_locked_profile,
     _exercise_rmdir_locked_profile,
@@ -638,7 +639,7 @@ def test_adapted_local_base_rm_profile_uses_native_temporary_storage(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "docs"
-    _populate_local(root)
+    _populate_local_with_empty(root)
     path = _local_command_path(root)
     source = _ProbedSource(
         lambda: AsyncFileSystemWrapper(
@@ -648,6 +649,8 @@ def test_adapted_local_base_rm_profile_uses_native_temporary_storage(
     )
 
     _exercise_rm_locked_profile("local", source, path)
+    (root / "notes.txt").write_text("notes.txt", encoding="utf-8")
+    _exercise_rm_directory_profile("local", source, path)
     _exercise_rm_force_profile("local", source, path)
 
 
@@ -681,6 +684,7 @@ def test_adapted_memory_base_rm_profile_has_isolated_state(
         MemoryFileSystem.clear_instance_cache()
         filesystem = MemoryFileSystem()
         filesystem.makedirs("/docs")
+        filesystem.mkdir("/docs/empty")
         for name in ("notes.txt", ".hidden", "guide.md"):
             filesystem.pipe_file(f"/docs/{name}", name.encode())
         return AsyncFileSystemWrapper(filesystem, asynchronous=True)
@@ -688,6 +692,7 @@ def test_adapted_memory_base_rm_profile_has_isolated_state(
     source = _ProbedSource(make_filesystem)
 
     _exercise_rm_locked_profile("memory", source, "/docs")
+    _exercise_rm_directory_profile("memory", source, "/docs")
     _exercise_rm_force_profile("memory", source, "/docs")
 
 
