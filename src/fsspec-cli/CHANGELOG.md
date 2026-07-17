@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+* Parameterize private command orchestration with concrete command labels
+  without adding a supported command or public runner.
+
 ## [0.1.1](https://github.com/shinybrar/vosfs/compare/fsspec-cli-v0.1.0...fsspec-cli-v0.1.1) (2026-07-17)
 
 

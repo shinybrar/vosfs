@@ -1,4 +1,4 @@
-"""Shared rendering for stable ``ls`` diagnostics."""
+"""Shared rendering for stable command diagnostics."""
 
 
 def _render_diagnostic_value(value: str) -> str:
@@ -8,3 +8,7 @@ def _render_diagnostic_value(value: str) -> str:
         .replace("\r", "\\r")
         .replace("\n", "\\n")
     )
+
+
+def _render_diagnostic_prefix(command: str) -> str:
+    return f"{_render_diagnostic_value(command)}:"

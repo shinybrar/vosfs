@@ -10,11 +10,13 @@ from typing import TypeAlias
 import typer
 from fsspec import AbstractFileSystem
 
+from ._diagnostics import _render_diagnostic_prefix
 from ._ls import _LsCommand, _raw_arguments, _run_ls
 
 AsyncFilesystemSource: TypeAlias = Callable[
     [], AbstractAsyncContextManager[AbstractFileSystem]
 ]
+_LS_COMMAND = "ls"
 
 
 def _validate_source_name(name: object) -> None:
@@ -27,6 +29,20 @@ def _validate_source_name(name: object) -> None:
             "NUL, or newline"
         )
         raise ValueError(msg)
+
+
+def _ensure_no_active_event_loop(command: str) -> None:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    prefix = _render_diagnostic_prefix(command)
+    typer.echo(
+        f"{prefix} cannot run from an active event loop",
+        err=True,
+        color=True,
+    )
+    raise typer.Exit(1)
 
 
 class App:
@@ -50,7 +66,7 @@ class App:
             pass
 
         @self.typer_app.command(
-            "ls",
+            _LS_COMMAND,
             cls=_LsCommand,
             context_settings={
                 "allow_extra_args": True,
@@ -59,15 +75,5 @@ class App:
         )
         def ls(ctx: typer.Context) -> None:
             raw_arguments = _raw_arguments(ctx)
-            try:
-                asyncio.get_running_loop()
-            except RuntimeError:
-                pass
-            else:
-                typer.echo(
-                    "ls: cannot run from an active event loop",
-                    err=True,
-                    color=True,
-                )
-                raise typer.Exit(1)
-            asyncio.run(_run_ls(raw_arguments, self._sources))
+            _ensure_no_active_event_loop(_LS_COMMAND)
+            asyncio.run(_run_ls(_LS_COMMAND, raw_arguments, self._sources))

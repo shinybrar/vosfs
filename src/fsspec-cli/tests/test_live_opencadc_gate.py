@@ -286,7 +286,7 @@ def test_native_factory_constructs_every_filesystem_on_its_invocation_loop(
 def _live_environment(tmp_path) -> dict[str, str]:
     repository = tmp_path / "repository"
     repository.mkdir()
-    cli_wheel = tmp_path / "fsspec_cli-0.1.0.whl"
+    cli_wheel = tmp_path / "fsspec_cli-0.1.1.whl"
     vosfs_wheel = tmp_path / "vosfs-0.3.3.whl"
     certificate = tmp_path / "credential-secret.pem"
     cli_wheel.write_bytes(b"wheel")
@@ -329,7 +329,7 @@ def test_execute_emits_only_sanitized_exact_evidence(
 
     assert evidence["schema_version"] == 1
     assert evidence["classification"] == "pass"
-    assert evidence["packages"]["fsspec-cli"] == "0.1.0"
+    assert evidence["packages"]["fsspec-cli"] == "0.1.1"
     assert set(evidence["packages"]) == {"fsspec-cli", "fsspec", "typer", "vosfs"}
     assert evidence["source_mode"] == "vosfs / native async"
     assert evidence["python"]

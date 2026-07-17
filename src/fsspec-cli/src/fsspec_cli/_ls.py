@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, NoReturn, cast
 import typer
 from typer.core import TyperCommand
 
-from ._diagnostics import _render_diagnostic_value
+from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
@@ -79,12 +79,14 @@ def _raw_arguments(ctx: typer.Context) -> tuple[str, ...]:
     return cast("tuple[str, ...]", ctx.meta[_RAW_ARGUMENTS])
 
 
-def _usage_error(diagnostic: str) -> NoReturn:
-    typer.echo(diagnostic, err=True, color=True)
+def _usage_error(command: str, diagnostic: str) -> NoReturn:
+    prefix = _render_diagnostic_prefix(command)
+    typer.echo(f"{prefix} {diagnostic}", err=True, color=True)
     raise typer.Exit(2)
 
 
 def _preflight(
+    command: str,
     raw_arguments: tuple[str, ...],
     known_names: Collection[str],
 ) -> _LsRequest:
@@ -101,7 +103,7 @@ def _preflight(
                 include_almost_all = True
                 continue
             rendered = _render_diagnostic_value(argument)
-            _usage_error(f"ls: {rendered}: unsupported option")
+            _usage_error(command, f"{rendered}: unsupported option")
 
         name, separator, path = argument.partition(":")
         if (
@@ -112,7 +114,7 @@ def _preflight(
             or "\n" in argument
         ):
             rendered = _render_diagnostic_value(argument)
-            _usage_error(f"ls: {rendered}: invalid mapped filesystem operand")
+            _usage_error(command, f"{rendered}: invalid mapped filesystem operand")
 
         if name not in known_names:
             known = sorted(
@@ -124,13 +126,14 @@ def _preflight(
                 _render_diagnostic_value(candidate) for candidate in known
             )
             _usage_error(
-                f"ls: {rendered_operand}: unknown filesystem (known: {rendered_names})"
+                command,
+                f"{rendered_operand}: unknown filesystem (known: {rendered_names})",
             )
 
         operands.append(_MappedOperand(spelling=argument, name=name, path=path))
 
     if not operands:
-        _usage_error("ls: missing mapped filesystem operand")
+        _usage_error(command, "missing mapped filesystem operand")
 
     return _LsRequest(
         include_almost_all=include_almost_all,
@@ -139,11 +142,12 @@ def _preflight(
 
 
 async def _run_ls(
+    command: str,
     raw_arguments: tuple[str, ...],
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    request = _preflight(raw_arguments, sources)
-    invocation = _SourceInvocation(sources)
+    request = _preflight(command, raw_arguments, sources)
+    invocation = _SourceInvocation(command, sources)
     succeeded = False
     failures: tuple[_Failure, ...] = ()
     output_error: Exception | None = None
@@ -157,7 +161,7 @@ async def _run_ls(
                 multiple_operands=len(request.operands) > 1,
             )
             for failure in failures:
-                _render_failure(failure)
+                _render_failure(command, failure)
             if output:
                 try:
                     typer.echo(output, nl=False, color=True)
@@ -165,7 +169,7 @@ async def _run_ls(
                     output_error = error
                 except Exception as error:  # noqa: BLE001 - output boundary.
                     output_error = error
-                    _render_output_failure(error)
+                    _render_output_failure(command, error)
             succeeded = not failures and output_error is None
     finally:
         active_exc_info = sys.exc_info()
@@ -314,19 +318,25 @@ def _directory_lines(
     return tuple(sorted(selected, key=lambda name: (locale.strxfrm(name), name)))
 
 
-def _render_operand_diagnostic(operand: _MappedOperand, category: str) -> None:
+def _render_operand_diagnostic(
+    command: str,
+    operand: _MappedOperand,
+    category: str,
+) -> None:
+    prefix = _render_diagnostic_prefix(command)
     rendered_operand = _render_diagnostic_value(operand.spelling)
-    typer.echo(f"ls: {rendered_operand}: {category}", err=True, color=True)
+    typer.echo(f"{prefix} {rendered_operand}: {category}", err=True, color=True)
 
 
-def _render_failure(failure: _Failure) -> None:
+def _render_failure(command: str, failure: _Failure) -> None:
     if failure.backend_error is None:
-        _render_operand_diagnostic(failure.operand, "incompatible result")
+        _render_operand_diagnostic(command, failure.operand, "incompatible result")
     else:
-        _render_backend_failure(failure.operand, failure.backend_error)
+        _render_backend_failure(command, failure.operand, failure.backend_error)
 
 
 def _render_backend_failure(
+    command: str,
     operand: _MappedOperand,
     error: Exception,
 ) -> None:
@@ -342,14 +352,15 @@ def _render_backend_failure(
         rendered_class = _render_diagnostic_value(type(error).__name__)
         rendered_message = _render_diagnostic_value(str(error))
         category = f"backend failure ({rendered_class}): {rendered_message}"
-    _render_operand_diagnostic(operand, category)
+    _render_operand_diagnostic(command, operand, category)
 
 
-def _render_output_failure(error: Exception) -> None:
+def _render_output_failure(command: str, error: Exception) -> None:
+    prefix = _render_diagnostic_prefix(command)
     rendered_class = _render_diagnostic_value(type(error).__name__)
     rendered_message = _render_diagnostic_value(str(error))
     typer.echo(
-        f"ls: output: output failure ({rendered_class}): {rendered_message}",
+        f"{prefix} output: output failure ({rendered_class}): {rendered_message}",
         err=True,
         color=True,
     )
