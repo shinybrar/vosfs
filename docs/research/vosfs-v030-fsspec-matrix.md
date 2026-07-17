@@ -92,6 +92,10 @@ The async hook names and inherited coordinators below are those in fsspec 2026.6
 
 ### Namespace mutation
 
+This direct-`vosfs` API matrix does not admit a corresponding `fsspec-cli`
+profile: [`rm -R`/`rm -r` remain rejected](../design/fsspec-cli-rm-recursive-rejection-profile.md)
+until a source-owned complete-result contract exists.
+
 | Public API / async hook | Status | v0.3.0 contract |
 | --- | --- | --- |
 | `mkdir(create_parents=False)` / `_mkdir` | **N** | PUT one ContainerNode; existing target and missing parent map to normal Python filesystem errors. |
