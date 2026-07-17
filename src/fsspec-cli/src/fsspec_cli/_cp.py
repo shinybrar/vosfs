@@ -1,4 +1,4 @@
-"""Raw Typer parsing and async execution for same-source two-operand ``cp``."""
+"""Raw Typer parsing and async execution for verified file ``cp``."""
 
 from __future__ import annotations
 
@@ -37,13 +37,19 @@ if TYPE_CHECKING:
     from ._app import AsyncFilesystemSource
 
 _COMPARE_CHUNK = 1 << 16
-_OPERAND_COUNT = 2
+_MIN_OPERAND_COUNT = 2
 
 
 @dataclass(frozen=True)
 class _CpRequest:
     source: _MappedOperand
     destination: _MappedOperand
+
+
+@dataclass(frozen=True)
+class _CpPlan:
+    requests: tuple[_CpRequest, ...]
+    require_directory: bool
 
 
 @dataclass(frozen=True)
@@ -103,7 +109,7 @@ def _preflight(
     command: str,
     raw_arguments: tuple[str, ...],
     known_names: Collection[str],
-) -> _CpRequest:
+) -> _CpPlan:
     operands: list[str] = []
     options_active = True
 
@@ -116,15 +122,36 @@ def _preflight(
             _usage_error(command, f"{rendered}: unsupported option")
         operands.append(argument)
 
-    if len(operands) < _OPERAND_COUNT:
+    if len(operands) < _MIN_OPERAND_COUNT:
         _usage_error(command, "missing mapped filesystem operand")
-    if len(operands) > _OPERAND_COUNT:
-        _usage_error(command, "extra operand")
 
-    source = _validate_mapped_operand(command, operands[0], known_names)
-    destination = _validate_mapped_operand(command, operands[1], known_names)
+    mapped = tuple(
+        _validate_mapped_operand(command, operand, known_names) for operand in operands
+    )
+    destination = mapped[-1]
+    return _CpPlan(
+        requests=tuple(
+            _CpRequest(source=source, destination=destination) for source in mapped[:-1]
+        ),
+        require_directory=len(mapped) > _MIN_OPERAND_COUNT,
+    )
 
-    return _CpRequest(source=source, destination=destination)
+
+async def _require_directory(
+    destination: _MappedOperand,
+    filesystem: AsyncFileSystem,
+) -> _CpFailure | None:
+    try:
+        info = await filesystem._info(destination.path)  # noqa: SLF001
+    except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
+        return _CpFailure(destination, backend_error=error)
+    if not isinstance(info, Mapping) or not isinstance(info.get("type"), str):
+        return _CpFailure(destination, incompatible="result")
+    if info["type"] == "file":
+        return _CpFailure(destination, category="not a directory")
+    if info["type"] != "directory":
+        return _CpFailure(destination, incompatible="result")
+    return None
 
 
 def _basename(path: str) -> str:
@@ -156,6 +183,25 @@ def _require_file_size(info: object) -> int | None:
     if not isinstance(size, int) or isinstance(size, bool) or size < 0:
         return None
     return size
+
+
+def _require_source_file_size(
+    source: _MappedOperand,
+    info: object,
+) -> tuple[int | None, _CpFailure | None]:
+    if not isinstance(info, Mapping):
+        return None, _CpFailure(source, incompatible="result")
+    result_type = info.get("type")
+    if not isinstance(result_type, str):
+        return None, _CpFailure(source, incompatible="result")
+    if result_type == "directory":
+        return None, _CpFailure(source, incompatible="directory")
+    if result_type != "file":
+        return None, _CpFailure(source, incompatible="result")
+    size = _require_file_size(info)
+    if size is None:
+        return None, _CpFailure(source, incompatible="result")
+    return size, None
 
 
 async def _resolve_destination(  # noqa: C901, PLR0911, PLR0912 - explicit target branches.
@@ -554,13 +600,11 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - exp
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _CpFailure(request.source, backend_error=error)
 
-    if not isinstance(source_info, Mapping) or not isinstance(
-        source_info.get("type"), str
-    ):
-        return _CpFailure(request.source, incompatible="result")
-    if source_info["type"] == "directory":
-        return _CpFailure(request.source, incompatible="directory")
-    expected_size = _require_file_size(source_info)
+    expected_size, source_failure = _require_source_file_size(
+        request.source, source_info
+    )
+    if source_failure is not None:
+        return source_failure
     if expected_size is None:
         return _CpFailure(request.source, incompatible="result")
 
@@ -687,13 +731,11 @@ async def _confirmed_cp_file(  # noqa: PLR0911 - explicit copy outcomes.
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _CpFailure(request.source, backend_error=error)
 
-    if not isinstance(source_info, Mapping) or not isinstance(
-        source_info.get("type"), str
-    ):
-        return _CpFailure(request.source, incompatible="result")
-    if source_info["type"] == "directory":
-        return _CpFailure(request.source, incompatible="directory")
-    expected_size = _require_file_size(source_info)
+    expected_size, source_failure = _require_source_file_size(
+        request.source, source_info
+    )
+    if source_failure is not None:
+        return source_failure
     if expected_size is None:
         return _CpFailure(request.source, incompatible="result")
 
@@ -791,27 +833,40 @@ async def _run_cp(
     raw_arguments: tuple[str, ...],
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    request = _preflight(command, raw_arguments, sources)
+    plan = _preflight(command, raw_arguments, sources)
     invocation = _SourceInvocation(command, sources)
     succeeded = False
     failure: _CpFailure | None = None
     try:
-        names = (request.source.name,)
-        if request.source.name != request.destination.name:
-            names += (request.destination.name,)
+        names = tuple(
+            dict.fromkeys(
+                (
+                    *(request.source.name for request in plan.requests),
+                    plan.requests[0].destination.name,
+                )
+            )
+        )
         filesystems = await invocation.acquire(names)
         if filesystems is not None:
-            if request.source.name == request.destination.name:
-                failure = await _confirmed_cp_file(
-                    request,
-                    filesystems[request.source.name],
+            if plan.require_directory:
+                failure = await _require_directory(
+                    plan.requests[0].destination,
+                    filesystems[plan.requests[0].destination.name],
                 )
-            else:
-                failure = await _confirmed_cross_source_cp_file(
-                    request,
-                    filesystems[request.source.name],
-                    filesystems[request.destination.name],
-                )
+            for request in plan.requests if failure is None else ():
+                if request.source.name == request.destination.name:
+                    failure = await _confirmed_cp_file(
+                        request,
+                        filesystems[request.source.name],
+                    )
+                else:
+                    failure = await _confirmed_cross_source_cp_file(
+                        request,
+                        filesystems[request.source.name],
+                        filesystems[request.destination.name],
+                    )
+                if failure is not None:
+                    break
             if failure is not None:
                 _render_failure(command, failure)
             succeeded = failure is None

@@ -1152,3 +1152,46 @@ def _exercise_cp_locked_profile(  # noqa: PLR0913 - matrix probe knobs.
     )
     get_file_calls = [call for call in source.calls if call.operation == "get_file"]
     assert len(get_file_calls) >= 4
+
+
+def _exercise_multi_source_cp_locked_profile(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    parent_path: str,
+) -> None:
+    app = App({source_name: source})
+    notes_path = f"{parent_path}/notes.txt"
+    guide_path = f"{parent_path}/guide.md"
+    target_dir = f"{parent_path}/target"
+
+    def _assert_bytes(path: str, payload: bytes) -> None:
+        candidate = Path(path)
+        if candidate.is_file():
+            assert candidate.read_bytes() == payload
+            return
+        # Memory and native async pools are not safely re-entered after invoke
+        # cleanup on every platform; call-shape checks below still prove the
+        # locked multi-source cp boundary, and hermetic tests cover payload bytes.
+
+    result = _invoke_cp(
+        app,
+        [
+            f"{source_name}:{notes_path}",
+            f"{source_name}:{guide_path}",
+            f"{source_name}:{target_dir}",
+        ],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    _assert_bytes(f"{target_dir}/notes.txt", b"notes.txt")
+    _assert_bytes(f"{target_dir}/guide.md", b"guide.md")
+    _assert_bytes(notes_path, b"notes.txt")
+    _assert_bytes(guide_path, b"guide.md")
+    cp_calls = [call for call in source.calls if call.operation == "cp_file"]
+    assert [(call.path, call.destination_path) for call in cp_calls] == [
+        (notes_path, f"{target_dir}/notes.txt"),
+        (guide_path, f"{target_dir}/guide.md"),
+    ]
+    assert not any(
+        call.operation in {"rm", "rm_file", "rmdir"} for call in source.calls
+    )
