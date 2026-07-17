@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 from fsspec_cli import App
 from typer.testing import CliRunner
 
-from ._support import _RecordingSource, _source_must_not_run
+from ._support import (
+    _RecordingContext,
+    _RecordingFileSystem,
+    _RecordingSource,
+    _source_must_not_run,
+)
+
+_MOVE_FAILED = "move failed"
 
 
 def _source(
@@ -36,6 +44,43 @@ def test_mv_moves_one_file_without_stdout() -> None:
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     assert source.file_contents == {"/docs/moved.txt": b"payload"}
+    assert len(source.get_file_paths) == 2
+    assert all(not Path(path).exists() for path in source.get_file_paths)
+
+
+def test_mv_rejects_inherited_async_move_operation() -> None:
+    class InheritedMoveFileSystem(_RecordingFileSystem):
+        pass
+
+    class InheritedMoveContext(_RecordingContext):
+        def __init__(self, source: _RecordingSource, source_id: int) -> None:
+            super().__init__(source, source_id)
+            self.filesystem = InheritedMoveFileSystem(source, source_id)
+
+    class InheritedMoveSource(_RecordingSource):
+        def __call__(self) -> InheritedMoveContext:
+            self.call_count += 1
+            self.events.append(("factory", self.call_count))
+            context = InheritedMoveContext(self, self.call_count)
+            self.contexts.append(context)
+            return context
+
+    source = InheritedMoveSource(
+        [],
+        file_contents={"/docs/notes.txt": b"payload"},
+        directories={"/", "/docs"},
+    )
+
+    result = _invoke(source, "memory:/docs/notes.txt", "memory:/docs/moved.txt")
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "mv: memory:/docs/moved.txt: unsupported operation\n",
+    )
+    assert source.file_contents == {"/docs/notes.txt": b"payload"}
+    assert not [event for event in source.events if event[0] == "mv"]
+    assert not [event for event in source.events if event[0] == "get_file"]
 
 
 def test_mv_resolves_directory_target_and_replaces_file() -> None:
@@ -50,12 +95,52 @@ def test_mv_resolves_directory_target_and_replaces_file() -> None:
     assert source.file_contents == {"/docs/out/notes.txt": b"new"}
 
 
+def test_mv_rejects_same_backend_under_different_configured_name() -> None:
+    source = _source()
+
+    result = CliRunner().invoke(
+        App({"memory": source, "alias": source}).typer_app,
+        ["mv", "memory:/docs/notes.txt", "alias:/docs/moved.txt"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "mv: cross-source move unsupported\n",
+    )
+    assert source.call_count == 0
+
+
 def test_mv_same_path_is_noop_after_resolution() -> None:
     source = _source()
 
     result = _invoke(source, "memory:/docs/notes.txt", "memory:/docs/notes.txt")
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.file_contents == {"/docs/notes.txt": b"payload"}
+    assert not [event for event in source.events if event[0] == "mv"]
+
+
+def test_mv_directory_target_spelling_resolves_to_same_path_noop() -> None:
+    source = _source()
+
+    result = _invoke(source, "memory:/docs/notes.txt", "memory:/docs")
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.file_contents == {"/docs/notes.txt": b"payload"}
+    assert not [event for event in source.events if event[0] == "mv"]
+
+
+def test_mv_rejects_missing_destination_parent_without_mutation() -> None:
+    source = _source(info_by_path={"/absent": FileNotFoundError("/absent")})
+
+    result = _invoke(source, "memory:/docs/notes.txt", "memory:/absent/moved.txt")
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "mv: memory:/absent/moved.txt: not found\n",
+    )
     assert source.file_contents == {"/docs/notes.txt": b"payload"}
     assert not [event for event in source.events if event[0] == "mv"]
 
@@ -116,22 +201,103 @@ def test_mv_reports_mutation_exception_as_uncertain_residue() -> None:
         "mv: memory:/docs/moved.txt: uncertain mutation state; "
         "destination residue may remain\n",
     )
+    assert source.file_contents == {"/docs/notes.txt": b"payload"}
+    assert len(source.get_file_paths) == 1
+    assert all(not Path(path).exists() for path in source.get_file_paths)
 
 
-def test_mv_rejects_destination_content_mismatch_and_source_residue() -> None:
+def test_mv_reports_residue_after_destination_created_then_move_fails() -> None:
+    source = _source()
+
+    def create_then_fail(_path1: str, path2: str) -> None:
+        filesystem = source.contexts[0].filesystem
+        filesystem._file_contents[path2] = b"payload"
+        source.file_contents[path2] = b"payload"
+        raise OSError(_MOVE_FAILED)
+
+    source.mv_hook = create_then_fail
+    result = _invoke(source, "memory:/docs/notes.txt", "memory:/docs/moved.txt")
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "mv: memory:/docs/moved.txt: uncertain mutation state; "
+        "destination residue may remain\n",
+    )
+    assert source.file_contents == {
+        "/docs/notes.txt": b"payload",
+        "/docs/moved.txt": b"payload",
+    }
+
+
+def test_mv_rejects_destination_type_mismatch_and_source_residue() -> None:
+    source = _source()
+
+    def make_directory(_path1: str, path2: str) -> None:
+        filesystem = source.contexts[0].filesystem
+        filesystem._directories.add(path2)
+        source.directories.add(path2)
+
+    source.mv_hook = make_directory
+    result = _invoke(source, "memory:/docs/notes.txt", "memory:/docs/moved.txt")
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "mv: memory:/docs/moved.txt: verification failure; "
+        "destination residue may remain\n",
+    )
+    assert source.file_contents == {"/docs/notes.txt": b"payload"}
+    assert "/docs/moved.txt" in source.directories
+
+
+@pytest.mark.parametrize("replacement", [b"short", b"invalid"])
+def test_mv_rejects_destination_size_or_content_mismatch(
+    replacement: bytes,
+) -> None:
     source = _source()
 
     def corrupt(_path1: str, path2: str) -> None:
         filesystem = source.contexts[0].filesystem
-        filesystem._file_contents[path2] = b"wrong"
-        source.file_contents[path2] = b"wrong"
+        filesystem._file_contents[path2] = replacement
+        source.file_contents[path2] = replacement
 
     source.mv_hook = corrupt
     result = _invoke(source, "memory:/docs/notes.txt", "memory:/docs/moved.txt")
 
-    assert result.exit_code == 1
-    assert "verification failure; destination residue may remain" in result.stderr
-    assert source.file_contents["/docs/notes.txt"] == b"payload"
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "mv: memory:/docs/moved.txt: verification failure; "
+        "destination residue may remain\n",
+    )
+    assert source.file_contents == {
+        "/docs/notes.txt": b"payload",
+        "/docs/moved.txt": replacement,
+    }
+
+
+def test_mv_rejects_source_retained_after_destination_is_complete() -> None:
+    source = _source()
+
+    def copy_without_deletion(path1: str, path2: str) -> None:
+        filesystem = source.contexts[0].filesystem
+        filesystem._file_contents[path2] = filesystem._file_contents[path1]
+        source.file_contents[path2] = source.file_contents[path1]
+
+    source.mv_hook = copy_without_deletion
+    result = _invoke(source, "memory:/docs/notes.txt", "memory:/docs/moved.txt")
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "mv: memory:/docs/moved.txt: verification failure; "
+        "destination residue may remain\n",
+    )
+    assert source.file_contents == {
+        "/docs/notes.txt": b"payload",
+        "/docs/moved.txt": b"payload",
+    }
 
 
 def test_mv_preserves_cancellation() -> None:

@@ -229,6 +229,7 @@ class _RecordingFileSystem(AsyncFileSystem):
                 id(asyncio.get_running_loop()),
             )
         )
+        self.source.get_file_paths.append(lpath)
         if rpath in self.source.get_file_by_path:
             scripted = self.source.get_file_by_path[rpath]
             if isinstance(scripted, BaseException):
@@ -476,6 +477,7 @@ class _RecordingSource:
         self.mv_hook = mv_hook
         self.file_contents = dict(file_contents or {})
         self.directories = set(directories or ())
+        self.get_file_paths: list[str] = []
         self.exit_calls: list[tuple[object, object, object]] = []
         self.contexts: list[_RecordingContext] = []
         self.call_count = 0

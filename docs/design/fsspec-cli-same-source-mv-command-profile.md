@@ -23,9 +23,10 @@ directory.
 After source existence and target resolution, identical configured name and
 backend path is status `0` no-op. It calls no move operation and emits nothing.
 
-Every other path requires exact configured awaitable `_mv(path1, path2)`.
-Public synchronous `mv`, copy-then-delete, cross-source staging, and inherited
-or non-awaitable move defaults are excluded.
+Every other path requires an awaitable `_mv(path1, path2)` declared directly
+by configured source form. Public synchronous `mv`, copy-then-delete,
+cross-source staging, and inherited or non-awaitable move defaults are
+excluded.
 
 Before mutation, command stages source bytes. After `_mv`, success requires:
 

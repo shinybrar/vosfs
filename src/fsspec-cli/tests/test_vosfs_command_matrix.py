@@ -1,5 +1,6 @@
 """Hermetic compatibility evidence for the native vosfs source form."""
 
+import inspect
 import re
 from urllib.parse import quote, unquote
 
@@ -796,3 +797,9 @@ def test_native_vosfs_same_source_cp_profile_uses_only_mocked_transport() -> Non
     assert transports[0].blobs["/docs/notes.txt"] == b"notes.txt"
     assert transports[1].blobs["/docs/target/notes.txt"] == b"notes.txt"
     assert transports[1].blobs["/docs/notes.txt"] == b"notes.txt"
+
+
+def test_native_vosfs_mv_remains_unverified_without_exact_operation() -> None:
+    """No source-form `_mv`; matrix row must remain unverified."""
+    assert "_mv" not in VOSpaceFileSystem.__dict__
+    assert not inspect.iscoroutinefunction(getattr(VOSpaceFileSystem, "_mv", None))
