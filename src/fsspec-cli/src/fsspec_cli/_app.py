@@ -59,10 +59,12 @@ _CP_HELP = (
 )
 _MV_COMMAND = "mv"
 _MV_HELP = (
-    "Move one same-source mapped file with result verification. A passing result "
-    "proves target resolution, replacement, destination bytes, source absence, "
-    "diagnostics, cleanup, and partial-state reporting only — not atomic rename, "
-    "identity preservation, or generic metadata preservation. Directory sources "
+    "Move one or more same-source mapped files with result verification. "
+    "Multiple sources require an existing destination directory and process in "
+    "argv order without rollback. A passing result proves target resolution, "
+    "replacement, destination bytes, source absence, diagnostics, cleanup, and "
+    "partial-state reporting only — not atomic rename, identity preservation, or "
+    "generic metadata preservation. Directory sources "
     "are rejected before target resolution or mutation. Cross-source moves are "
     "unsupported."
 )

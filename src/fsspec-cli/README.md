@@ -55,7 +55,9 @@ unverifiable copies may leave destination residue.
 A passing row proves target resolution, replacement, bytes, diagnostics,
 cleanup, and partial state only — not POSIX mode, ownership, link identity, or
 timestamps. Same-source `mv` uses exact awaitable `_mv` only after source and
-target resolution, then proves destination bytes and source absence. Directory
+target resolution, then proves destination bytes and source absence. Multiple
+same-source file operands require an existing destination directory, acquire
+the source once, and move sequentially in argv order without rollback. Directory
 sources reject after `_info` and before target resolution, staging, or mutation.
 Distinct configured source names reject source-free with
 `mv: cross-source move unsupported`; no copy-then-delete fallback exists. It
