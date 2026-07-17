@@ -11,6 +11,7 @@ from vosfs import VOSpaceFileSystem
 from ._matrix_support import (
     _block_network,
     _exercise_cat_profile,
+    _exercise_cp_locked_profile,
     _exercise_locked_profile,
     _exercise_mkdir_p_locked_profile,
     _exercise_rm_locked_profile,
@@ -637,3 +638,159 @@ def test_native_vosfs_base_rm_profile_uses_only_mocked_transport() -> None:
     assert "/docs/guide.md" not in transports[1].nodes
     assert "/docs/.hidden" not in transports[1].nodes
     assert all(transport.closed for transport in transports)
+
+
+class _CpMockTransport(httpx.MockTransport):
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str]] = []
+        self.closed = False
+        self.nodes: dict[str, str] = {
+            "/": "container",
+            "/docs": "container",
+            "/docs/target": "container",
+            "/docs/notes.txt": "data",
+            "/docs/.hidden": "data",
+            "/docs/guide.md": "data",
+        }
+        self.blobs: dict[str, bytes] = {
+            "/docs/notes.txt": b"notes.txt",
+            "/docs/.hidden": b".hidden",
+            "/docs/guide.md": b"guide.md",
+        }
+        super().__init__(self._respond)
+
+    def _node_path(self, url_path: str) -> str:
+        prefix = "/arc/nodes"
+        if not url_path.startswith(prefix):
+            message = f"unexpected node url: {url_path!r}"
+            raise AssertionError(message)
+        node_path = url_path[len(prefix) :]
+        return node_path or "/"
+
+    def _data_xml(self, path: str) -> bytes:
+        length = len(self.blobs.get(path, b""))
+        return f"""<vos:node
+    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}{path}">
+  <vos:properties>
+    <vos:property uri="ivo://ivoa.net/vospace/core#length">{length}</vos:property>
+  </vos:properties>
+</vos:node>
+""".encode()
+
+    def _container_xml(self, path: str) -> bytes:
+        children = []
+        for child, kind in sorted(self.nodes.items()):
+            if child == path or not child.startswith(path.rstrip("/") + "/"):
+                continue
+            rest = child[len(path.rstrip("/")) + 1 :]
+            if "/" in rest:
+                continue
+            xsi = "vos:ContainerNode" if kind == "container" else "vos:DataNode"
+            children.append(
+                f'<vos:node xsi:type="{xsi}" uri="vos://{_AUTHORITY}{child}">'
+                "<vos:properties/></vos:node>"
+            )
+        body = "".join(children)
+        return f"""<vos:node
+    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}{path if path != "/" else ""}">
+  <vos:properties/>
+  <vos:nodes>{body}</vos:nodes>
+</vos:node>
+""".encode()
+
+    def _file_response(self, path: str) -> httpx.Response:
+        content = self.blobs.get(path)
+        if content is None:
+            return httpx.Response(404, text="not found")
+        if content == b"":
+            return httpx.Response(204)
+
+        async def _stream() -> object:
+            yield content
+
+        return httpx.Response(200, content=_stream())
+
+    async def _respond(  # noqa: C901, PLR0911 - stateful transfer mock.
+        self, request: httpx.Request
+    ) -> httpx.Response:
+        if "range" in {name.lower() for name in request.headers}:
+            message = f"unexpected Range header: {request.headers!r}"
+            raise AssertionError(message)
+        call = (request.method, request.url.path)
+        self.requests.append(call)
+        if call == ("GET", "/arc/capabilities"):
+            return httpx.Response(200, content=_CAT_CAPABILITIES)
+        if call == ("POST", "/arc/synctrans"):
+            return httpx.Response(
+                303,
+                headers={
+                    "Location": (
+                        f"{_BASE_URL}/details?t={quote(_target_path(request.content))}"
+                    )
+                },
+            )
+        if call == ("GET", "/arc/details"):
+            return httpx.Response(
+                200,
+                content=_transfer_details(
+                    f"{_BASE_URL}/files?p={quote(unquote(request.url.params['t']))}"
+                ),
+            )
+        if call[0] == "GET" and call[1] == "/arc/files":
+            return self._file_response(unquote(request.url.params["p"]))
+        if call[0] == "PUT" and call[1] == "/arc/files":
+            path = unquote(request.url.params["p"])
+            self.nodes[path] = "data"
+            self.blobs[path] = request.content
+            return httpx.Response(201)
+        if call[0] == "GET" and call[1].startswith("/arc/nodes"):
+            node_path = self._node_path(call[1])
+            kind = self.nodes.get(node_path)
+            if kind is None:
+                return httpx.Response(404, text="not found")
+            if kind == "container":
+                return httpx.Response(200, content=self._container_xml(node_path))
+            return httpx.Response(200, content=self._data_xml(node_path))
+        if call[0] == "PUT" and call[1].startswith("/arc/nodes"):
+            node_path = self._node_path(call[1])
+            self.nodes[node_path] = "container"
+            return httpx.Response(201, content=self._container_xml(node_path))
+        message = f"unplanned mocked request: {call!r}"
+        raise AssertionError(message)
+
+    async def aclose(self) -> None:
+        self.closed = True
+        await super().aclose()
+
+
+def test_native_vosfs_same_source_cp_profile_uses_only_mocked_transport() -> None:
+    transports: list[_CpMockTransport] = []
+
+    def make_filesystem() -> VOSpaceFileSystem:
+        transport = _CpMockTransport()
+        transports.append(transport)
+        return VOSpaceFileSystem(
+            _BASE_URL,
+            transport=transport,
+            asynchronous=True,
+            skip_instance_cache=True,
+            trust_env=False,
+        )
+
+    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+
+    _exercise_cp_locked_profile("vos", source, "/docs", payload=b"notes.txt")
+
+    assert all(isinstance(fs, VOSpaceFileSystem) for fs in source.filesystems)
+    assert all(fs.asynchronous is True for fs in source.filesystems)
+    assert all(fs._pool.closed is True for fs in source.filesystems)
+    assert all(transport.closed for transport in transports)
+    assert any(call.operation == "cp_file" for call in source.calls)
+    assert transports[0].blobs["/docs/copy.txt"] == b"notes.txt"
+    assert transports[0].blobs["/docs/notes.txt"] == b"notes.txt"
+    assert transports[1].blobs["/docs/target/notes.txt"] == b"notes.txt"
+    assert transports[1].blobs["/docs/notes.txt"] == b"notes.txt"

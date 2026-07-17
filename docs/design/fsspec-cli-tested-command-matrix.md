@@ -236,6 +236,10 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Base file-only `rm`](fsspec-cli-base-rm-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29586378872](#h-2026-07-17-29586378872) |
 | [Base file-only `rm`](fsspec-cli-base-rm-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29586378872](#h-2026-07-17-29586378872) |
 | [Base file-only `rm` option rejection](fsspec-cli-base-rm-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29586378872](#h-2026-07-17-29586378872) |
+| [Verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | — |
+| [Verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | — |
+| [Verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | Hermetic mocked transport present; live evidence absent |
+| [Verified same-source `cp` option rejection](fsspec-cli-same-source-cp-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | — |
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.

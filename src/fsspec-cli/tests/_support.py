@@ -65,6 +65,16 @@ def _invoke_rm(
     return CliRunner().invoke(App(sources).typer_app, ["rm", *arguments])
 
 
+def _invoke_cp(
+    arguments: list[str],
+    *,
+    sources: dict[str, AsyncFilesystemSource] | None = None,
+) -> Result:
+    if sources is None:
+        sources = {"memory": _source_must_not_run}
+    return CliRunner().invoke(App(sources).typer_app, ["cp", *arguments])
+
+
 class _RecordingFileSystem(AsyncFileSystem):
     cachable = False
 
@@ -79,8 +89,11 @@ class _RecordingFileSystem(AsyncFileSystem):
         self._pending_mkdir_verify: set[str] = set()
         self._pending_rmdir_verify: set[str] = set()
         self._pending_unlink_verify: set[str] = set()
+        self._pending_cp_verify: set[str] = set()
         self._created_dirs: set[str] = set()
         self._removed_paths: set[str] = set()
+        self._file_contents: dict[str, bytes] = dict(source.file_contents)
+        self._directories: set[str] = set(source.directories)
 
     def _consume_post_info(self, path: str) -> object | None:
         if path in self.source.post_info_by_path:
@@ -123,7 +136,24 @@ class _RecordingFileSystem(AsyncFileSystem):
             raise self.source.post_info_error
         raise FileNotFoundError(path)
 
-    async def _info(self, path: str, **kwargs: object) -> object:
+    def _post_cp_verify_info(self, path: str) -> object:
+        self._pending_cp_verify.discard(path)
+        scripted = self._consume_post_info(path)
+        if scripted is not None:
+            return scripted
+        if self.source.post_info_error is not None:
+            raise self.source.post_info_error
+        if path in self._file_contents:
+            return MappingProxyType(
+                {"type": "file", "size": len(self._file_contents[path])}
+            )
+        if path in self._directories or path in self._created_dirs:
+            return MappingProxyType({"type": "directory", "size": 0})
+        raise FileNotFoundError(path)
+
+    async def _info(  # noqa: C901, PLR0911 - scripted multi-command recorder.
+        self, path: str, **kwargs: object
+    ) -> object:
         del kwargs
         self.source.events.append(
             ("info", self.source_id, path, id(asyncio.get_running_loop()))
@@ -132,6 +162,8 @@ class _RecordingFileSystem(AsyncFileSystem):
             return self._post_rmdir_info(path)
         if path in self._pending_unlink_verify:
             return self._post_unlink_info(path)
+        if path in self._pending_cp_verify:
+            return self._post_cp_verify_info(path)
         if path in self._removed_paths:
             raise FileNotFoundError(path)
         if path in self.source.info_by_path:
@@ -143,6 +175,16 @@ class _RecordingFileSystem(AsyncFileSystem):
             verified = self._post_mkdir_info(path)
             if verified is not None:
                 return verified
+            # Explicit None post-verify must not invent success via _created_dirs.
+            if self.source.info_error is not None:
+                raise self.source.info_error
+            return self.source.info_result
+        if path in self._file_contents:
+            return MappingProxyType(
+                {"type": "file", "size": len(self._file_contents[path])}
+            )
+        if path in self._directories or path in self._created_dirs:
+            return MappingProxyType({"type": "directory", "size": 0})
         if self.source.info_error is not None:
             raise self.source.info_error
         return self.source.info_result
@@ -196,6 +238,10 @@ class _RecordingFileSystem(AsyncFileSystem):
                 return
             with Path(lpath).open("wb") as handle:  # noqa: ASYNC230
                 handle.write(scripted)
+            return
+        if rpath in self._file_contents:
+            with Path(lpath).open("wb") as handle:  # noqa: ASYNC230
+                handle.write(self._file_contents[rpath])
             return
         if self.source.get_file_error is not None:
             raise self.source.get_file_error
@@ -301,6 +347,42 @@ class _RecordingFileSystem(AsyncFileSystem):
         message = "_rm must not be called by file-only removal"
         raise AssertionError(message)
 
+    async def _cp_file(self, path1: str, path2: str, **kwargs: object) -> None:
+        del kwargs
+        self.source.events.append(
+            (
+                "cp_file",
+                self.source_id,
+                path1,
+                path2,
+                id(asyncio.get_running_loop()),
+            )
+        )
+        if path1 in self.source.cp_file_by_path:
+            scripted = self.source.cp_file_by_path[path1]
+            if isinstance(scripted, BaseException):
+                raise scripted
+            if callable(scripted):
+                scripted(path1, path2)
+                return
+        if self.source.cp_file_error is not None:
+            raise self.source.cp_file_error
+        if self.source.cp_file_hook is not None:
+            self.source.cp_file_hook(path1, path2)
+            self._pending_cp_verify.add(path2)
+            return
+        if path1 in self._file_contents:
+            content = self._file_contents[path1]
+        elif path1 in self.source.get_file_by_path and isinstance(
+            self.source.get_file_by_path[path1], bytes
+        ):
+            content = self.source.get_file_by_path[path1]
+        else:
+            content = self.source.get_file_content
+        self._file_contents[path2] = content
+        self.source.file_contents[path2] = content
+        self._pending_cp_verify.add(path2)
+
 
 class _RecordingSource:
     def __init__(  # noqa: PLR0913 - configurable external-boundary recording fake.
@@ -315,6 +397,7 @@ class _RecordingSource:
         makedirs_error: BaseException | None = None,
         rmdir_error: BaseException | None = None,
         rm_file_error: BaseException | None = None,
+        cp_file_error: BaseException | None = None,
         trap_rmdir: bool = False,
         post_info_result: object | None = MappingProxyType({"type": "directory"}),
         post_info_error: BaseException | None = None,
@@ -326,11 +409,15 @@ class _RecordingSource:
         makedirs_by_path: Mapping[str, object] | None = None,
         rmdir_by_path: Mapping[str, object] | None = None,
         rm_file_by_path: Mapping[str, object] | None = None,
+        cp_file_by_path: Mapping[str, object] | None = None,
         post_info_by_path: Mapping[str, object] | None = None,
         get_file_content: bytes = b"",
         get_file_error: BaseException | None = None,
         get_file_by_path: Mapping[str, object] | None = None,
         get_file_hook: object | None = None,
+        cp_file_hook: object | None = None,
+        file_contents: Mapping[str, bytes] | None = None,
+        directories: set[str] | None = None,
     ) -> None:
         self.events = events
         self.info_result = info_result
@@ -341,6 +428,7 @@ class _RecordingSource:
         self.makedirs_error = makedirs_error
         self.rmdir_error = rmdir_error
         self.rm_file_error = rm_file_error
+        self.cp_file_error = cp_file_error
         self.trap_rmdir = trap_rmdir
         self.post_info_result = post_info_result
         self.post_info_error = post_info_error
@@ -352,11 +440,15 @@ class _RecordingSource:
         self.makedirs_by_path = makedirs_by_path or {}
         self.rmdir_by_path = rmdir_by_path or {}
         self.rm_file_by_path = rm_file_by_path or {}
+        self.cp_file_by_path = cp_file_by_path or {}
         self.post_info_by_path = post_info_by_path or {}
         self.get_file_content = get_file_content
         self.get_file_error = get_file_error
         self.get_file_by_path = get_file_by_path or {}
         self.get_file_hook = get_file_hook
+        self.cp_file_hook = cp_file_hook
+        self.file_contents = dict(file_contents or {})
+        self.directories = set(directories or ())
         self.exit_calls: list[tuple[object, object, object]] = []
         self.contexts: list[_RecordingContext] = []
         self.call_count = 0
