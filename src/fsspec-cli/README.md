@@ -54,7 +54,9 @@ and sequential continuation after ordinary operand failure. Exact `rm -f`
 accepts repeated or grouped force tokens before operands, succeeds source-free
 with zero operands, and treats only pre-mutation `FileNotFoundError` as a silent
 no-op; it never aliases recursive `_rm` or suppresses other failures. Base `rm`
-without `-f` rejects every option, including `-d`/`-R`/`-v`/`-i`. `type ==
+without `-f` rejects every option, including `-d`/`-R`/`-r`/`-v`/`-i`;
+recursive removal is unsupported because available source composites lack a
+verifiable complete-result contract. `type ==
 "file"` is only fsspec's common type shape; implicit permission-based POSIX
 prompting is unavailable. XSI `unlink`
 awaits `_info`, `_rm_file`, and a distinguishable absence proof for exactly one
