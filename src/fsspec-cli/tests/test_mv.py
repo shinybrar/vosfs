@@ -37,6 +37,16 @@ def _invoke(source: _RecordingSource, *arguments: str):
     return CliRunner().invoke(App({"memory": source}).typer_app, ["mv", *arguments])
 
 
+def test_mv_help_explains_cross_source_rejection() -> None:
+    result = CliRunner().invoke(
+        App({"memory": _source_must_not_run}).typer_app, ["mv", "--help"]
+    )
+
+    assert result.exit_code == 0
+    assert "Cross-source moves are unsupported." in " ".join(result.stdout.split())
+    assert result.stderr == ""
+
+
 def test_mv_moves_one_file_without_stdout() -> None:
     source = _source()
 
@@ -118,6 +128,30 @@ def test_mv_rejects_same_backend_under_different_configured_name() -> None:
         "mv: cross-source move unsupported\n",
     )
     assert source.call_count == 0
+
+
+def test_mv_rejects_cross_source_without_factories_or_mutation() -> None:
+    source = _source(contents={"/docs/notes.txt": b"payload"})
+    destination = _source(contents={"/docs/moved.txt": b"original"})
+    source_contents_before = dict(source.file_contents)
+    destination_contents_before = dict(destination.file_contents)
+
+    result = CliRunner().invoke(
+        App({"source": source, "destination": destination}).typer_app,
+        ["mv", "source:/docs/notes.txt", "destination:/docs/moved.txt"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "mv: cross-source move unsupported\n",
+    )
+    assert source.file_contents == source_contents_before
+    assert destination.file_contents == destination_contents_before
+    assert source.events == []
+    assert destination.events == []
+    assert source.call_count == 0
+    assert destination.call_count == 0
 
 
 def test_mv_same_path_is_noop_after_resolution() -> None:
