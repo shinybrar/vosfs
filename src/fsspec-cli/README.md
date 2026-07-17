@@ -15,7 +15,8 @@ The current command surface covers plain `ls`, source-free `basename string`
 with optional `suffix`, source-free `dirname string`, mapped-file `cat`, verified two-operand `cp`, base `mkdir`, parent-creating `mkdir -p`, base `rmdir`, base file-only `rm`, and XSI
 `unlink`. Commands share source-free argument preflight and the synchronous
 Typer-to-asyncio boundary; `ls`, `cat`, `cp`, `mkdir`, `rmdir`, `rm`, and `unlink` also
-use invocation-owned source lifecycle. The `basename` slice accepts one or two
+use invocation-owned source lifecycle. Same-source and cross-source `cp -R`
+remain source-free unsupported; `cp` does not traverse directories. The `basename` slice accepts one or two
 argv tokens, no options, POSIX Issue 8 basename semantics with optional suffix
 removal after base extraction, zero source entry, and deterministic stdout with
 one trailing newline. The `dirname` slice mirrors that source-free contract with

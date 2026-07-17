@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -602,6 +603,10 @@ def test_cp_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
 
     assert result.exit_code == 0
     assert "cross-source" in result.stdout
+    # Rich may bold `-R` and wrap the epilog; normalize before the phrase check.
+    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
+    help_text = " ".join(plain_help.split())
+    assert "Recursive (-R) copy is unsupported." in help_text
 
 
 def test_cp_cancels_without_claiming_success() -> None:
