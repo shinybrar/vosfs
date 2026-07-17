@@ -41,7 +41,7 @@ class ExitCall:
 
 @dataclass(frozen=True)
 class FilesystemCall:
-    operation: Literal["info", "ls", "get_file", "mkdir"]
+    operation: Literal["info", "ls", "get_file", "mkdir", "rmdir"]
     source_id: int
     path: str
     detail: bool | None
@@ -89,12 +89,11 @@ class _ProbedSource(Generic[_FilesystemT]):
         )
         return _ProbedContext(self, source_id)
 
-    def instrument(self, source_id: int, filesystem: _FilesystemT) -> None:
-        original_info = filesystem._info
-        original_ls = filesystem._ls
-        original_get_file = filesystem._get_file
-        original_mkdir = getattr(filesystem, "_mkdir", None)
-
+    def _wrap_info(
+        self,
+        source_id: int,
+        original_info: Callable[..., Awaitable[object]],
+    ) -> Callable[..., Awaitable[object]]:
         async def info(path: str, **kwargs: object) -> object:
             self.calls.append(
                 FilesystemCall(
@@ -114,6 +113,13 @@ class _ProbedSource(Generic[_FilesystemT]):
             self.info_results.append((source_id, result))
             return result
 
+        return info
+
+    def _wrap_ls(
+        self,
+        source_id: int,
+        original_ls: Callable[..., Awaitable[object]],
+    ) -> Callable[..., Awaitable[object]]:
         async def ls(
             path: str,
             detail: bool = True,  # noqa: FBT002 - mirrors the fsspec hook.
@@ -137,6 +143,13 @@ class _ProbedSource(Generic[_FilesystemT]):
             self.ls_results.append((source_id, result))
             return result
 
+        return ls
+
+    def _wrap_get_file(
+        self,
+        source_id: int,
+        original_get_file: Callable[..., Awaitable[object]],
+    ) -> Callable[..., Awaitable[object]]:
         async def get_file(rpath: str, lpath: str, **kwargs: object) -> object:
             self.calls.append(
                 FilesystemCall(
@@ -157,6 +170,14 @@ class _ProbedSource(Generic[_FilesystemT]):
             self.get_file_results.append((source_id, rpath))
             return result
 
+        return get_file
+
+    def _wrap_mkdir(
+        self,
+        source_id: int,
+        filesystem: _FilesystemT,
+        original_mkdir: Callable[..., Awaitable[None]] | None,
+    ) -> Callable[..., Awaitable[None]]:
         async def mkdir(
             path: str,
             create_parents: bool = True,  # noqa: FBT002 - mirrors the fsspec hook.
@@ -182,10 +203,66 @@ class _ProbedSource(Generic[_FilesystemT]):
                 self.errors.append((source_id, "mkdir", error))
                 raise
 
-        setattr(filesystem, "_info", info)  # noqa: B010 - instrument this instance.
-        setattr(filesystem, "_ls", ls)  # noqa: B010 - instrument this instance.
-        setattr(filesystem, "_get_file", get_file)  # noqa: B010 - instrument.
-        setattr(filesystem, "_mkdir", mkdir)  # noqa: B010 - instrument this instance.
+        return mkdir
+
+    def _wrap_rmdir(
+        self,
+        source_id: int,
+        filesystem: _FilesystemT,
+        original_rmdir: Callable[..., Awaitable[None]] | None,
+    ) -> Callable[..., Awaitable[None]]:
+        async def rmdir(path: str, **kwargs: object) -> None:
+            self.calls.append(
+                FilesystemCall(
+                    "rmdir",
+                    source_id,
+                    path,
+                    None,
+                    kwargs,
+                    id(asyncio.get_running_loop()),
+                )
+            )
+            if original_rmdir is None:
+                message = f"{type(filesystem).__name__} lacks _rmdir"
+                raise NotImplementedError(message)
+            try:
+                await original_rmdir(path, **kwargs)
+            except Exception as error:
+                self.errors.append((source_id, "rmdir", error))
+                raise
+
+        return rmdir
+
+    def instrument(self, source_id: int, filesystem: _FilesystemT) -> None:
+        setattr(  # noqa: B010 - instrument this instance.
+            filesystem,
+            "_info",
+            self._wrap_info(source_id, filesystem._info),
+        )
+        setattr(  # noqa: B010 - instrument this instance.
+            filesystem,
+            "_ls",
+            self._wrap_ls(source_id, filesystem._ls),
+        )
+        setattr(  # noqa: B010 - instrument.
+            filesystem,
+            "_get_file",
+            self._wrap_get_file(source_id, filesystem._get_file),
+        )
+        setattr(  # noqa: B010 - instrument this instance.
+            filesystem,
+            "_mkdir",
+            self._wrap_mkdir(
+                source_id, filesystem, getattr(filesystem, "_mkdir", None)
+            ),
+        )
+        setattr(  # noqa: B010 - instrument this instance.
+            filesystem,
+            "_rmdir",
+            self._wrap_rmdir(
+                source_id, filesystem, getattr(filesystem, "_rmdir", None)
+            ),
+        )
 
 
 class _ProbedContext(
@@ -254,6 +331,10 @@ def _invoke_cat(app: App, arguments: list[str]) -> Result:
 
 def _invoke_mkdir(app: App, arguments: list[str]) -> Result:
     return _invoke(app, "mkdir", arguments)
+
+
+def _invoke_rmdir(app: App, arguments: list[str]) -> Result:
+    return _invoke(app, "rmdir", arguments)
 
 
 def _exercise_locked_profile(
@@ -558,3 +639,52 @@ def _exercise_mkdir_memory_over_eager_failure(
         call.operation == "info" and call.path == missing_parent
         for call in source.calls
     )
+
+
+def _exercise_rmdir_locked_profile(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    parent_path: str,
+    *,
+    file_name: str = "notes.txt",
+) -> None:
+    app = App({source_name: source})
+    empty_dir = f"{parent_path}/empty"
+    file_path = f"{parent_path}/{file_name}"
+
+    success = _invoke_rmdir(app, [f"{source_name}:{empty_dir}"])
+    non_empty = _invoke_rmdir(app, [f"{source_name}:{parent_path}"])
+    file_fail = _invoke_rmdir(app, [f"{source_name}:{file_path}"])
+
+    assert (success.exit_code, success.stdout, success.stderr) == (0, "", "")
+    assert (non_empty.exit_code, non_empty.stdout, non_empty.stderr) == (
+        1,
+        "",
+        f"rmdir: {source_name}:{parent_path}: directory not empty\n",
+    )
+    assert (file_fail.exit_code, file_fail.stdout, file_fail.stderr) == (
+        1,
+        "",
+        f"rmdir: {source_name}:{file_path}: not a directory\n",
+    )
+    rmdir_calls = [call for call in source.calls if call.operation == "rmdir"]
+    assert len(rmdir_calls) == 2
+    assert [call.path for call in rmdir_calls] == [empty_dir, parent_path]
+    cli_info_calls = [
+        call
+        for call in source.calls
+        if call.operation == "info" and call.path in {empty_dir, parent_path, file_path}
+    ]
+    assert len(cli_info_calls) == 5
+    assert [call.path for call in cli_info_calls] == [
+        empty_dir,
+        empty_dir,
+        parent_path,
+        parent_path,
+        file_path,
+    ]
+    assert len(source.errors) == 2
+    error_operations = {operation for _source_id, operation, _error in source.errors}
+    assert error_operations == {"rmdir", "info"}
+    absence_proof = next(error for _sid, op, error in source.errors if op == "info")
+    assert isinstance(absence_proof, FileNotFoundError)

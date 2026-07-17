@@ -12,6 +12,7 @@ from ._matrix_support import (
     _block_network,
     _exercise_cat_profile,
     _exercise_locked_profile,
+    _exercise_rmdir_locked_profile,
     _ProbedSource,
 )
 from ._matrix_support import _exercise_mkdir_locked_profile as _exercise_mkdir_profile
@@ -91,6 +92,45 @@ _ROOT = f"""<vos:node
     xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}/">
   <vos:properties/>
   <vos:nodes/>
+</vos:node>
+""".encode()
+
+
+_DOCS_WITH_EMPTY = f"""<vos:node
+    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}/docs">
+  <vos:properties/>
+  <vos:nodes>
+    <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/notes.txt">
+      <vos:properties/>
+    </vos:node>
+    <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/.hidden">
+      <vos:properties/>
+    </vos:node>
+    <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/guide.md">
+      <vos:properties/>
+    </vos:node>
+    <vos:node xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}/docs/empty">
+      <vos:properties/>
+      <vos:nodes/>
+    </vos:node>
+  </vos:nodes>
+</vos:node>
+""".encode()
+_EMPTY = f"""<vos:node
+    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}/docs/empty">
+  <vos:properties/>
+  <vos:nodes/>
+</vos:node>
+""".encode()
+_NOTES = f"""<vos:node
+    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/notes.txt">
+  <vos:properties/>
 </vos:node>
 """.encode()
 
@@ -208,6 +248,31 @@ class _CatMockTransport(httpx.MockTransport):
     async def aclose(self) -> None:
         self.closed = True
         await super().aclose()
+
+
+class _RmdirMockTransport(_StrictMockTransport):
+    def __init__(self) -> None:
+        self._empty_deleted = False
+        super().__init__()
+
+    async def _respond(self, request: httpx.Request) -> httpx.Response:
+        call = (request.method, request.url.path)
+        self.requests.append(call)
+        if call == ("GET", "/arc/capabilities"):
+            return httpx.Response(200, content=_CAPABILITIES)
+        if call == ("GET", "/arc/nodes/docs"):
+            return httpx.Response(200, content=_DOCS_WITH_EMPTY)
+        if call == ("GET", "/arc/nodes/docs/notes.txt"):
+            return httpx.Response(200, content=_NOTES)
+        if call == ("GET", "/arc/nodes/docs/empty"):
+            if self._empty_deleted:
+                return httpx.Response(404, text="not found")
+            return httpx.Response(200, content=_EMPTY)
+        if call == ("DELETE", "/arc/nodes/docs/empty"):
+            self._empty_deleted = True
+            return httpx.Response(200, text="deleted")
+        message = f"unplanned mocked request: {call!r}"
+        raise AssertionError(message)
 
 
 async def _close_vosfs(filesystem: VOSpaceFileSystem) -> None:
@@ -333,3 +398,29 @@ def test_native_vosfs_base_mkdir_profile_uses_only_mocked_transport() -> None:
         ],
     ]
     assert all(transport.closed for transport in transports)
+
+
+def test_native_vosfs_base_rmdir_profile_uses_only_mocked_transport() -> None:
+    transports: list[_RmdirMockTransport] = []
+
+    def make_filesystem() -> VOSpaceFileSystem:
+        transport = _RmdirMockTransport()
+        transports.append(transport)
+        return VOSpaceFileSystem(
+            _BASE_URL,
+            transport=transport,
+            asynchronous=True,
+            skip_instance_cache=True,
+            trust_env=False,
+        )
+
+    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+
+    _exercise_rmdir_locked_profile("vos", source, "/docs")
+
+    assert all(isinstance(fs, VOSpaceFileSystem) for fs in source.filesystems)
+    assert all(transport.closed for transport in transports)
+    assert [call.operation for call in source.calls if call.operation == "rmdir"] == [
+        "rmdir",
+        "rmdir",
+    ]

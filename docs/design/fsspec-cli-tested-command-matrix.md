@@ -203,6 +203,10 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic and live OpenCADC | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110), [L-2026-07-16-29536609626](#l-2026-07-16-29536609626) |
+| [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
+| [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
+| [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
+| [Base `rmdir` `-p` strict rejection](fsspec-cli-base-rmdir-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
 | [`ls -l` strict rejection](fsspec-cli-ls-long-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
 | [`basename string`](fsspec-cli-basename-command-profile.md) | source-free command | `not entered` | `pass` | `pass` | Hermetic | [H-2026-07-17-29564531624](#h-2026-07-17-29564531624) |
 | [`basename string`](fsspec-cli-basename-command-profile.md) option/operand rejection | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29564531624](#h-2026-07-17-29564531624) |
@@ -216,6 +220,52 @@ Section 9 still requires the release candidate to rerun every required gate.
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.
+
+### H-2026-07-17-29583728890
+
+This successful exact-commit CI run observed `fsspec-cli` 0.1.1 at
+[commit `75224f7a4cff6c3c8e80dc5006f6f63f4e34c01c`](https://github.com/shinybrar/vosfs/commit/75224f7a4cff6c3c8e80dc5006f6f63f4e34c01c)
+with fsspec 2026.6.0, Typer 0.27.0, and vosfs 0.4.0. The complete resolved
+dependency set is recoverable from the
+[commit-pinned `uv.lock`](https://github.com/shinybrar/vosfs/blob/75224f7a4cff6c3c8e80dc5006f6f63f4e34c01c/uv.lock).
+
+The hermetic gate exercised adapted async Local and Memory sources plus a
+mocked native async `vosfs` transport through the production `App` seam. The
+positive source rows removed an empty directory, rejected a non-empty parent
+and a file operand, and recorded exact `_info` / `_rmdir` call shapes. The
+negative `-p` preflight case completed without entering a source. The
+installed-wheel jobs rebuilt the member outside the workspace and ran
+`test_command_matrix.py`, `test_vosfs_command_matrix.py`, and `test_rmdir.py`
+with declared runtime dependencies only.
+
+The gate ran from 2026-07-17T13:22:49Z through 2026-07-17T13:24:19Z in
+[GitHub Actions run 29583728890](https://github.com/shinybrar/vosfs/actions/runs/29583728890).
+Every leg used runner 2.335.1 and provisioner `20260707.563`. Runner image
+versions below come from each job log's `Runner Image` group:
+
+| Python | Operating system | Runner image | Hermetic job | Installed-wheel job |
+| --- | --- | --- | --- | --- |
+| 3.10.20 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87895410782](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410782) | [87895410868](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410868) |
+| 3.11.15 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87895410786](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410786) | [87895410809](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410809) |
+| 3.12.3 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87895410858](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410858) | [87895410815](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410815) |
+| 3.13.14 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87895410790](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410790) | [87895410824](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410824) |
+| 3.14.6 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87895410838](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410838) | [87895410773](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410773) |
+| 3.12.10 | Microsoft Windows Server 2025, 10.0.26100 Datacenter | `windows-2025-vs2026@20260714.173.1` | [87895410831](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410831) | [87895410811](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410811) |
+| 3.12.10 | macOS 26.4, build 25E246 | `macos-26-arm64@20260715.0248.1` | [87895410778](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410778) | [87895410804](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895410804) |
+
+Python patch versions for the Ubuntu 3.12, macOS 3.12, and Windows 3.12
+installed-wheel jobs were not printed in those job logs; the table reuses the
+matching hermetic-leg patch versions from the same workflow matrix cell. The
+aggregate
+[Required job](https://github.com/shinybrar/vosfs/actions/runs/29583728890/job/87895700265)
+passed after quality, hermetic, and installed-wheel dependencies succeeded.
+
+The executable evidence at that commit is the pinned
+[`test_rmdir.py`](https://github.com/shinybrar/vosfs/blob/75224f7a4cff6c3c8e80dc5006f6f63f4e34c01c/src/fsspec-cli/tests/test_rmdir.py),
+[`test_command_matrix.py`](https://github.com/shinybrar/vosfs/blob/75224f7a4cff6c3c8e80dc5006f6f63f4e34c01c/src/fsspec-cli/tests/test_command_matrix.py)
+rmdir probes, and
+[`test_vosfs_command_matrix.py`](https://github.com/shinybrar/vosfs/blob/75224f7a4cff6c3c8e80dc5006f6f63f4e34c01c/src/fsspec-cli/tests/test_vosfs_command_matrix.py)
+native mocked transport probe.
 
 ### H-2026-07-17-29564531624
 

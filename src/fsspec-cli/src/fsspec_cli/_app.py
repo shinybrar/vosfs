@@ -21,6 +21,8 @@ from ._cat import _CatCommand, _run_cat
 from ._diagnostics import _render_diagnostic_prefix
 from ._ls import _LsCommand, _raw_arguments, _run_ls
 from ._mkdir import _MkdirCommand, _run_mkdir
+from ._rmdir import _raw_arguments as _rmdir_raw_arguments
+from ._rmdir import _RmdirCommand, _run_rmdir
 
 AsyncFilesystemSource: TypeAlias = Callable[
     [], AbstractAsyncContextManager[AbstractFileSystem]
@@ -34,6 +36,7 @@ _MKDIR_HELP = (
     "claims only source-default creation semantics, not POSIX mode or umask "
     "behavior."
 )
+_RMDIR_COMMAND = "rmdir"
 
 
 def _validate_source_name(name: object) -> None:
@@ -133,3 +136,16 @@ class App:
             raw_arguments = _raw_arguments(ctx)
             _ensure_no_active_event_loop(_MKDIR_COMMAND)
             asyncio.run(_run_mkdir(_MKDIR_COMMAND, raw_arguments, self._sources))
+
+        @self.typer_app.command(
+            _RMDIR_COMMAND,
+            cls=_RmdirCommand,
+            context_settings={
+                "allow_extra_args": True,
+                "ignore_unknown_options": True,
+            },
+        )
+        def rmdir(ctx: typer.Context) -> None:
+            raw_arguments = _rmdir_raw_arguments(ctx)
+            _ensure_no_active_event_loop(_RMDIR_COMMAND)
+            asyncio.run(_run_rmdir(_RMDIR_COMMAND, raw_arguments, self._sources))
