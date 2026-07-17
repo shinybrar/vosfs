@@ -228,6 +228,95 @@ def test_cp_rejects_other_source_type_mid_multi_source_sequence() -> None:
     assert not any(event[0] in {"rm", "rmdir"} for event in source.events)
 
 
+def test_cp_rejects_directory_source_mid_multi_source_sequence() -> None:
+    source = _file_source(
+        file_contents={"/docs/first.txt": b"first"},
+        directories={"/", "/docs", "/docs/nested", "/target"},
+    )
+
+    result = _invoke_cp(
+        [
+            "memory:/docs/first.txt",
+            "memory:/docs/nested",
+            "memory:/target",
+        ],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: memory:/docs/nested: is a directory\n",
+    )
+    assert source.file_contents["/target/first.txt"] == b"first"
+    assert "/target/nested" not in source.file_contents
+    assert [event[0] for event in source.events].count("cp_file") == 1
+    assert not any(event[0] in {"rm", "rmdir"} for event in source.events)
+
+
+def test_cp_replaces_existing_multi_source_target_file() -> None:
+    source = _file_source(
+        file_contents={
+            "/docs/first.txt": b"first",
+            "/docs/second.txt": b"second",
+            "/target/second.txt": b"stale",
+        },
+        directories={"/", "/docs", "/target"},
+    )
+
+    result = _invoke_cp(
+        [
+            "memory:/docs/first.txt",
+            "memory:/docs/second.txt",
+            "memory:/target",
+        ],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.file_contents["/target/first.txt"] == b"first"
+    assert source.file_contents["/target/second.txt"] == b"second"
+    assert source.file_contents["/docs/first.txt"] == b"first"
+    assert source.file_contents["/docs/second.txt"] == b"second"
+
+
+@pytest.mark.parametrize(
+    ("label", "payload"),
+    [
+        ("empty", b""),
+        ("binary", b"\x00\xff\xfe multi"),
+        ("large", b"x" * (1 << 20)),
+    ],
+    ids=["empty", "binary", "large"],
+)
+def test_cp_copies_empty_binary_and_large_multi_source_payloads(
+    label: str,
+    payload: bytes,
+) -> None:
+    source = _file_source(
+        file_contents={
+            f"/docs/{label}-a.bin": payload,
+            f"/docs/{label}-b.bin": payload,
+        },
+        directories={"/", "/docs", "/target"},
+    )
+
+    result = _invoke_cp(
+        [
+            f"memory:/docs/{label}-a.bin",
+            f"memory:/docs/{label}-b.bin",
+            "memory:/target",
+        ],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.file_contents[f"/target/{label}-a.bin"] == payload
+    assert source.file_contents[f"/target/{label}-b.bin"] == payload
+    assert source.file_contents[f"/docs/{label}-a.bin"] == payload
+    assert source.file_contents[f"/docs/{label}-b.bin"] == payload
+
+
 def test_cp_rejects_other_cross_source_type_mid_multi_source_sequence() -> None:
     first = _file_source(
         file_contents={"/docs/first.txt": b"first"},

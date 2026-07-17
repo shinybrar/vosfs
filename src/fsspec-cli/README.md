@@ -12,8 +12,9 @@ Hosts embed its Typer application through the sole behavioral seam,
 for one command invocation.
 
 The current command surface covers plain `ls`, source-free `basename string`
-with optional `suffix`, source-free `dirname string`, mapped-file `cat`, verified two-operand `cp`, base `mkdir`, parent-creating `mkdir -p`, base `rmdir`, base file-only `rm`, and XSI
-`unlink`. Commands share source-free argument preflight and the synchronous
+with optional `suffix`, source-free `dirname string`, mapped-file `cat`, verified
+two-operand and multi-source file `cp`, base `mkdir`, parent-creating `mkdir -p`,
+base `rmdir`, base file-only `rm`, and XSI `unlink`. Commands share source-free argument preflight and the synchronous
 Typer-to-asyncio boundary; `ls`, `cat`, `cp`, `mkdir`, `rmdir`, `rm`, and `unlink` also
 use invocation-owned source lifecycle. Same-source and cross-source `cp -R`
 remain source-free unsupported; `cp` does not traverse directories. The `basename` slice accepts one or two
@@ -44,8 +45,13 @@ same-path before mutation, awaits `_cp_file` once, and byte-verifies the
 destination through bounded disk staging. Cross-source `cp` selects distinct
 configured names only, stages source through secure local storage and destination
 `_put_file`, then verifies destination type, size, and byte-for-byte content.
-Shared backend/path aliases reject `same path` before mutation. `cp` never
-deletes the source; failed or unverifiable copies may leave destination residue.
+Multi-source `cp` requires at least two source-reported files plus one existing
+destination directory, acquires each distinct configured name once in first
+argv order, and copies sequentially with basename targets using the same
+same-source or cross-source transfer path. Later failure keeps earlier verified
+targets and any failed-target residue. Shared backend/path aliases reject
+`same path` before mutation. `cp` never deletes the source; failed or
+unverifiable copies may leave destination residue.
 A passing row proves target resolution, replacement, bytes, diagnostics,
 cleanup, and partial state only — not POSIX mode, ownership, link identity, or
 timestamps. Same-source `mv` uses exact awaitable `_mv` only after source and target resolution, then proves destination bytes and source absence. Distinct configured source names reject source-free with `mv: cross-source move unsupported`; no copy-then-delete fallback exists. It does not claim atomic rename, identity preservation, or generic metadata preservation. Base file-only `rm` removes one or more source-reported files
