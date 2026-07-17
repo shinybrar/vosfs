@@ -57,6 +57,58 @@ def test_cp_copies_one_file_without_stdout() -> None:
     assert cp_events[0][2:4] == ("/docs/notes.txt", "/docs/copy.txt")
 
 
+def test_cp_copies_file_between_distinct_configured_sources() -> None:
+    source = _file_source(content=b"\0\xff cross-source")
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
+
+    result = _invoke_cp(
+        ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+        sources={"source": source, "destination": destination},
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert source.file_contents["/docs/notes.txt"] == b"\0\xff cross-source"
+    assert destination.file_contents["/out/copy.txt"] == b"\0\xff cross-source"
+    assert [event[0] for event in source.events].count("get_file") == 1
+    assert [event[0] for event in destination.events].count("put_file") == 1
+    assert [event[0] for event in destination.events].count("get_file") == 1
+
+
+def test_cp_rejects_same_size_wrong_cross_source_destination() -> None:
+    source = _file_source(content=b"correct")
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
+
+    def corrupt_upload(_local_path: str, remote_path: str) -> None:
+        filesystem = destination.contexts[0].filesystem
+        filesystem._file_contents[remote_path] = b"corrupt"
+        destination.file_contents[remote_path] = b"corrupt"
+
+    destination.put_file_hook = corrupt_upload
+    result = _invoke_cp(
+        ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+        sources={"source": source, "destination": destination},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "cp: destination:/out/copy.txt: verification failure; "
+        "destination residue may remain\n"
+    )
+    assert source.file_contents["/docs/notes.txt"] == b"correct"
+    assert destination.file_contents["/out/copy.txt"] == b"corrupt"
+
+
 def test_cp_appends_basename_when_destination_is_directory() -> None:
     source = _file_source(directories={"/", "/docs", "/docs/out"})
 
@@ -174,31 +226,39 @@ def test_cp_rejects_directory_source() -> None:
     assert [event[0] for event in source.events].count("cp_file") == 0
 
 
-def test_cp_rejects_cross_source_without_entering_factories() -> None:
+def test_cp_acquires_destination_before_cross_source_backend_work() -> None:
+    source = _file_source()
+
     result = _invoke_cp(
-        ["alpha:/one", "beta:/two"],
-        sources={"alpha": _source_must_not_run, "beta": _source_must_not_run},
+        ["alpha:/docs/notes.txt", "beta:/two"],
+        sources={"alpha": source, "beta": _source_must_not_run},
     )
 
-    assert result.exit_code == 2
+    assert result.exit_code == 1
     assert result.stdout == ""
-    assert result.stderr == "cp: cross-source copy unsupported\n"
+    assert "beta: source factory failure" in result.stderr
+    assert [event[0] for event in source.events] == ["factory", "enter", "exit"]
 
 
-def test_cp_rejects_two_names_even_when_backends_are_similar() -> None:
+def test_cp_uses_distinct_names_even_when_backends_are_similar() -> None:
     left = _file_source()
-    right = _file_source()
+    right = _file_source(
+        source_path="/other.txt",
+        parent="/docs",
+        directories={"/", "/docs"},
+    )
 
     result = _invoke_cp(
         ["alpha:/docs/notes.txt", "beta:/docs/copy.txt"],
         sources={"alpha": left, "beta": right},
     )
 
-    assert result.exit_code == 2
+    assert result.exit_code == 0
     assert result.stdout == ""
-    assert result.stderr == "cp: cross-source copy unsupported\n"
-    assert left.call_count == 0
-    assert right.call_count == 0
+    assert result.stderr == ""
+    assert left.call_count == 1
+    assert right.call_count == 1
+    assert right.file_contents["/docs/copy.txt"] == b"payload"
 
 
 def test_cp_rejects_missing_operands() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import locale
 import os
 import sys
@@ -119,8 +120,6 @@ def _preflight(
 
     source = _validate_mapped_operand(command, operands[0], known_names)
     destination = _validate_mapped_operand(command, operands[1], known_names)
-    if source.name != destination.name:
-        _usage_error(command, "cross-source copy unsupported")
 
     return _CpRequest(source=source, destination=destination)
 
@@ -269,6 +268,17 @@ def _files_match(left: str, right: str) -> tuple[bool, Exception | None]:
         return False, error
 
 
+def _file_digest(path: str) -> tuple[bytes | None, Exception | None]:
+    try:
+        digest = hashlib.sha256()
+        with Path(path).open("rb") as handle:
+            for chunk in iter(lambda: handle.read(_COMPARE_CHUNK), b""):
+                digest.update(chunk)
+    except Exception as error:  # noqa: BLE001 - local verification boundary.
+        return None, error
+    return digest.digest(), None
+
+
 async def _verify_copy(  # noqa: PLR0911 - explicit verify outcomes.
     filesystem: AsyncFileSystem,
     source_path: str,
@@ -350,6 +360,130 @@ async def _verify_copy(  # noqa: PLR0911 - explicit verify outcomes.
             residue=True,
         )
     return None
+
+
+async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - explicit copy outcomes.
+    request: _CpRequest,
+    source_filesystem: AsyncFileSystem,
+    destination_filesystem: AsyncFileSystem,
+) -> _CpFailure | None:
+    try:
+        source_info = await source_filesystem._info(request.source.path)  # noqa: SLF001
+    except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
+        return _CpFailure(request.source, backend_error=error)
+
+    if not isinstance(source_info, Mapping) or not isinstance(
+        source_info.get("type"), str
+    ):
+        return _CpFailure(request.source, incompatible="result")
+    if source_info["type"] == "directory":
+        return _CpFailure(request.source, incompatible="directory")
+    expected_size = _require_file_size(source_info)
+    if expected_size is None:
+        return _CpFailure(request.source, incompatible="result")
+
+    resolved, resolution_failure = await _resolve_destination(
+        request.destination,
+        request.source.path,
+        destination_filesystem,
+    )
+    if resolution_failure is not None:
+        return resolution_failure
+
+    temporary, staging_error = await _stage_remote(
+        source_filesystem,
+        request.source.path,
+        "fsspec-cli-cp-",
+    )
+    if staging_error is not None or temporary is None:
+        return _CpFailure(
+            request.source,
+            backend_error=staging_error,
+            category="staging failure",
+        )
+
+    mutated = False
+    try:
+        source_digest, digest_error = _file_digest(temporary)
+        if digest_error is not None or source_digest is None:
+            return _CpFailure(
+                request.source,
+                backend_error=digest_error,
+                category="staging failure",
+            )
+        try:
+            staged_size = Path(temporary).stat().st_size  # noqa: ASYNC240
+        except Exception as error:  # noqa: BLE001 - local staging boundary.
+            return _CpFailure(
+                request.source,
+                backend_error=error,
+                category="staging failure",
+            )
+        if staged_size != expected_size:
+            return _CpFailure(request.source, category="verification failure")
+
+        try:
+            await destination_filesystem._put_file(  # noqa: SLF001
+                temporary, resolved, mode="overwrite"
+            )
+            mutated = True
+        except Exception as error:  # noqa: BLE001 - mutation may leave residue.
+            mutated = True
+            return _CpFailure(
+                request.destination,
+                backend_error=error,
+                uncertain=True,
+                residue=True,
+            )
+
+        try:
+            info = await destination_filesystem._info(resolved)  # noqa: SLF001
+        except Exception as error:  # noqa: BLE001 - post-copy verify boundary.
+            return _CpFailure(
+                request.destination,
+                backend_error=error,
+                category="verification failure",
+                residue=True,
+            )
+        if _require_file_size(info) != expected_size:
+            return _CpFailure(
+                request.destination,
+                category="verification failure",
+                residue=True,
+            )
+
+        try:
+            await destination_filesystem._get_file(resolved, temporary)  # noqa: SLF001
+        except Exception as error:  # noqa: BLE001 - post-copy staging boundary.
+            return _CpFailure(
+                request.destination,
+                backend_error=error,
+                category="staging failure",
+                residue=True,
+            )
+        destination_digest, digest_error = _file_digest(temporary)
+        if digest_error is not None:
+            return _CpFailure(
+                request.destination,
+                backend_error=digest_error,
+                category="staging failure",
+                residue=True,
+            )
+        if destination_digest != source_digest:
+            return _CpFailure(
+                request.destination,
+                category="verification failure",
+                residue=True,
+            )
+    finally:
+        cleanup_error = _remove_temporary(temporary)
+        if cleanup_error is not None and sys.exc_info()[0] is None:
+            return _CpFailure(  # noqa: B012 - cleanup failure replaces return only.
+                request.destination if mutated else request.source,
+                backend_error=cleanup_error,
+                category="staging failure",
+                residue=mutated,
+            )
 
 
 async def _confirmed_cp_file(  # noqa: PLR0911 - explicit copy outcomes.
@@ -471,12 +605,22 @@ async def _run_cp(
     succeeded = False
     failure: _CpFailure | None = None
     try:
-        filesystems = await invocation.acquire((request.source.name,))
+        names = (request.source.name,)
+        if request.source.name != request.destination.name:
+            names += (request.destination.name,)
+        filesystems = await invocation.acquire(names)
         if filesystems is not None:
-            failure = await _confirmed_cp_file(
-                request,
-                filesystems[request.source.name],
-            )
+            if request.source.name == request.destination.name:
+                failure = await _confirmed_cp_file(
+                    request,
+                    filesystems[request.source.name],
+                )
+            else:
+                failure = await _confirmed_cross_source_cp_file(
+                    request,
+                    filesystems[request.source.name],
+                    filesystems[request.destination.name],
+                )
             if failure is not None:
                 _render_failure(command, failure)
             succeeded = failure is None

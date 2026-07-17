@@ -252,6 +252,38 @@ class _RecordingFileSystem(AsyncFileSystem):
         with Path(lpath).open("wb") as handle:  # noqa: ASYNC230
             handle.write(self.source.get_file_content)
 
+    async def _put_file(
+        self,
+        lpath: str,
+        rpath: str,
+        mode: str = "overwrite",
+        **kwargs: object,
+    ) -> None:
+        del kwargs
+        self.source.events.append(
+            (
+                "put_file",
+                self.source_id,
+                rpath,
+                mode,
+                id(asyncio.get_running_loop()),
+            )
+        )
+        if rpath in self.source.put_file_by_path:
+            scripted = self.source.put_file_by_path[rpath]
+            if isinstance(scripted, BaseException):
+                raise scripted
+        elif self.source.put_file_error is not None:
+            raise self.source.put_file_error
+        if self.source.put_file_hook is not None:
+            self.source.put_file_hook(lpath, rpath)
+            self._pending_cp_verify.add(rpath)
+            return
+        content = Path(lpath).read_bytes()  # noqa: ASYNC240
+        self._file_contents[rpath] = content
+        self.source.file_contents[rpath] = content
+        self._pending_cp_verify.add(rpath)
+
     async def _mkdir(
         self,
         path: str,
@@ -420,6 +452,7 @@ class _RecordingSource:
         rmdir_error: BaseException | None = None,
         rm_file_error: BaseException | None = None,
         cp_file_error: BaseException | None = None,
+        put_file_error: BaseException | None = None,
         mv_error: BaseException | None = None,
         trap_rmdir: bool = False,
         post_info_result: object | None = MappingProxyType({"type": "directory"}),
@@ -433,6 +466,7 @@ class _RecordingSource:
         rmdir_by_path: Mapping[str, object] | None = None,
         rm_file_by_path: Mapping[str, object] | None = None,
         cp_file_by_path: Mapping[str, object] | None = None,
+        put_file_by_path: Mapping[str, object] | None = None,
         mv_by_path: Mapping[str, object] | None = None,
         post_info_by_path: Mapping[str, object] | None = None,
         get_file_content: bytes = b"",
@@ -440,6 +474,7 @@ class _RecordingSource:
         get_file_by_path: Mapping[str, object] | None = None,
         get_file_hook: Callable[[str, str], None] | None = None,
         cp_file_hook: Callable[[str, str], None] | None = None,
+        put_file_hook: object | None = None,
         mv_hook: Callable[[str, str], None] | None = None,
         file_contents: Mapping[str, bytes] | None = None,
         directories: set[str] | None = None,
@@ -454,6 +489,7 @@ class _RecordingSource:
         self.rmdir_error = rmdir_error
         self.rm_file_error = rm_file_error
         self.cp_file_error = cp_file_error
+        self.put_file_error = put_file_error
         self.mv_error = mv_error
         self.trap_rmdir = trap_rmdir
         self.post_info_result = post_info_result
@@ -467,6 +503,7 @@ class _RecordingSource:
         self.rmdir_by_path = rmdir_by_path or {}
         self.rm_file_by_path = rm_file_by_path or {}
         self.cp_file_by_path = cp_file_by_path or {}
+        self.put_file_by_path = put_file_by_path or {}
         self.mv_by_path = mv_by_path or {}
         self.post_info_by_path = post_info_by_path or {}
         self.get_file_content = get_file_content
@@ -474,6 +511,7 @@ class _RecordingSource:
         self.get_file_by_path = get_file_by_path or {}
         self.get_file_hook = get_file_hook
         self.cp_file_hook = cp_file_hook
+        self.put_file_hook = put_file_hook
         self.mv_hook = mv_hook
         self.file_contents = dict(file_contents or {})
         self.directories = set(directories or ())

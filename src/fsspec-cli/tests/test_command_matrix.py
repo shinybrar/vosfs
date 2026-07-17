@@ -26,6 +26,7 @@ from ._matrix_support import (
     _exercise_unlink_locked_profile,
     _invoke,
     _invoke_cat,
+    _invoke_cp,
     _invoke_ls,
     _ProbedSource,
 )
@@ -711,6 +712,53 @@ def test_adapted_memory_cp_profile_has_isolated_state(
     source = _ProbedSource(make_filesystem)
 
     _exercise_cp_locked_profile("memory", source, "/docs")
+
+
+@pytest.mark.parametrize("direction", ["local-to-memory", "memory-to-local"])
+def test_cross_source_cp_between_adapted_local_and_memory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    direction: str,
+) -> None:
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+    payload = b"\0\xff cross-source"
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    memory = MemoryFileSystem()
+    memory.makedirs("/docs")
+
+    if direction == "local-to-memory":
+        (local_root / "source.bin").write_bytes(payload)
+        source_operand = f"local:{_local_command_path(local_root / 'source.bin')}"
+        destination_operand = "memory:/docs/copy.bin"
+    else:
+        memory.pipe_file("/docs/source.bin", payload)
+        source_operand = "memory:/docs/source.bin"
+        destination_path = local_root / "copy.bin"
+        destination_operand = f"local:{_local_command_path(destination_path)}"
+
+    app = App(
+        {
+            "local": _ProbedSource(
+                lambda: AsyncFileSystemWrapper(
+                    LocalFileSystem(skip_instance_cache=True), asynchronous=True
+                )
+            ),
+            "memory": _ProbedSource(
+                lambda: AsyncFileSystemWrapper(memory, asynchronous=True)
+            ),
+        }
+    )
+
+    result = _invoke_cp(app, [source_operand, destination_operand])
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    if direction == "local-to-memory":
+        assert memory.cat("/docs/copy.bin") == payload
+    else:
+        assert (local_root / "copy.bin").read_bytes() == payload
 
 
 def test_cp_option_rejection_is_source_free() -> None:
