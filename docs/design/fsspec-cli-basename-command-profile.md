@@ -23,9 +23,10 @@ acquires a source or performs a filesystem call.
 
 The supported surface is deliberately smaller than GNU `basename`:
 
-- exactly one string operand is required;
+- exactly one string operand is required in the base profile;
 - no command options are supported; and
-- the optional suffix operand remains unsupported under a separate profile.
+- the optional suffix operand is defined in a
+  [separate profile](fsspec-cli-basename-suffix-command-profile.md).
 
 ## 2. Operand preflight
 
@@ -48,7 +49,7 @@ defined in Section 5:
 | Condition | Diagnostic |
 | --- | --- |
 | No operands | `basename: missing operand` |
-| More than one operand | `basename: extra operand` |
+| More than two operands | `basename: extra operand` |
 | Unsupported option token | `basename: <option token>: unsupported option` |
 | Operand containing NUL | `basename: <operand>: invalid operand` |
 
@@ -115,8 +116,8 @@ not transformed. This is the only diagnostic escaping algorithm.
 - [Tested command matrix contract](fsspec-cli-tested-command-matrix.md) owns
   matrix statuses, the `source-free command` scope, and hermetic evidence
   rules.
-- A future optional-suffix profile owns the two-operand GNU extension; this
-  profile rejects it through the `extra operand` diagnostic.
+- The [optional suffix profile](fsspec-cli-basename-suffix-command-profile.md)
+  owns the two-operand GNU extension and every rejected third-operand shape.
 
 ## Primary evidence
 

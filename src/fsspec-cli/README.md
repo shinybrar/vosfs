@@ -8,14 +8,15 @@ Hosts embed its Typer application through the sole behavioral seam,
 `AsyncFilesystemSource`: a callable that returns a fresh async context manager
 for one command invocation.
 
-The current command surface covers plain `ls`, source-free `basename string`,
-mapped-file `cat`, base `mkdir`, base `rmdir`, and XSI `unlink`. Commands share
-source-free argument preflight and the synchronous Typer-to-asyncio boundary;
-`ls`, `cat`, `mkdir`, `rmdir`, and `unlink` also use invocation-owned source
-lifecycle. The `basename` slice is exactly one argv token, no options, POSIX
-Issue 8 basename semantics, zero source entry, and deterministic stdout with one
-trailing newline. Every valid `ls` operand awaits `_info`; directories then await
-`_ls(path, detail=False)` and strictly validate, filter, and locale-sort
+The current command surface covers plain `ls`, source-free `basename string`
+with optional `suffix`, mapped-file `cat`, base `mkdir`, base `rmdir`, and XSI
+`unlink`. Commands share source-free argument preflight and the synchronous
+Typer-to-asyncio boundary; `ls`, `cat`, `mkdir`, `rmdir`, and `unlink` also
+use invocation-owned source lifecycle. The `basename` slice accepts one or two
+argv tokens, no options, POSIX Issue 8 basename semantics with optional suffix
+removal after base extraction, zero source entry, and deterministic stdout with
+one trailing newline. Every valid `ls` operand awaits `_info`; directories then
+await `_ls(path, detail=False)` and strictly validate, filter, and locale-sort
 immediate child names. Mapped-file `cat` awaits `_info`, requires fsspec
 `type == "file"`, stages each object through `_get_file` into one secure
 temporary, and forwards exact binary chunks to stdout with no text conversion.

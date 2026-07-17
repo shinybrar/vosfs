@@ -124,12 +124,97 @@ def test_basename_rejects_a_missing_operand() -> None:
     assert result.stderr == "basename: missing operand\n"
 
 
-def test_basename_rejects_an_extra_operand() -> None:
-    result = _invoke_basename(["a", "suffix"])
+def test_basename_rejects_a_third_operand() -> None:
+    result = _invoke_basename(["a", "suffix", "extra"])
 
     assert result.exit_code == 2
     assert result.stdout == ""
     assert result.stderr == "basename: extra operand\n"
+
+
+@pytest.mark.parametrize(
+    ("operand", "suffix", "expected_stdout"),
+    [
+        ("foo.bar", ".bar", "foo\n"),
+        ("foo.bar", "bar", "foo.\n"),
+        ("report.txt", ".txt", "report\n"),
+        ("a/b/file.txt", ".txt", "file\n"),
+        ("/a/b/c.txt", ".txt", "c\n"),
+        ("memory:/path/y.z", ".z", "y\n"),
+        ("café.txt", ".txt", "café\n"),
+        ("repeat", "eat", "rep\n"),
+        ("a/b/", "b", "b\n"),
+        ("///", "/", "/\n"),
+    ],
+)
+def test_basename_removes_a_matching_suffix_after_base_extraction(
+    operand: str,
+    suffix: str,
+    expected_stdout: str,
+) -> None:
+    result = _invoke_basename([operand, suffix])
+
+    assert result.exit_code == 0
+    assert result.stdout == expected_stdout
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    ("operand", "suffix", "expected_stdout"),
+    [
+        ("foo.bar", "foo.bar", "foo.bar\n"),
+        ("c", "c", "c\n"),
+        ("report.txt", ".pdf", "report.txt\n"),
+        ("a", "aa", "a\n"),
+        ("short", "longer", "short\n"),
+        ("foo.bar", "", "foo.bar\n"),
+        ("foo.bar", ".baz", "foo.bar\n"),
+        ("repeat", "eat", "rep\n"),
+    ],
+)
+def test_basename_leaves_the_extracted_basename_unchanged_for_nonmatching_suffixes(
+    operand: str,
+    suffix: str,
+    expected_stdout: str,
+) -> None:
+    result = _invoke_basename([operand, suffix])
+
+    assert result.exit_code == 0
+    assert result.stdout == expected_stdout
+    assert result.stderr == ""
+
+
+def test_basename_applies_suffix_after_base_extraction_for_embedded_newlines() -> None:
+    operand = "dir\nname.txt"
+    result = _invoke_basename([operand, ".txt"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "dir\nname\n"
+    assert result.stderr == ""
+
+
+def test_basename_treats_a_slash_containing_suffix_as_lexical_data() -> None:
+    result = _invoke_basename(["report.txt", "foo/bar"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "report.txt\n"
+    assert result.stderr == ""
+
+
+def test_basename_honors_the_option_delimiter_for_suffix_operands() -> None:
+    result = _invoke_basename(["--", "-l", "suffix"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "-l\n"
+    assert result.stderr == ""
+
+
+def test_basename_rejects_nul_in_the_suffix_operand() -> None:
+    result = _invoke_basename(["a", "bad\0suffix"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == "basename: bad\\0suffix: invalid operand\n"
 
 
 @pytest.mark.parametrize(
@@ -197,6 +282,7 @@ def test_basename_renders_all_diagnostic_control_characters_in_order() -> None:
     ("arguments", "expected_stdout"),
     [
         (["a"], "a\n"),
+        (["memory:/docs/a.txt", ".txt"], "a\n"),
         (["-l"], "basename: -l: unsupported option\n"),
         ([], "basename: missing operand\n"),
     ],
