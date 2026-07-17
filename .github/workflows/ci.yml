@@ -76,13 +76,13 @@ jobs:
         run: uv run zensical build --strict --clean
 
       - name: Build vosfs distributions
-        run: uv build --package vosfs --out-dir dist/vosfs
+        run: uv build --no-sources --package vosfs --out-dir dist/vosfs
 
       - name: Build fsspec-cli wheel
-        run: uv build --package fsspec-cli --wheel --out-dir dist/fsspec-cli
+        run: uv build --no-sources --package fsspec-cli --wheel --out-dir dist/fsspec-cli
 
       - name: Build fsspec-cli source distribution
-        run: uv build --package fsspec-cli --sdist --out-dir dist/fsspec-cli
+        run: uv build --no-sources --package fsspec-cli --sdist --out-dir dist/fsspec-cli
 
   test:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python }})

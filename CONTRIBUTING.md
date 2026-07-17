@@ -23,7 +23,7 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/), clone the
 repository, and run:
 
 ```bash
-uv sync --locked
+uv sync --locked --all-packages
 uv run pre-commit install --install-hooks \
   --hook-type pre-commit \
   --hook-type commit-msg
@@ -72,8 +72,8 @@ uv run pre-commit run --all-files
 uv run pytest
 uv run --package fsspec-cli pytest src/fsspec-cli/tests
 uv run zensical build --strict --clean
-uv build --package vosfs
-uv build --package fsspec-cli
+uv build --no-sources --package vosfs
+uv build --no-sources --package fsspec-cli
 ```
 
 If a hook changes files, review the changes, stage them, and run the gate again.

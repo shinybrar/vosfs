@@ -14,9 +14,11 @@ path-prefixed outputs `src/fsspec-cli--release_created`,
 
 The root package excludes `fsspec-cli`-owned paths and the shared `uv.lock` from
 its commit analysis. The component package owns its version, changelog, and
-`fsspec-cli-vX.Y.Z` tag lineage. Its `initial-version` is `0.1.0`, while the
-manifest remains at the unreleased bootstrap value `0.0.0` until Release Please
-creates the first release.
+`fsspec-cli-vX.Y.Z` tag lineage. `.release-please-manifest.json` records the last
+released version of each package. Both entries create draft GitHub releases with
+`force-tag-creation`, so the Git tag exists immediately for the publication
+workflow and for previous-release discovery instead of waiting for the draft to
+be published.
 
 ## Publication
 
@@ -40,5 +42,4 @@ schedules.
 Every generated release pull request remains subject to CI, review, and
 squash-merge gates. Do not hand-format generated changelog entries. Release
 Please owns `CHANGELOG.md` for `vosfs` and `src/fsspec-cli/CHANGELOG.md` for the
-command library from Conventional Commit titles; the component's one-time
-unreleased `0.0.0` bootstrap marker is the sole manual exception.
+command library from Conventional Commit titles.
