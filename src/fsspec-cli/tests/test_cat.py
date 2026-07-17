@@ -507,12 +507,13 @@ def test_cat_removes_temporary_on_get_file_cancellation(
     "control",
     [asyncio.CancelledError(), _ControlFlow("stop")],
 )
-def test_cat_reports_cleanup_failure_on_get_file_cancellation(
+def test_cat_retries_temporary_cleanup_after_get_file_cancellation(
     control: BaseException,
     monkeypatch,
 ) -> None:
     temps: list[str] = []
     diagnostics: list[tuple[str, str, Exception]] = []
+    unlink_attempts = 0
     source = _RecordingSource([])
     real_unlink = Path.unlink
 
@@ -523,9 +524,12 @@ def test_cat_reports_cleanup_failure_on_get_file_cancellation(
         raise control
 
     def fail_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        nonlocal unlink_attempts
         if temps and self == Path(temps[0]):
-            message = "unlink-denied"
-            raise OSError(message)
+            unlink_attempts += 1
+            if unlink_attempts == 1:
+                message = "unlink-denied"
+                raise OSError(message)
         real_unlink(self, *args, **kwargs)
 
     def capture_render(command: str, operand: object, error: Exception) -> None:
@@ -542,13 +546,9 @@ def test_cat_reports_cleanup_failure_on_get_file_cancellation(
     if not isinstance(control, asyncio.CancelledError):
         assert caught.value is control
     assert len(temps) == 1
-    assert Path(temps[0]).exists()
-    assert len(diagnostics) == 1
-    assert diagnostics[0][0] == "cat"
-    assert diagnostics[0][1] == "memory:/blob"
-    assert isinstance(diagnostics[0][2], OSError)
-    assert str(diagnostics[0][2]) == "unlink-denied"
-    real_unlink(Path(temps[0]))
+    assert unlink_attempts == 2
+    assert not Path(temps[0]).exists()
+    assert diagnostics == []
 
 
 def test_cat_continues_after_temporary_open_failure(monkeypatch) -> None:
@@ -623,7 +623,7 @@ def test_cat_continues_after_temporary_read_failure(monkeypatch) -> None:
 def test_cat_continues_after_temporary_close_failure(monkeypatch) -> None:
     source = _RecordingSource(
         [],
-        get_file_by_path={"/bad": b"data", "/ok": b"OK"},
+        get_file_by_path={"/bad": b"", "/ok": b"OK"},
     )
     real_open = Path.open
     failed = False
@@ -634,6 +634,9 @@ def test_cat_continues_after_temporary_close_failure(monkeypatch) -> None:
 
         def read(self, size: int = -1) -> bytes:
             return self._handle.read(size)
+
+        def seek(self, offset: int) -> int:
+            return self._handle.seek(offset)
 
         def close(self) -> None:
             self._handle.close()
@@ -708,6 +711,64 @@ def test_cat_continues_after_delayed_temporary_read_failure(monkeypatch) -> None
     assert "secret" not in result.stderr
 
 
+def test_cat_stops_when_single_handle_read_fails_after_first_output(
+    monkeypatch,
+) -> None:
+    source = _RecordingSource(
+        [],
+        get_file_by_path={"/bad": b"secret", "/later": b"LATER"},
+    )
+    open_calls = 0
+
+    class _PostOutputFailHandle:
+        def __init__(self) -> None:
+            self._phase = "validate"
+            self._reads = 0
+
+        def read(self, size: int = -1) -> bytes:
+            del size
+            self._reads += 1
+            if self._phase == "validate":
+                return b"validated" if self._reads == 1 else b""
+            if self._reads == 1:
+                return b"accepted"
+            message = "post-output-read-denied"
+            raise OSError(message)
+
+        def seek(self, offset: int) -> int:
+            assert offset == 0
+            self._phase = "emit"
+            self._reads = 0
+            return 0
+
+        def close(self) -> None:
+            return None
+
+    real_open = Path.open
+
+    def fail_after_output_open(self: Path, *args: object, **kwargs: object):
+        nonlocal open_calls
+        if self.name.startswith("fsspec-cli-cat-") and "rb" in args:
+            open_calls += 1
+            if open_calls == 1:
+                return _PostOutputFailHandle()
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_after_output_open)
+    result = _invoke_cat(
+        ["memory:/bad", "memory:/later"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout_bytes == b"accepted"
+    assert result.stderr == (
+        "cat: output: output failure (OSError): post-output-read-denied\n"
+    )
+    assert open_calls == 1
+    assert [event[0] for event in source.events].count("get_file") == 1
+
+
 def test_cat_reports_cleanup_failure_after_download_failure(monkeypatch) -> None:
     temps: list[str] = []
     source = _RecordingSource([], get_file_error=OSError("download"))
@@ -737,7 +798,7 @@ def test_cat_reports_cleanup_failure_after_download_failure(monkeypatch) -> None
     assert not Path(temps[0]).exists()
 
 
-def test_cat_unlinks_temporary_when_os_close_fails(monkeypatch) -> None:
+def test_cat_finally_closes_descriptor_after_two_os_close_failures(monkeypatch) -> None:
     temps: list[str] = []
     closed: list[int] = []
     source = _RecordingSource([], get_file_content=b"secret")
@@ -753,7 +814,7 @@ def test_cat_unlinks_temporary_when_os_close_fails(monkeypatch) -> None:
     def fail_close(fd: int) -> None:
         nonlocal attempts
         attempts += 1
-        if attempts == 1:
+        if attempts <= 2:
             # True pre-close failure: descriptor still open and must be released.
             message = "close-denied"
             raise OSError(message)
@@ -771,7 +832,7 @@ def test_cat_unlinks_temporary_when_os_close_fails(monkeypatch) -> None:
     )
     assert len(temps) == 1
     assert not Path(temps[0]).exists()
-    assert attempts >= 2
+    assert attempts >= 3
     assert closed
     assert [event[0] for event in source.events] == ["factory", "enter", "info", "exit"]
     assert "secret" not in result.stderr

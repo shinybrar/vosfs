@@ -7,10 +7,9 @@ import os
 import sys
 import tempfile
 from collections.abc import Mapping
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, BinaryIO, Protocol
 
 import typer
 from typer.core import TyperCommand
@@ -173,26 +172,73 @@ def _remove_temporary(path: str) -> Exception | None:
     return None
 
 
-def _close_descriptor(descriptor: int) -> Exception | None:
-    """Close ``descriptor``; retry once so a pre-close failure cannot leak it."""
+@dataclass
+class _CatOwnership:
+    pending_temporaries: set[str]
+    temporary_operands: dict[str, _MappedOperand]
+    pending_descriptors: dict[int, str]
+
+    def add(self, descriptor: int, temporary: str, operand: _MappedOperand) -> None:
+        self.pending_temporaries.add(temporary)
+        self.temporary_operands[temporary] = operand
+        self.pending_descriptors[descriptor] = temporary
+
+
+def _close_descriptor(
+    ownership: _CatOwnership,
+    descriptor: int,
+) -> Exception | None:
     try:
         os.close(descriptor)
     except Exception as error:  # noqa: BLE001 - descriptor ownership boundary.
-        with suppress(Exception):
-            os.close(descriptor)
         return error
+    ownership.pending_descriptors.pop(descriptor)
     return None
 
 
+def _remove_owned_temporary(
+    ownership: _CatOwnership,
+    temporary: str,
+) -> Exception | None:
+    if temporary not in ownership.pending_temporaries:
+        return None
+    if temporary in ownership.pending_descriptors.values():
+        message = "temporary descriptor remains open"
+        return OSError(message)
+    cleanup_error = _remove_temporary(temporary)
+    if cleanup_error is None:
+        ownership.pending_temporaries.remove(temporary)
+        ownership.temporary_operands.pop(temporary)
+    return cleanup_error
+
+
+def _sweep_ownership(ownership: _CatOwnership) -> dict[str, Exception]:
+    errors: dict[str, Exception] = {}
+    for descriptor, temporary in tuple(ownership.pending_descriptors.items()):
+        close_error = _close_descriptor(ownership, descriptor)
+        if close_error is not None:
+            errors[temporary] = close_error
+    for temporary in tuple(ownership.pending_temporaries):
+        cleanup_error = _remove_owned_temporary(ownership, temporary)
+        if cleanup_error is not None:
+            errors.setdefault(temporary, cleanup_error)
+        else:
+            errors.pop(temporary, None)
+    return errors
+
+
 def _failure_after_temporary(
+    ownership: _CatOwnership,
     operand: _MappedOperand,
     temporary: str,
     error: Exception,
     *,
     staging: bool,
 ) -> _StagingFailure | _Failure:
-    cleanup_error = _remove_temporary(temporary)
+    cleanup_error = _remove_owned_temporary(ownership, temporary)
     if cleanup_error is not None:
+        if staging and temporary in ownership.pending_descriptors.values():
+            return _StagingFailure(operand, error)
         return _StagingFailure(operand, cleanup_error)
     if staging:
         return _StagingFailure(operand, error)
@@ -200,9 +246,9 @@ def _failure_after_temporary(
 
 
 async def _stage_operand(
-    command: str,
     operand: _MappedOperand,
     filesystem: AsyncFileSystem,
+    ownership: _CatOwnership,
 ) -> tuple[str | None, _Failure | _StagingFailure | None]:
     # fsspec's native async API intentionally exposes underscore coroutines.
     try:
@@ -218,9 +264,12 @@ async def _stage_operand(
     except Exception as error:  # noqa: BLE001 - local staging creation boundary.
         return None, _StagingFailure(operand, error)
 
-    close_error = _close_descriptor(descriptor)
+    ownership.add(descriptor, temporary, operand)
+    close_error = _close_descriptor(ownership, descriptor)
     if close_error is not None:
+        _sweep_ownership(ownership)
         return None, _failure_after_temporary(
+            ownership,
             operand,
             temporary,
             close_error,
@@ -231,16 +280,14 @@ async def _stage_operand(
         await filesystem._get_file(operand.path, temporary)  # noqa: SLF001
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return None, _failure_after_temporary(
+            ownership,
             operand,
             temporary,
             error,
             staging=False,
         )
     except BaseException:
-        cleanup_error = _remove_temporary(temporary)
-        if cleanup_error is not None:
-            # Ownership lost only after disclosed cleanup failure.
-            _render_staging_failure(command, operand, cleanup_error)
+        _remove_owned_temporary(ownership, temporary)
         raise
 
     return temporary, None
@@ -250,75 +297,70 @@ async def _stage_operand(
 class _ForwardResult:
     staging_error: Exception | None = None
     output_error: Exception | None = None
+    wrote_output: bool = False
 
 
-def _validate_temporary(temporary: str) -> Exception | None:
-    """Open/read/close staging with no stdout. Failure → operand emits zero bytes."""
-    try:
-        # Close is classified separately from stdout, so avoid `with`.
-        handle = Path(temporary).open("rb")  # noqa: SIM115
-    except Exception as error:  # noqa: BLE001 - local staging open boundary.
-        return error
-
-    staging_error: Exception | None = None
-    try:
-        while True:
-            try:
-                chunk = handle.read(_OUTPUT_CHUNK)
-            except Exception as error:  # noqa: BLE001 - local staging read boundary.
-                staging_error = error
-                break
-            if not chunk:
-                break
-    finally:
+def _validate_handle(handle: BinaryIO) -> Exception | None:
+    while True:
         try:
-            handle.close()
-        except Exception as error:  # noqa: BLE001 - local staging close boundary.
-            if staging_error is None:
-                staging_error = error
-    return staging_error
+            chunk = handle.read(_OUTPUT_CHUNK)
+        except Exception as error:  # noqa: BLE001 - local staging read boundary.
+            return error
+        if not chunk:
+            return None
 
 
-def _emit_temporary(temporary: str) -> _ForwardResult:
-    """Forward already-validated staging bytes; local I/O stays staging."""
+def _emit_handle(handle: BinaryIO) -> _ForwardResult:
+    emitted = False
+    while True:
+        try:
+            chunk = handle.read(_OUTPUT_CHUNK)
+        except Exception as error:  # noqa: BLE001 - local staging read boundary.
+            if emitted:
+                return _ForwardResult(output_error=error, wrote_output=True)
+            return _ForwardResult(staging_error=error)
+        if not chunk:
+            return _ForwardResult(wrote_output=emitted)
+        try:
+            _write_stdout(chunk)
+        except Exception as error:  # noqa: BLE001 - stdout boundary.
+            return _ForwardResult(output_error=error, wrote_output=emitted)
+        emitted = True
+
+
+def _forward_temporary(temporary: str) -> _ForwardResult:
+    """Validate then emit from one staging handle."""
     try:
-        # Close is classified separately from stdout, so avoid `with`.
         handle = Path(temporary).open("rb")  # noqa: SIM115
     except Exception as error:  # noqa: BLE001 - local staging open boundary.
         return _ForwardResult(staging_error=error)
 
-    staging_error: Exception | None = None
-    output_error: Exception | None = None
+    forwarded = _ForwardResult()
     try:
-        while True:
+        staging_error = _validate_handle(handle)
+        if staging_error is not None:
+            forwarded = _ForwardResult(staging_error=staging_error)
+        else:
             try:
-                chunk = handle.read(_OUTPUT_CHUNK)
-            except Exception as error:  # noqa: BLE001 - local staging read boundary.
-                staging_error = error
-                break
-            if not chunk:
-                break
-            try:
-                _write_stdout(chunk)
-            except Exception as error:  # noqa: BLE001 - stdout boundary.
-                output_error = error
-                break
+                handle.seek(0)
+            except Exception as error:  # noqa: BLE001 - local staging seek boundary.
+                forwarded = _ForwardResult(staging_error=error)
+            else:
+                forwarded = _emit_handle(handle)
     finally:
         try:
             handle.close()
         except Exception as error:  # noqa: BLE001 - local staging close boundary.
-            if staging_error is None and output_error is None:
-                staging_error = error
+            if forwarded.staging_error is None and forwarded.output_error is None:
+                if forwarded.wrote_output:
+                    forwarded = _ForwardResult(
+                        output_error=error,
+                        wrote_output=True,
+                    )
+                else:
+                    forwarded = _ForwardResult(staging_error=error)
 
-    return _ForwardResult(staging_error=staging_error, output_error=output_error)
-
-
-def _forward_temporary(temporary: str) -> _ForwardResult:
-    """Validate local staging fully before any stdout byte (bounded, two-pass)."""
-    staging_error = _validate_temporary(temporary)
-    if staging_error is not None:
-        return _ForwardResult(staging_error=staging_error)
-    return _emit_temporary(temporary)
+    return forwarded
 
 
 @dataclass
@@ -351,14 +393,15 @@ async def _emit_operands(
     request: _CatRequest,
     filesystems: Mapping[str, AsyncFileSystem],
     progress: _CatProgress,
+    ownership: _CatOwnership,
 ) -> None:
     for operand in request.operands:
         if progress.output_error is not None:
             return
         temporary, failure = await _stage_operand(
-            command,
             operand,
             filesystems[operand.name],
+            ownership,
         )
         if failure is not None:
             _render_operand_failure(command, failure)
@@ -379,7 +422,7 @@ async def _emit_operands(
                 if not isinstance(forwarded.output_error, BrokenPipeError):
                     _render_output_failure(command, forwarded.output_error)
         finally:
-            cleanup_error = _remove_temporary(temporary)
+            cleanup_error = _remove_owned_temporary(ownership, temporary)
             if cleanup_error is not None:
                 progress.staging_cleanup_error = cleanup_error
                 _render_staging_failure(command, operand, cleanup_error)
@@ -393,14 +436,22 @@ async def _run_cat(
     request = _preflight(command, raw_arguments, sources)
     invocation = _SourceInvocation(command, sources)
     progress = _CatProgress(failures=[])
+    ownership = _CatOwnership(set(), {}, {})
     succeeded = False
     try:
         names = dict.fromkeys(operand.name for operand in request.operands)
         filesystems = await invocation.acquire(names)
         if filesystems is not None:
-            await _emit_operands(command, request, filesystems, progress)
+            await _emit_operands(command, request, filesystems, progress, ownership)
             succeeded = progress.succeeded
     finally:
+        ownership_errors = _sweep_ownership(ownership)
+        if ownership_errors:
+            succeeded = False
+        for temporary, error in ownership_errors.items():
+            operand = ownership.temporary_operands[temporary]
+            _render_staging_failure(command, operand, error)
+            progress.staging_cleanup_error = error
         active_exc_info = sys.exc_info()
         command_error = progress.command_error()
         if command_error is not None and (
