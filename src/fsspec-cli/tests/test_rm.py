@@ -981,6 +981,33 @@ def test_rm_d_continues_after_non_empty_directory_failure() -> None:
     assert [event[2] for event in events if event[0] == "rm_file"] == ["/docs/file.txt"]
 
 
+def test_rm_d_continues_after_an_earlier_success() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(
+        events,
+        info_by_path={
+            "/docs/file.txt": {"type": "file"},
+            "/docs/not-empty": {"type": "directory"},
+        },
+        rmdir_by_path={
+            "/docs/not-empty": OSError(errno.ENOTEMPTY, "directory not empty")
+        },
+    )
+
+    result = _invoke_rm(
+        ["-d", "memory:/docs/file.txt", "memory:/docs/not-empty"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "rm: memory:/docs/not-empty: directory not empty\n"
+    assert [event[2] for event in events if event[0] == "rm_file"] == ["/docs/file.txt"]
+    assert any(
+        event[0] == "rmdir" and event[2] == "/docs/not-empty" for event in events
+    )
+
+
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
