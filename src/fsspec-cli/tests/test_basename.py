@@ -6,6 +6,23 @@ import pytest
 from fsspec_cli import App, AsyncFilesystemSource
 from typer.testing import CliRunner, Result
 
+from ._matrix_support import _block_network
+
+_EXACT_BASENAME_HELP = (
+    "                                                                                \n"
+    " Usage: root basename [OPTIONS]                                                 \n"
+    "                                                                                \n"
+    "╭─ Options ────────────────────────────────────────────────────────────────────╮\n"
+    "│ --help          Show this message and exit.                                  │\n"
+    "╰──────────────────────────────────────────────────────────────────────────────╯\n"
+    "\n"
+)
+
+
+@pytest.fixture(autouse=True)
+def _prohibit_unplanned_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    _block_network(monkeypatch)
+
 
 def _source_must_not_run() -> NoReturn:
     raise AssertionError
@@ -116,11 +133,19 @@ def test_basename_honors_the_option_delimiter_for_option_looking_operands() -> N
 
 @pytest.mark.parametrize("arguments", [["--help"], ["-a", "--help"]])
 def test_basename_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
-    result = _invoke_basename(arguments)
+    source_calls = 0
+
+    def source_must_not_run() -> NoReturn:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke_basename(arguments, sources={"memory": source_must_not_run})
 
     assert result.exit_code == 0
-    assert "Usage:" in result.stdout
+    assert result.stdout == _EXACT_BASENAME_HELP
     assert result.stderr == ""
+    assert source_calls == 0
 
 
 def test_basename_treats_help_tokens_after_the_option_delimiter_as_operands() -> None:

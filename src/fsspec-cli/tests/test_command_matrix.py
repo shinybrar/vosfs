@@ -129,16 +129,33 @@ def test_basename_string_is_source_free() -> None:
         source_calls += 1
         raise AssertionError
 
-    app = App({"memory": source_must_not_run})
-    success = CliRunner().invoke(app.typer_app, ["basename", "memory:/docs/a.txt"])
-    rejection = CliRunner().invoke(app.typer_app, ["basename", "-a", "a"])
+    result = CliRunner().invoke(
+        App({"memory": source_must_not_run}).typer_app,
+        ["basename", "memory:/docs/a.txt"],
+    )
 
-    assert (success.exit_code, success.stdout, success.stderr) == (
+    assert (result.exit_code, result.stdout, result.stderr) == (
         0,
         "a.txt\n",
         "",
     )
-    assert (rejection.exit_code, rejection.stdout, rejection.stderr) == (
+    assert source_calls == 0
+
+
+def test_basename_option_rejection_is_source_free() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = CliRunner().invoke(
+        App({"memory": source_must_not_run}).typer_app,
+        ["basename", "-a", "a"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
         2,
         "",
         "basename: -a: unsupported option\n",
