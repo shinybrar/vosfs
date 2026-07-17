@@ -12,10 +12,13 @@ such as `release_created`, `tag_name`, and `sha` belong to `vosfs`. The
 path-prefixed outputs `src/fsspec-cli--release_created`,
 `src/fsspec-cli--tag_name`, and `src/fsspec-cli--sha` belong to `fsspec-cli`.
 
-The root package excludes `fsspec-cli`-owned paths, all of `docs/`, and
-repository plumbing (the shared `uv.lock`, `.pre-commit-config.yaml`, and the
-Release Please config and manifest) from its commit analysis, so documentation
-and lockfile-only changes never propose a `vosfs` release. The component
+The root package excludes the component tree (`src/fsspec-cli`), all of `docs/`,
+and the `.superpowers/` agent scratch directory from its commit analysis, so
+component-only work and documentation changes never propose a `vosfs` release.
+Release Please matches each `exclude-paths` entry as a directory prefix, not a
+glob or a single file, so entries must be bare directories (for example
+`src/fsspec-cli`, never `src/fsspec-cli/**`); a commit drops out only when every
+file it touches lives under an excluded directory. The component
 package is scoped to `src/fsspec-cli`, so it already ignores everything outside
 that directory, including `docs/`. Documentation is published on its own path:
 every validated `main` commit refreshes the `dev` site, and a `vosfs` release
