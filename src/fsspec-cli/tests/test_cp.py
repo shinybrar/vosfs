@@ -712,31 +712,37 @@ def test_cp_reports_compare_failure_during_verification(monkeypatch) -> None:
 
 def test_cp_reports_verification_cleanup_failure(monkeypatch) -> None:
     source = _file_source()
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
     real_unlink = Path.unlink
     unlink_attempts = 0
 
     def fail_unlink(self: Path, *args: object, **kwargs: object) -> None:
         nonlocal unlink_attempts
-        if self.name.startswith(("fsspec-cli-cp-src-", "fsspec-cli-cp-dst-")):
+        if self.name == "destination":
             unlink_attempts += 1
-            if unlink_attempts == 1:
-                message = "unlink-denied"
-                raise OSError(message)
+            message = "unlink-denied"
+            raise OSError(message)
+        if self.name.startswith("fsspec-cli-cp-"):
+            unlink_attempts += 1
         real_unlink(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", fail_unlink)
 
     result = _invoke_cp(
-        ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
-        sources={"memory": source},
+        ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+        sources={"source": source, "destination": destination},
     )
 
     assert result.exit_code == 1
     assert result.stderr == (
-        "cp: memory:/docs/copy.txt: staging failure (OSError); "
+        "cp: destination:/out/copy.txt: staging failure (OSError); "
         "destination residue may remain\n"
     )
-    assert unlink_attempts >= 1
+    assert unlink_attempts == 2
 
 
 class _ControlFlow(BaseException):
@@ -778,11 +784,16 @@ def test_cp_removes_temporary_on_first_verification_get_file_cancellation(
     "control",
     [asyncio.CancelledError(), _ControlFlow("stop")],
 )
-def test_cp_removes_both_temporaries_on_second_verification_get_file_cancellation(
+def test_cp_removes_source_stage_and_verification_pipe_on_cancellation(
     control: BaseException,
 ) -> None:
     temps: list[str] = []
     source = _file_source()
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
 
     def stage_source(lpath: str) -> None:
         temps.append(lpath)
@@ -793,22 +804,20 @@ def test_cp_removes_both_temporaries_on_second_verification_get_file_cancellatio
         Path(lpath).write_bytes(b"payload")
         raise control
 
-    source.get_file_by_path = {
-        "/docs/notes.txt": stage_source,
-        "/docs/copy.txt": cancel_destination_stage,
-    }
+    source.get_file_by_path = {"/docs/notes.txt": stage_source}
+    destination.get_file_by_path = {"/out/copy.txt": cancel_destination_stage}
 
     with pytest.raises(type(control)) as caught:
         _invoke_cp(
-            ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
-            sources={"memory": source},
+            ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+            sources={"source": source, "destination": destination},
         )
 
     assert type(caught.value) is type(control)
     if not isinstance(control, asyncio.CancelledError):
         assert caught.value is control
     assert len(temps) == 2
-    assert "fsspec-cli-cp-src-" in temps[0]
-    assert "fsspec-cli-cp-dst-" in temps[1]
+    assert "fsspec-cli-cp-" in temps[0]
+    assert "fsspec-cli-cp-dst-" not in temps[1]
     assert not Path(temps[0]).exists()
     assert not Path(temps[1]).exists()

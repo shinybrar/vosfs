@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import locale
 import os
+import shutil
 import sys
 import tempfile
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -267,6 +270,106 @@ def _files_match(left: str, right: str) -> tuple[bool, Exception | None]:
         return False, error
 
 
+def _remove_directory(path: str) -> Exception | None:
+    try:
+        Path(path).rmdir()
+    except Exception as error:  # noqa: BLE001 - local staging cleanup boundary.
+        return error
+    return None
+
+
+def _create_verification_pipe() -> tuple[str | None, str | None, Exception | None]:
+    try:
+        directory = tempfile.mkdtemp(prefix="fsspec-cli-cp-verify-")
+        pipe = str(Path(directory) / "destination")
+        os.mkfifo(pipe, mode=0o600)
+    except Exception as error:  # noqa: BLE001 - local verification boundary.
+        if "pipe" in locals():
+            _remove_temporary(pipe)
+        if "directory" in locals():
+            _remove_directory(directory)
+        return None, None, error
+    return pipe, directory, None
+
+
+def _pipe_matches_file(pipe: str, staged: str) -> tuple[bool, Exception | None]:
+    return _files_match(pipe, staged)
+
+
+def _open_matches_file(
+    filesystem: AsyncFileSystem,
+    remote: str,
+    staged: str,
+) -> tuple[bool, Exception | None]:
+    backend = getattr(filesystem, "sync_fs", filesystem)
+    try:
+        with (
+            backend.open(remote, "rb") as remote_handle,
+            Path(staged).open("rb") as staged_handle,
+        ):
+            while True:
+                remote_chunk = remote_handle.read(_COMPARE_CHUNK)
+                staged_chunk = staged_handle.read(_COMPARE_CHUNK)
+                if remote_chunk != staged_chunk:
+                    return False, None
+                if not remote_chunk:
+                    return True, None
+    except Exception as error:  # noqa: BLE001 - local verification boundary.
+        return False, error
+
+
+def _release_pipe_reader(pipe: str) -> None:
+    try:
+        descriptor = os.open(pipe, os.O_WRONLY | os.O_NONBLOCK)
+    except OSError:
+        return
+    else:
+        os.close(descriptor)
+
+
+async def _stream_remote_matches_file(
+    filesystem: AsyncFileSystem,
+    remote: str,
+    staged: str,
+) -> tuple[bool, Exception | None, Exception | None, Exception | None]:
+    pipe, directory, creation_error = _create_verification_pipe()
+    if creation_error is not None or pipe is None or directory is None:
+        return False, creation_error, None, None
+
+    reader = asyncio.create_task(asyncio.to_thread(_pipe_matches_file, pipe, staged))
+    await asyncio.sleep(0)
+    transfer_error: Exception | None = None
+    matched = False
+    compare_error: Exception | None = None
+    cleanup_error: Exception | None = None
+    try:
+        try:
+            await filesystem._get_file(remote, pipe)  # noqa: SLF001
+        except Exception as error:  # noqa: BLE001 - verification download boundary.
+            transfer_error = error
+        except BaseException:
+            _release_pipe_reader(pipe)
+            with suppress(BaseException):
+                await asyncio.shield(reader)
+            raise
+        if transfer_error is not None:
+            _release_pipe_reader(pipe)
+        matched, compare_error = await reader
+        if isinstance(transfer_error, shutil.SpecialFileError):
+            transfer_error = None
+            matched, compare_error = await asyncio.to_thread(
+                _open_matches_file,
+                filesystem,
+                remote,
+                staged,
+            )
+    finally:
+        pipe_cleanup = _remove_temporary(pipe)
+        directory_cleanup = _remove_directory(directory)
+        cleanup_error = pipe_cleanup or directory_cleanup
+    return matched, transfer_error, compare_error, cleanup_error
+
+
 async def _verify_copy(  # noqa: PLR0911 - explicit verify outcomes.
     filesystem: AsyncFileSystem,
     source_path: str,
@@ -436,26 +539,20 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - exp
                 residue=True,
             )
 
-        destination_temporary, staging_error = await _stage_remote(
+        (
+            matched,
+            transfer_error,
+            compare_error,
+            cleanup_error,
+        ) = await _stream_remote_matches_file(
             destination_filesystem,
             resolved,
-            "fsspec-cli-cp-dst-",
+            temporary,
         )
-        if staging_error is not None or destination_temporary is None:
+        if transfer_error is not None:
             return _CpFailure(
                 request.destination,
-                backend_error=staging_error,
-                category="staging failure",
-                residue=True,
-            )
-        try:
-            matched, compare_error = _files_match(temporary, destination_temporary)
-        finally:
-            cleanup_error = _remove_temporary(destination_temporary)
-        if cleanup_error is not None:
-            return _CpFailure(
-                request.destination,
-                backend_error=cleanup_error,
+                backend_error=transfer_error,
                 category="staging failure",
                 residue=True,
             )
@@ -463,6 +560,13 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - exp
             return _CpFailure(
                 request.destination,
                 backend_error=compare_error,
+                category="staging failure",
+                residue=True,
+            )
+        if cleanup_error is not None:
+            return _CpFailure(
+                request.destination,
+                backend_error=cleanup_error,
                 category="staging failure",
                 residue=True,
             )
