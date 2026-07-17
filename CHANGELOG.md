@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.4.0](https://github.com/shinybrar/vosfs/compare/v0.3.3...v0.4.0) (2026-07-17)
+
+
+### Features
+
+* **fsspec-cli:** activate independent release automation ([#148](https://github.com/shinybrar/vosfs/issues/148)) ([0a9f730](https://github.com/shinybrar/vosfs/commit/0a9f7302dcc700fcd46ccc170b47ba7640cc83ac)), closes [#107](https://github.com/shinybrar/vosfs/issues/107) [#108](https://github.com/shinybrar/vosfs/issues/108)
+* **fsspec-cli:** add async Typer boundary ([#111](https://github.com/shinybrar/vosfs/issues/111)) ([adfef30](https://github.com/shinybrar/vosfs/commit/adfef30158ab1d2a72dd5f9d924d3dd65b362415)), closes [#100](https://github.com/shinybrar/vosfs/issues/100)
+* **fsspec-cli:** add deterministic ls renderer ([#115](https://github.com/shinybrar/vosfs/issues/115)) ([460d9fc](https://github.com/shinybrar/vosfs/commit/460d9fc37e54d7ca4672e5131a7e102a1a28a749)), closes [#103](https://github.com/shinybrar/vosfs/issues/103)
+* **fsspec-cli:** add directory listing engine ([#117](https://github.com/shinybrar/vosfs/issues/117)) ([3efeb52](https://github.com/shinybrar/vosfs/commit/3efeb52e40f700aeb6983364dfae13de75e44c72)), closes [#102](https://github.com/shinybrar/vosfs/issues/102)
+* **fsspec-cli:** manage source lifecycle ([#116](https://github.com/shinybrar/vosfs/issues/116)) ([1660dbe](https://github.com/shinybrar/vosfs/commit/1660dbeff0b34083de74af210dcd17f306bd2320)), closes [#101](https://github.com/shinybrar/vosfs/issues/101)
+
+
+### Bug Fixes
+
+* **ci:** accept generated release changelogs ([308d45d](https://github.com/shinybrar/vosfs/commit/308d45d60da2b68686e6161f920c6616f5d066bd))
+
+
+### Documentation
+
+* add Cursor Cloud dev environment setup notes ([#121](https://github.com/shinybrar/vosfs/issues/121)) ([13d479d](https://github.com/shinybrar/vosfs/commit/13d479d48ac5f98337b235ef06b34c19548269c5))
+* add fsspec research and CLI specification ([852d696](https://github.com/shinybrar/vosfs/commit/852d696c37cb79b5da175eadeb5fcfe9a0fded32))
+* **architecture:** define fsspec-cli release boundary ([#86](https://github.com/shinybrar/vosfs/issues/86)) ([8bc1df6](https://github.com/shinybrar/vosfs/commit/8bc1df60eb4df69eb439480ab3685f275180effc)), closes [#77](https://github.com/shinybrar/vosfs/issues/77)
+* **design:** define plain ls command profile ([#88](https://github.com/shinybrar/vosfs/issues/88)) ([534d84c](https://github.com/shinybrar/vosfs/commit/534d84cb3fb738613705ad3fc935ba6c7f55e2da)), closes [#79](https://github.com/shinybrar/vosfs/issues/79)
+* **fsspec-cli:** define async source failure contract ([#97](https://github.com/shinybrar/vosfs/issues/97)) ([8f751af](https://github.com/shinybrar/vosfs/commit/8f751afee707710ba8ae2608a99fbeea97e9e049)), closes [#94](https://github.com/shinybrar/vosfs/issues/94)
+* **fsspec-cli:** define tested command matrix ([#98](https://github.com/shinybrar/vosfs/issues/98)) ([fc69367](https://github.com/shinybrar/vosfs/commit/fc6936716b580c071b8a57c1a81792ba041de43b)), closes [#81](https://github.com/shinybrar/vosfs/issues/81)
+* **fsspec-cli:** lock async host lifecycle contract ([#95](https://github.com/shinybrar/vosfs/issues/95)) ([3ec55e1](https://github.com/shinybrar/vosfs/commit/3ec55e10fca295ba84a7800e6a0736c9bf561e1a)), closes [#92](https://github.com/shinybrar/vosfs/issues/92)
+* **fsspec-cli:** lock strict ls -l rejection ([#96](https://github.com/shinybrar/vosfs/issues/96)) ([124ddac](https://github.com/shinybrar/vosfs/commit/124ddaca10cd1ba6d65390f570acb3030e3149e5)), closes [#82](https://github.com/shinybrar/vosfs/issues/82)
+* **research:** assess long-listing viability ([#87](https://github.com/shinybrar/vosfs/issues/87)) ([f8a9f96](https://github.com/shinybrar/vosfs/commit/f8a9f96baa8cf2a8f1a37679302abcf8e6a1fe91)), closes [#78](https://github.com/shinybrar/vosfs/issues/78)
+* **research:** define fsspec-cli async execution boundary ([#93](https://github.com/shinybrar/vosfs/issues/93)) ([03dbca2](https://github.com/shinybrar/vosfs/commit/03dbca2b401815d3eda90c8a381a019306cbbecb)), closes [#90](https://github.com/shinybrar/vosfs/issues/90)
+* **research:** define plain ls capability floor ([#84](https://github.com/shinybrar/vosfs/issues/84)) ([bc87ddf](https://github.com/shinybrar/vosfs/commit/bc87ddfb1d09bf26ef2cc1d2eedf75ec378bfecf)), closes [#76](https://github.com/shinybrar/vosfs/issues/76)
+* **research:** lock plain ls interoperability verdict ([#91](https://github.com/shinybrar/vosfs/issues/91)) ([3860fcf](https://github.com/shinybrar/vosfs/commit/3860fcf7d0156a5c6b0c206ca4753443054f699f)), closes [#80](https://github.com/shinybrar/vosfs/issues/80)
+
 ## [0.3.3](https://github.com/shinybrar/vosfs/compare/v0.3.2...v0.3.3) (2026-07-14)
 
 
