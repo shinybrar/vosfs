@@ -190,7 +190,6 @@ class App:
             _ensure_no_active_event_loop(_RMDIR_COMMAND)
             asyncio.run(_run_rmdir(_RMDIR_COMMAND, raw_arguments, self._sources))
 
-
         @self.typer_app.command(
             _RM_COMMAND,
             cls=_RmCommand,
