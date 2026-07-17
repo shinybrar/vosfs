@@ -865,7 +865,9 @@ def test_rm_help_describes_force_profile() -> None:
 
     assert result.exit_code == 0
     plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
-    assert "rm -f ignores missing files" in " ".join(plain_help.split())
+    assert "rm -f ignores files already missing before removal" in " ".join(
+        plain_help.split()
+    )
     assert result.stderr == ""
 
 

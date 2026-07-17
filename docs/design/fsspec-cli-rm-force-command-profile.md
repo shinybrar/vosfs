@@ -13,7 +13,7 @@ Client baseline: **fsspec 2026.6.0**
 This profile adds exact force behavior to base file-only `rm`:
 
 ```text
-rm -f [-f...] [--] name:/file...
+rm -f [-f...] [--] [name:/file...]
 ```
 
 `-f` is required. Repeated and grouped tokens containing only `f` are
