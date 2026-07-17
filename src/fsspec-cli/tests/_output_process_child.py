@@ -6,10 +6,17 @@ import io
 import sys
 from contextlib import asynccontextmanager
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
 from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App
+
+_TESTS_DIR = Path(__file__).resolve().parent
+if str(_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESTS_DIR))
+
+from _process_watchdog import arm as _arm_watchdog  # noqa: E402
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -100,6 +107,7 @@ def _configure_stdout(mode: str) -> None:
 
 
 def main() -> None:
+    _arm_watchdog()
     mode = sys.argv.pop(1)
     _configure_stdout(mode)
     App({"memory": partial(_source, mode)}).typer_app()

@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 import os
 import sys
-import threading
 from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
@@ -14,31 +13,16 @@ from typing import TYPE_CHECKING, BinaryIO
 from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App
 
+_TESTS_DIR = Path(__file__).resolve().parent
+if str(_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESTS_DIR))
+
+from _process_watchdog import arm as _arm_watchdog  # noqa: E402
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 _TRACKING_PATH = os.environ.get("FSSPEC_CLI_CAT_PROCESS_TRACKING")
-
-# Below the parent's 5-second subprocess timeout so a wedged child always
-# exits (closing its pipe handles) before the parent starts waiting on them.
-_WATCHDOG_SECONDS = 4.0
-
-
-def _abort_wedged_child() -> None:
-    stream = sys.__stderr__
-    if stream is not None:
-        stream.write("cat child watchdog expired; forcing exit\n")
-        stream.flush()
-    os._exit(3)
-
-
-def _arm_watchdog() -> None:
-    # A hung child previously deadlocked pytest on Windows: the parent's
-    # post-timeout drain waited forever on pipes the killed child left open.
-    # os._exit is immune to hangs in stream flushing or thread joins.
-    timer = threading.Timer(_WATCHDOG_SECONDS, _abort_wedged_child)
-    timer.daemon = True
-    timer.start()
 
 
 def _track(event: str) -> None:
