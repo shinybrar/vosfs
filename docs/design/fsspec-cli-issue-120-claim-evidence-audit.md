@@ -13,8 +13,10 @@ Catalog: [Issue #120 catalog dispositions](fsspec-cli-issue-120-catalog.md)
 Matrix: [tested command matrix](fsspec-cli-tested-command-matrix.md)
 
 Observed tip for this audit: `2971c43` (`feat(fsspec-cli): add reduced BSD/macOS-shaped
-stat (#146)`), package metadata version `0.1.1`, Release Please later lane open
-as [PR #152](https://github.com/shinybrar/vosfs/pull/152) targeting `0.2.0`.
+stat (#146)`), package metadata version then `0.1.1`. Later lane since cut:
+[PR #152](https://github.com/shinybrar/vosfs/pull/152) **MERGED** →
+`fsspec-cli` `0.2.0` published and verified (see
+[later release verification](fsspec-cli-later-release-verification.md)).
 
 ## 1. Claim language checklist
 
