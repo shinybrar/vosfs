@@ -1,7 +1,15 @@
 # fsspec-cli
 
 `fsspec-cli` is a library-only package for composing POSIX-shaped commands
-over host-configured async fsspec filesystems.
+over host-configured async fsspec filesystems. It provides an **Issue 8-aligned
+supported subset** plus a separately named reduced BSD/macOS-shaped `stat`
+profile. It does not claim POSIX, GNU, BSD/macOS, or all-fsspec compatibility.
+
+The complete Issue #120 utility dispositions, claim/evidence audit, and later
+release verification live in the repository design docs:
+`docs/design/fsspec-cli-issue-120-catalog.md`,
+`docs/design/fsspec-cli-issue-120-claim-evidence-audit.md`, and
+`docs/design/fsspec-cli-later-release-verification.md`.
 
 Supported host platforms are Linux and macOS. Other platforms are untested and
 unsupported.
