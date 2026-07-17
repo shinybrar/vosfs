@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import locale
 import os
 import sys
@@ -268,17 +267,6 @@ def _files_match(left: str, right: str) -> tuple[bool, Exception | None]:
         return False, error
 
 
-def _file_digest(path: str) -> tuple[bytes | None, Exception | None]:
-    try:
-        digest = hashlib.sha256()
-        with Path(path).open("rb") as handle:
-            for chunk in iter(lambda: handle.read(_COMPARE_CHUNK), b""):
-                digest.update(chunk)
-    except Exception as error:  # noqa: BLE001 - local verification boundary.
-        return None, error
-    return digest.digest(), None
-
-
 async def _verify_copy(  # noqa: PLR0911 - explicit verify outcomes.
     filesystem: AsyncFileSystem,
     source_path: str,
@@ -390,6 +378,9 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - exp
     if resolution_failure is not None:
         return resolution_failure
 
+    if source_filesystem is destination_filesystem and request.source.path == resolved:
+        return _CpFailure(request.source, incompatible="same_path")
+
     temporary, staging_error = await _stage_remote(
         source_filesystem,
         request.source.path,
@@ -404,13 +395,6 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - exp
 
     mutated = False
     try:
-        source_digest, digest_error = _file_digest(temporary)
-        if digest_error is not None or source_digest is None:
-            return _CpFailure(
-                request.source,
-                backend_error=digest_error,
-                category="staging failure",
-            )
         try:
             staged_size = Path(temporary).stat().st_size  # noqa: ASYNC240
         except Exception as error:  # noqa: BLE001 - local staging boundary.
@@ -452,24 +436,37 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - exp
                 residue=True,
             )
 
+        destination_temporary, staging_error = await _stage_remote(
+            destination_filesystem,
+            resolved,
+            "fsspec-cli-cp-dst-",
+        )
+        if staging_error is not None or destination_temporary is None:
+            return _CpFailure(
+                request.destination,
+                backend_error=staging_error,
+                category="staging failure",
+                residue=True,
+            )
         try:
-            await destination_filesystem._get_file(resolved, temporary)  # noqa: SLF001
-        except Exception as error:  # noqa: BLE001 - post-copy staging boundary.
+            matched, compare_error = _files_match(temporary, destination_temporary)
+        finally:
+            cleanup_error = _remove_temporary(destination_temporary)
+        if cleanup_error is not None:
             return _CpFailure(
                 request.destination,
-                backend_error=error,
+                backend_error=cleanup_error,
                 category="staging failure",
                 residue=True,
             )
-        destination_digest, digest_error = _file_digest(temporary)
-        if digest_error is not None:
+        if compare_error is not None:
             return _CpFailure(
                 request.destination,
-                backend_error=digest_error,
+                backend_error=compare_error,
                 category="staging failure",
                 residue=True,
             )
-        if destination_digest != source_digest:
+        if not matched:
             return _CpFailure(
                 request.destination,
                 category="verification failure",
@@ -547,8 +544,7 @@ def _render_operand_diagnostic(
 
 def _render_staging_category(error: Exception) -> str:
     rendered_class = _render_diagnostic_value(type(error).__name__)
-    rendered_message = _render_diagnostic_value(str(error))
-    return f"staging failure ({rendered_class}): {rendered_message}"
+    return f"staging failure ({rendered_class})"
 
 
 def _render_failure(  # noqa: C901 - stable diagnostic categories.

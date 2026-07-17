@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import MappingProxyType
 from typing import NoReturn
 
 import pytest
 
-from ._support import _invoke_cp, _RecordingSource, _source_must_not_run
+from ._support import (
+    _invoke_cp,
+    _RecordingFileSystem,
+    _RecordingSource,
+    _source_must_not_run,
+)
 
 
 def _file_source(  # noqa: PLR0913 - compact recording fixture.
@@ -80,6 +86,27 @@ def test_cp_copies_file_between_distinct_configured_sources() -> None:
     assert [event[0] for event in destination.events].count("get_file") == 1
 
 
+def test_cp_rejects_cross_source_same_path_on_shared_backend_before_mutation() -> None:
+    source = _file_source()
+    filesystem = _RecordingFileSystem(source, 1)
+
+    @asynccontextmanager
+    async def shared_filesystem() -> _RecordingFileSystem:
+        yield filesystem
+
+    result = _invoke_cp(
+        ["left:/docs/notes.txt", "right:/docs/notes.txt"],
+        sources={"left": shared_filesystem, "right": shared_filesystem},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: left:/docs/notes.txt: same path\n",
+    )
+    assert not any(event[0] in {"get_file", "put_file"} for event in source.events)
+
+
 def test_cp_rejects_same_size_wrong_cross_source_destination() -> None:
     source = _file_source(content=b"correct")
     destination = _file_source(
@@ -107,6 +134,64 @@ def test_cp_rejects_same_size_wrong_cross_source_destination() -> None:
     )
     assert source.file_contents["/docs/notes.txt"] == b"correct"
     assert destination.file_contents["/out/copy.txt"] == b"corrupt"
+
+
+def test_cp_rejects_cross_source_digest_collision_with_different_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _file_source(content=b"correct")
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
+
+    def corrupt_upload(_local_path: str, remote_path: str) -> None:
+        filesystem = destination.contexts[0].filesystem
+        filesystem._file_contents[remote_path] = b"corrupt"
+        destination.file_contents[remote_path] = b"corrupt"
+
+    monkeypatch.setattr(
+        "fsspec_cli._cp._file_digest",
+        lambda _path: (b"same-digest", None),
+        raising=False,
+    )
+    destination.put_file_hook = corrupt_upload
+    result = _invoke_cp(
+        ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+        sources={"source": source, "destination": destination},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "cp: destination:/out/copy.txt: verification failure; "
+        "destination residue may remain\n"
+    )
+
+
+def test_cp_hides_local_temporary_path_in_cross_source_staging_diagnostic() -> None:
+    staged_paths: list[str] = []
+
+    def fail_staging(local_path: str) -> None:
+        staged_paths.append(local_path)
+        raise OSError(f"local staging failed: {local_path}")  # noqa: EM102, TRY003
+
+    source = _file_source(get_file_by_path={"/docs/notes.txt": fail_staging})
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
+
+    result = _invoke_cp(
+        ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+        sources={"source": source, "destination": destination},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == "cp: source:/docs/notes.txt: staging failure (OSError)\n"
+    assert len(staged_paths) == 1
+    assert staged_paths[0] not in result.stderr
 
 
 def test_cp_appends_basename_when_destination_is_directory() -> None:
@@ -582,7 +667,7 @@ def test_cp_reports_source_staging_failure_during_verification() -> None:
 
     assert result.exit_code == 1
     assert result.stderr == (
-        "cp: memory:/docs/copy.txt: staging failure (OSError): staging-source; "
+        "cp: memory:/docs/copy.txt: staging failure (OSError); "
         "destination residue may remain\n"
     )
 
@@ -599,7 +684,7 @@ def test_cp_reports_destination_staging_failure_during_verification() -> None:
 
     assert result.exit_code == 1
     assert result.stderr == (
-        "cp: memory:/docs/copy.txt: staging failure (OSError): staging-dest; "
+        "cp: memory:/docs/copy.txt: staging failure (OSError); "
         "destination residue may remain\n"
     )
 
@@ -620,7 +705,7 @@ def test_cp_reports_compare_failure_during_verification(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert result.stderr == (
-        "cp: memory:/docs/copy.txt: staging failure (OSError): compare-failed; "
+        "cp: memory:/docs/copy.txt: staging failure (OSError); "
         "destination residue may remain\n"
     )
 
@@ -648,7 +733,7 @@ def test_cp_reports_verification_cleanup_failure(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert result.stderr == (
-        "cp: memory:/docs/copy.txt: staging failure (OSError): unlink-denied; "
+        "cp: memory:/docs/copy.txt: staging failure (OSError); "
         "destination residue may remain\n"
     )
     assert unlink_attempts >= 1
