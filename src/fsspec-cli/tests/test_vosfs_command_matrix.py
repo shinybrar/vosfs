@@ -14,6 +14,7 @@ from ._matrix_support import (
     _exercise_locked_profile,
     _ProbedSource,
 )
+from ._matrix_support import _exercise_mkdir_locked_profile as _exercise_mkdir_profile
 
 _BASE_URL = "https://example.test/arc"
 _NODES_URL = f"{_BASE_URL}/nodes"
@@ -76,6 +77,25 @@ _BLOB = f"""<vos:node
 """.encode()
 
 
+_SUBDIR = f"""<vos:node
+    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}/docs/subdir">
+  <vos:properties/>
+  <vos:nodes/>
+</vos:node>
+""".encode()
+_ROOT = f"""<vos:node
+    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}/">
+  <vos:properties/>
+  <vos:nodes/>
+</vos:node>
+""".encode()
+
+
+
 @pytest.fixture(autouse=True)
 def _prohibit_unplanned_network(monkeypatch: pytest.MonkeyPatch) -> None:
     _block_network(monkeypatch)
@@ -92,9 +112,19 @@ class _StrictMockTransport(httpx.MockTransport):
         self.requests.append(call)
         if call == ("GET", "/arc/capabilities"):
             return httpx.Response(200, content=_CAPABILITIES)
+        if call == ("GET", "/arc/nodes"):
+            return httpx.Response(200, content=_ROOT)
         if call == ("GET", "/arc/nodes/docs"):
             return httpx.Response(200, content=_DOCS)
         if call == ("GET", "/arc/nodes/docs/missing"):
+            return httpx.Response(404, text="not found")
+        if call == ("PUT", "/arc/nodes/docs/subdir"):
+            return httpx.Response(201, content=_SUBDIR)
+        if call == ("GET", "/arc/nodes/docs/subdir"):
+            return httpx.Response(200, content=_SUBDIR)
+        if call == ("PUT", "/arc/nodes/docs/notes.txt"):
+            return httpx.Response(409, text="conflict")
+        if call == ("PUT", "/arc/nodes/docs/notes.txt/child"):
             return httpx.Response(404, text="not found")
         message = f"unplanned mocked request: {call!r}"
         raise AssertionError(message)
@@ -259,3 +289,43 @@ def test_native_vosfs_plain_cat_profile_uses_only_mocked_transport() -> None:
         or ("GET", "/arc/nodes/docs/blob.bin.missing") in transport.requests
         for transport in transports
     )
+
+
+def test_native_vosfs_base_mkdir_profile_uses_only_mocked_transport() -> None:
+    transports: list[_StrictMockTransport] = []
+
+    def make_filesystem() -> VOSpaceFileSystem:
+        transport = _StrictMockTransport()
+        transports.append(transport)
+        return VOSpaceFileSystem(
+            _BASE_URL,
+            transport=transport,
+            asynchronous=True,
+            skip_instance_cache=True,
+            trust_env=False,
+        )
+
+    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+
+    _exercise_mkdir_profile("vos", source, "/docs", parent_file_category="not found")
+
+    assert all(isinstance(fs, VOSpaceFileSystem) for fs in source.filesystems)
+    assert [transport.requests for transport in transports] == [
+        [
+            ("GET", "/arc/capabilities"),
+            ("GET", "/arc/nodes"),
+            ("PUT", "/arc/nodes/docs/subdir"),
+            ("GET", "/arc/nodes/docs/subdir"),
+        ],
+        [
+            ("GET", "/arc/capabilities"),
+            ("GET", "/arc/nodes"),
+            ("PUT", "/arc/nodes/docs/notes.txt"),
+        ],
+        [
+            ("GET", "/arc/capabilities"),
+            ("GET", "/arc/nodes"),
+            ("PUT", "/arc/nodes/docs/notes.txt/child"),
+        ],
+    ]
+    assert all(transport.closed for transport in transports)

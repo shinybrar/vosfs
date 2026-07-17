@@ -8,7 +8,9 @@ import fsspec_cli._app as app_module
 import pytest
 import typer
 from fsspec_cli._cat import _run_cat
-from fsspec_cli._ls import _preflight, _run_ls
+from fsspec_cli._ls import _preflight as _ls_preflight
+from fsspec_cli._ls import _run_ls
+from fsspec_cli._mkdir import _preflight as _mkdir_preflight
 from fsspec_cli._sources import _SourceInvocation
 
 from ._support import _RecordingSource
@@ -17,9 +19,19 @@ _COMMAND = "future\\command\0\r\n"
 _RENDERED_COMMAND = "future\\\\command\\0\\r\\n"
 
 
-def test_preflight_diagnostic_escapes_concrete_command_label(capsys) -> None:
+def test_ls_preflight_diagnostic_escapes_concrete_command_label(capsys) -> None:
     with pytest.raises(typer.Exit) as caught:
-        _preflight(_COMMAND, ("bad",), {"memory"})
+        _ls_preflight(_COMMAND, ("bad",), {"memory"})
+
+    assert caught.value.exit_code == 2
+    assert capsys.readouterr().err == (
+        f"{_RENDERED_COMMAND}: bad: invalid mapped filesystem operand\n"
+    )
+
+
+def test_mkdir_preflight_diagnostic_escapes_concrete_command_label(capsys) -> None:
+    with pytest.raises(typer.Exit) as caught:
+        _mkdir_preflight(_COMMAND, ("bad",), {"memory"})
 
     assert caught.value.exit_code == 2
     assert capsys.readouterr().err == (

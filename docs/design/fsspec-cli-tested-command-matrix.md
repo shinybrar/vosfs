@@ -209,6 +209,10 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `local / adapted async` | `pass` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `memory / adapted async` | `pass` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic and live OpenCADC | Hermetic mocked transport present; live evidence absent |
+| [Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | pending |
+| [Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | pending |
+| [Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic | pending |
+| [Base `mkdir` `-p` strict rejection](fsspec-cli-base-mkdir-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | pending |
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.

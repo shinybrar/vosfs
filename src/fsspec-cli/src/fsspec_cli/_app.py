@@ -18,6 +18,7 @@ from ._basename import (
     _raw_arguments as _basename_raw_arguments,
 )
 from ._cat import _CatCommand, _run_cat
+from ._mkdir import _MkdirCommand, _run_mkdir
 from ._diagnostics import _render_diagnostic_prefix
 from ._ls import _LsCommand, _raw_arguments, _run_ls
 
@@ -27,6 +28,7 @@ AsyncFilesystemSource: TypeAlias = Callable[
 _BASENAME_COMMAND = "basename"
 _LS_COMMAND = "ls"
 _CAT_COMMAND = "cat"
+_MKDIR_COMMAND = "mkdir"
 
 
 def _validate_source_name(name: object) -> None:
@@ -112,3 +114,16 @@ class App:
             raw_arguments = _raw_arguments(ctx)
             _ensure_no_active_event_loop(_CAT_COMMAND)
             asyncio.run(_run_cat(_CAT_COMMAND, raw_arguments, self._sources))
+
+        @self.typer_app.command(
+            _MKDIR_COMMAND,
+            cls=_MkdirCommand,
+            context_settings={
+                "allow_extra_args": True,
+                "ignore_unknown_options": True,
+            },
+        )
+        def mkdir(ctx: typer.Context) -> None:
+            raw_arguments = _raw_arguments(ctx)
+            _ensure_no_active_event_loop(_MKDIR_COMMAND)
+            asyncio.run(_run_mkdir(_MKDIR_COMMAND, raw_arguments, self._sources))

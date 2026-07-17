@@ -40,13 +40,14 @@ class ExitCall:
 
 @dataclass(frozen=True)
 class FilesystemCall:
-    operation: Literal["info", "ls", "get_file"]
+    operation: Literal["info", "ls", "get_file", "mkdir"]
     source_id: int
     path: str
     detail: bool | None
     kwargs: Mapping[str, object]
     loop_id: int
     local_path: str | None = None
+    create_parents: bool | None = None
 
 
 def _block_network(monkeypatch) -> None:
@@ -91,6 +92,7 @@ class _ProbedSource(Generic[_FilesystemT]):
         original_info = filesystem._info
         original_ls = filesystem._ls
         original_get_file = filesystem._get_file
+        original_mkdir = getattr(filesystem, "_mkdir", None)
 
         async def info(path: str, **kwargs: object) -> object:
             self.calls.append(
@@ -154,9 +156,36 @@ class _ProbedSource(Generic[_FilesystemT]):
             self.get_file_results.append((source_id, rpath))
             return result
 
+
+        async def mkdir(
+            path: str,
+            create_parents: bool = True,  # noqa: FBT002 - mirrors the fsspec hook.
+            **kwargs: object,
+        ) -> None:
+            self.calls.append(
+                FilesystemCall(
+                    "mkdir",
+                    source_id,
+                    path,
+                    None,
+                    kwargs,
+                    id(asyncio.get_running_loop()),
+                    create_parents=create_parents,
+                )
+            )
+            if original_mkdir is None:
+                message = f"{type(filesystem).__name__} lacks _mkdir"
+                raise NotImplementedError(message)
+            try:
+                await original_mkdir(path, create_parents=create_parents, **kwargs)
+            except Exception as error:
+                self.errors.append((source_id, "mkdir", error))
+                raise
+
         setattr(filesystem, "_info", info)  # noqa: B010 - instrument this instance.
         setattr(filesystem, "_ls", ls)  # noqa: B010 - instrument this instance.
         setattr(filesystem, "_get_file", get_file)  # noqa: B010 - instrument.
+        setattr(filesystem, "_mkdir", mkdir)  # noqa: B010 - instrument this instance.
 
 
 class _ProbedContext(
@@ -217,6 +246,10 @@ def _invoke(app: App, arguments: list[str]) -> Result:
 
 def _invoke_cat(app: App, arguments: list[str]) -> Result:
     return CliRunner().invoke(app.typer_app, ["cat", *arguments])
+
+
+def _invoke_mkdir(app: App, arguments: list[str]) -> Result:
+    return CliRunner().invoke(app.typer_app, ["mkdir", *arguments])
 
 
 def _exercise_locked_profile(
@@ -401,3 +434,57 @@ def _exercise_cat_profile(
     assert second_exit.exc_type is None
     assert failing_exit.exc_type is FileNotFoundError
     assert failing_exit.exception is error
+
+
+def _exercise_mkdir_locked_profile(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    parent_path: str,
+    *,
+    file_name: str = "notes.txt",
+    parent_file_category: str = "not a directory",
+) -> None:
+    app = App({source_name: source})
+    new_dir = f"{parent_path}/subdir"
+    file_path = f"{parent_path}/{file_name}"
+    parent_file = f"{file_path}/child"
+
+    success = _invoke_mkdir(app, [f"{source_name}:{new_dir}"])
+    exists = _invoke_mkdir(app, [f"{source_name}:{file_path}"])
+    parent_fail = _invoke_mkdir(app, [f"{source_name}:{parent_file}"])
+
+    assert (success.exit_code, success.stdout, success.stderr) == (0, "", "")
+    assert (exists.exit_code, exists.stdout, exists.stderr) == (
+        1,
+        "",
+        f"mkdir: {source_name}:{file_path}: file exists\n",
+    )
+    assert (parent_fail.exit_code, parent_fail.stdout, parent_fail.stderr) == (
+        1,
+        "",
+        f"mkdir: {source_name}:{parent_file}: {parent_file_category}\n",
+    )
+    assert [event.stage for event in source.lifecycle] == [
+        "factory",
+        "enter",
+        "exit",
+        "factory",
+        "enter",
+        "exit",
+        "factory",
+        "enter",
+        "exit",
+    ]
+    mkdir_calls = [call for call in source.calls if call.operation == "mkdir"]
+    assert len(mkdir_calls) == 3
+    assert all(call.create_parents is False for call in mkdir_calls)
+    assert [call.path for call in mkdir_calls] == [new_dir, file_path, parent_file]
+    verify_calls = [
+        call
+        for call in source.calls
+        if call.operation == "info" and call.path in {new_dir, file_path, parent_file}
+    ]
+    assert len(verify_calls) == 1
+    assert verify_calls[0].path == new_dir
+    assert len(source.errors) == 2
+    assert {operation for _source_id, operation, _error in source.errors} == {"mkdir"}
