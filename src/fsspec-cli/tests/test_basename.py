@@ -13,6 +13,21 @@ _CLI_RUNNER_ENV = {
     "TERM": "dumb",
 }
 
+# Rich picks rounded corners on Unix and square on Windows; normalize before compare.
+_BOX_CORNER_NORMALIZE = str.maketrans(
+    {
+        "\u250c": "\u256d",  # ┌ -> ╭
+        "\u2510": "\u256e",  # ┐ -> ╮
+        "\u2514": "\u2570",  # └ -> ╰
+        "\u2518": "\u256f",  # ┘ -> ╯
+    }
+)
+
+
+def _normalize_box_drawing(text: str) -> str:
+    return text.translate(_BOX_CORNER_NORMALIZE)
+
+
 _EXACT_BASENAME_HELP = (
     "                                                                                \n"
     " Usage: root basename [OPTIONS]                                                 \n"
@@ -149,7 +164,7 @@ def test_basename_leaves_exact_help_to_the_framework(arguments: list[str]) -> No
     result = _invoke_basename(arguments, sources={"memory": source_must_not_run})
 
     assert result.exit_code == 0
-    assert result.stdout == _EXACT_BASENAME_HELP
+    assert _normalize_box_drawing(result.stdout) == _EXACT_BASENAME_HELP
     assert result.stderr == ""
     assert source_calls == 0
 
