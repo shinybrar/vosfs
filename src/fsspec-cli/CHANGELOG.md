@@ -6,6 +6,7 @@
 
 * **fsspec-cli:** add source-free `basename string` lexical command (#123)
 * **fsspec-cli:** add optional `basename` suffix operand ([#124](https://github.com/shinybrar/vosfs/issues/124))
+* **fsspec-cli:** add source-free `dirname string` lexical command (#125)
 * Add mapped-file `cat` with whole-object `_get_file` staging and bounded
   binary stdout.
 * **fsspec-cli:** add base `mkdir` without parent creation ([#128](https://github.com/shinybrar/vosfs/issues/128)).

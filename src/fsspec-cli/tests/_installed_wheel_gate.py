@@ -239,6 +239,7 @@ def main() -> None:
                 tests / "test_command_matrix.py",
                 tests / "test_basename.py",
                 tests / "test_basename_process.py",
+                tests / "test_dirname.py",
                 tests / "test_cat.py",
                 tests / "test_cat_process.py",
                 tests / "test_rmdir.py",
