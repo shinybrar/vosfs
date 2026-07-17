@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, TypeAlias
 import typer
 from fsspec.asyn import AsyncFileSystem
 
-from ._diagnostics import _render_diagnostic_value
+from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -26,12 +26,18 @@ _ExcInfo: TypeAlias = tuple[
 _EMPTY_EXC_INFO: _ExcInfo = (None, None, None)
 
 
-def _source_exception(name: str, stage: str, error: Exception) -> None:
+def _source_exception(
+    command: str,
+    name: str,
+    stage: str,
+    error: Exception,
+) -> None:
+    prefix = _render_diagnostic_prefix(command)
     rendered_name = _render_diagnostic_value(name)
     rendered_class = _render_diagnostic_value(type(error).__name__)
     rendered_message = _render_diagnostic_value(str(error))
     typer.echo(
-        f"ls: {rendered_name}: source {stage} failure "
+        f"{prefix} {rendered_name}: source {stage} failure "
         f"({rendered_class}): {rendered_message}",
         err=True,
         color=True,
@@ -39,6 +45,7 @@ def _source_exception(name: str, stage: str, error: Exception) -> None:
 
 
 def _render_exit_failures(
+    command: str,
     failures: Iterable[tuple[str, Exception]],
     *,
     preserve_control: bool,
@@ -46,7 +53,7 @@ def _render_exit_failures(
     render_control = None
     for name, error in failures:
         try:
-            _source_exception(name, "exit", error)
+            _source_exception(command, name, "exit", error)
         except Exception:  # noqa: BLE001, PERF203, S110 - attempt every diagnostic.
             pass
         except BaseException as error:  # noqa: BLE001 - preserve control flow.
@@ -58,7 +65,12 @@ def _render_exit_failures(
 class _SourceInvocation:
     """Acquire, expose, and release sources for one command invocation."""
 
-    def __init__(self, sources: Mapping[str, AsyncFilesystemSource]) -> None:
+    def __init__(
+        self,
+        command: str,
+        sources: Mapping[str, AsyncFilesystemSource],
+    ) -> None:
+        self._command = command
         self._sources = sources
         self._entered: list[
             tuple[str, AbstractAsyncContextManager[AbstractFileSystem]]
@@ -75,7 +87,7 @@ class _SourceInvocation:
             try:
                 manager = self._sources[name]()
             except Exception as error:  # noqa: BLE001 - classify source failures.
-                _source_exception(name, "factory", error)
+                _source_exception(self._command, name, "factory", error)
                 self._remember_failure(error)
                 return None
 
@@ -84,9 +96,10 @@ class _SourceInvocation:
                 and callable(getattr(manager, "__aenter__", None))
                 and callable(getattr(manager, "__aexit__", None))
             ):
+                prefix = _render_diagnostic_prefix(self._command)
                 rendered_name = _render_diagnostic_value(name)
                 typer.echo(
-                    "ls: "
+                    f"{prefix} "
                     f"{rendered_name}: source factory returned incompatible "
                     "async context manager",
                     err=True,
@@ -97,7 +110,7 @@ class _SourceInvocation:
             try:
                 filesystem = await manager.__aenter__()
             except Exception as error:  # noqa: BLE001 - classify source failures.
-                _source_exception(name, "entry", error)
+                _source_exception(self._command, name, "entry", error)
                 self._remember_failure(error)
                 return None
 
@@ -107,9 +120,10 @@ class _SourceInvocation:
                 and filesystem.async_impl is True
                 and filesystem.asynchronous is True
             ):
+                prefix = _render_diagnostic_prefix(self._command)
                 rendered_name = _render_diagnostic_value(name)
                 typer.echo(
-                    f"ls: {rendered_name}: source yielded incompatible "
+                    f"{prefix} {rendered_name}: source yielded incompatible "
                     "async filesystem",
                     err=True,
                     color=True,
@@ -148,6 +162,7 @@ class _SourceInvocation:
                     cleanup_control = error
 
         render_control = _render_exit_failures(
+            self._command,
             exit_failures,
             preserve_control=(
                 primary_control is not None or cleanup_control is not None
