@@ -14,6 +14,18 @@
       "include-component-in-tag": false,
       "include-v-in-tag": true,
       "pull-request-title-pattern": "chore: release ${version}",
+      "exclude-paths": [
+        "src/fsspec-cli/**",
+        ".github/workflows/fsspec-cli-*.yml",
+        "fsspec-cli-release-please-config.json",
+        ".fsspec-cli-release-please-manifest.json",
+        "docs/adr/0001-release-fsspec-cli-independently.md",
+        "docs/adr/0002-own-async-filesystems-per-invocation.md",
+        "docs/adr/0003-acquire-referenced-async-filesystem-sources.md",
+        "docs/design/fsspec-cli-*.md",
+        "docs/research/fsspec-cli-*.md",
+        "uv.lock"
+      ],
       "extra-files": [
         {
           "type": "toml",
