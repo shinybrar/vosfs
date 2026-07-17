@@ -383,6 +383,27 @@ class _RecordingFileSystem(AsyncFileSystem):
         self.source.file_contents[path2] = content
         self._pending_cp_verify.add(path2)
 
+    async def _mv(self, path1: str, path2: str, **kwargs: object) -> None:
+        del kwargs
+        self.source.events.append(
+            ("mv", self.source_id, path1, path2, id(asyncio.get_running_loop()))
+        )
+        if path1 in self.source.mv_by_path:
+            scripted = self.source.mv_by_path[path1]
+            if isinstance(scripted, BaseException):
+                raise scripted
+            if callable(scripted):
+                scripted(path1, path2)
+                return
+        if self.source.mv_error is not None:
+            raise self.source.mv_error
+        if self.source.mv_hook is not None:
+            self.source.mv_hook(path1, path2)
+            return
+        self._file_contents[path2] = self._file_contents.pop(path1)
+        self.source.file_contents[path2] = self.source.file_contents.pop(path1)
+        self._removed_paths.add(path1)
+
 
 class _RecordingSource:
     def __init__(  # noqa: PLR0913 - configurable external-boundary recording fake.
@@ -398,6 +419,7 @@ class _RecordingSource:
         rmdir_error: BaseException | None = None,
         rm_file_error: BaseException | None = None,
         cp_file_error: BaseException | None = None,
+        mv_error: BaseException | None = None,
         trap_rmdir: bool = False,
         post_info_result: object | None = MappingProxyType({"type": "directory"}),
         post_info_error: BaseException | None = None,
@@ -410,12 +432,14 @@ class _RecordingSource:
         rmdir_by_path: Mapping[str, object] | None = None,
         rm_file_by_path: Mapping[str, object] | None = None,
         cp_file_by_path: Mapping[str, object] | None = None,
+        mv_by_path: Mapping[str, object] | None = None,
         post_info_by_path: Mapping[str, object] | None = None,
         get_file_content: bytes = b"",
         get_file_error: BaseException | None = None,
         get_file_by_path: Mapping[str, object] | None = None,
         get_file_hook: object | None = None,
         cp_file_hook: object | None = None,
+        mv_hook: object | None = None,
         file_contents: Mapping[str, bytes] | None = None,
         directories: set[str] | None = None,
     ) -> None:
@@ -429,6 +453,7 @@ class _RecordingSource:
         self.rmdir_error = rmdir_error
         self.rm_file_error = rm_file_error
         self.cp_file_error = cp_file_error
+        self.mv_error = mv_error
         self.trap_rmdir = trap_rmdir
         self.post_info_result = post_info_result
         self.post_info_error = post_info_error
@@ -441,12 +466,14 @@ class _RecordingSource:
         self.rmdir_by_path = rmdir_by_path or {}
         self.rm_file_by_path = rm_file_by_path or {}
         self.cp_file_by_path = cp_file_by_path or {}
+        self.mv_by_path = mv_by_path or {}
         self.post_info_by_path = post_info_by_path or {}
         self.get_file_content = get_file_content
         self.get_file_error = get_file_error
         self.get_file_by_path = get_file_by_path or {}
         self.get_file_hook = get_file_hook
         self.cp_file_hook = cp_file_hook
+        self.mv_hook = mv_hook
         self.file_contents = dict(file_contents or {})
         self.directories = set(directories or ())
         self.exit_calls: list[tuple[object, object, object]] = []

@@ -240,6 +240,7 @@ def main() -> None:
                 tests / "test_mkdir.py",
                 tests / "test_rm.py",
                 tests / "test_cp.py",
+                tests / "test_mv.py",
                 tests / "test_unlink.py",
             ],
             cwd=root / "core-tests",

@@ -245,6 +245,10 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | — |
 | [Verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | Hermetic mocked transport present; live evidence absent |
 | [Verified same-source `cp` option rejection](fsspec-cli-same-source-cp-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | — |
+| [Positively evidenced same-source file `mv`](fsspec-cli-same-source-mv-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | — |
+| [Positively evidenced same-source file `mv`](fsspec-cli-same-source-mv-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | — |
+| [Positively evidenced same-source file `mv`](fsspec-cli-same-source-mv-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | — |
+| [Same-source file `mv` option rejection](fsspec-cli-same-source-mv-command-profile.md) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | Hermetic `test_mv.py` on this change |
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.

@@ -1,0 +1,195 @@
+"""Raw Typer parsing and async execution for same-source two-operand ``mv``."""
+
+from __future__ import annotations
+
+import inspect
+import sys
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
+
+import typer
+from typer.core import TyperCommand
+
+from ._cp import (
+    _CpFailure,
+    _CpRequest,
+    _files_match,
+    _remove_temporary,
+    _render_failure,
+    _require_file_size,
+    _resolve_destination,
+    _stage_remote,
+    _validate_mapped_operand,
+)
+from ._ls import (
+    _RAW_ARGUMENTS,
+    _render_diagnostic_value,
+    _shield_help_values,
+    _usage_error,
+)
+from ._sources import _SourceInvocation
+
+if TYPE_CHECKING:
+    from collections.abc import Collection
+    from collections.abc import Mapping as MappingType
+
+    from fsspec.asyn import AsyncFileSystem
+    from typer._click import Context
+
+    from ._app import AsyncFilesystemSource
+
+_OPERAND_COUNT = 2
+
+
+class _MvCommand(TyperCommand):
+    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
+        ctx.meta[_RAW_ARGUMENTS] = tuple(args)
+        return super().parse_args(ctx, _shield_help_values(args))
+
+
+def _raw_arguments(ctx: typer.Context) -> tuple[str, ...]:
+    return tuple(ctx.meta[_RAW_ARGUMENTS])
+
+
+def _preflight(
+    command: str,
+    raw_arguments: tuple[str, ...],
+    known_names: Collection[str],
+) -> _CpRequest:
+    operands: list[str] = []
+    options_active = True
+    for argument in raw_arguments:
+        if options_active and argument == "--":
+            options_active = False
+        elif options_active and argument.startswith("-") and argument != "-":
+            rendered = _render_diagnostic_value(argument)
+            _usage_error(command, f"{rendered}: unsupported option")
+        else:
+            operands.append(argument)
+    if len(operands) < _OPERAND_COUNT:
+        _usage_error(command, "missing mapped filesystem operand")
+    if len(operands) > _OPERAND_COUNT:
+        _usage_error(command, "extra operand")
+    source = _validate_mapped_operand(command, operands[0], known_names)
+    destination = _validate_mapped_operand(command, operands[1], known_names)
+    if source.name != destination.name:
+        _usage_error(command, "cross-source move unsupported")
+    return _CpRequest(source, destination)
+
+
+async def _confirmed_mv_file(  # noqa: C901, PLR0911, PLR0912
+    request: _CpRequest, filesystem: AsyncFileSystem
+) -> _CpFailure | None:
+    try:
+        source_info = await filesystem._info(request.source.path)  # noqa: SLF001
+    except Exception as error:  # noqa: BLE001
+        return _CpFailure(request.source, backend_error=error)
+    expected_size = _require_file_size(source_info)
+    if expected_size is None:
+        return _CpFailure(
+            request.source,
+            incompatible="directory"
+            if (
+                isinstance(source_info, Mapping)
+                and source_info.get("type") == "directory"
+            )
+            else "result",
+        )
+    resolved, failure = await _resolve_destination(
+        request.destination, request.source.path, filesystem
+    )
+    if failure is not None:
+        return failure
+    if request.source.path == resolved:
+        return None
+
+    source_temp, error = await _stage_remote(
+        filesystem, request.source.path, "fsspec-cli-mv-src-"
+    )
+    if error is not None or source_temp is None:
+        return _CpFailure(
+            request.destination, backend_error=error, category="staging failure"
+        )
+    dest_temp: str | None = None
+    try:
+        operation = getattr(filesystem, "_mv", None)
+        if not inspect.iscoroutinefunction(operation):
+            return _CpFailure(
+                request.destination,
+                backend_error=NotImplementedError("_mv must be an awaitable operation"),
+            )
+        try:
+            await operation(request.source.path, resolved)
+        except Exception as operation_error:  # noqa: BLE001
+            return _CpFailure(
+                request.destination,
+                backend_error=operation_error,
+                uncertain=True,
+                residue=True,
+            )
+        try:
+            destination_info = await filesystem._info(resolved)  # noqa: SLF001
+            if _require_file_size(destination_info) != expected_size:
+                message = "destination verification failed"
+                raise ValueError(message)  # noqa: TRY301
+            dest_temp, error = await _stage_remote(
+                filesystem, resolved, "fsspec-cli-mv-dst-"
+            )
+            if error is not None or dest_temp is None:
+                message = "destination staging failed"
+                raise error or ValueError(message)  # noqa: TRY301
+            matched, error = _files_match(source_temp, dest_temp)
+            if error is not None or not matched:
+                message = "destination verification failed"
+                raise error or ValueError(message)  # noqa: TRY301
+            try:
+                await filesystem._info(request.source.path)  # noqa: SLF001
+            except FileNotFoundError:
+                return None
+            message = "source remains after move"
+            raise ValueError(message)  # noqa: TRY301
+        except Exception as verify_error:  # noqa: BLE001
+            return _CpFailure(
+                request.destination,
+                backend_error=verify_error,
+                category="verification failure",
+                residue=True,
+            )
+    finally:
+        _remove_temporary(source_temp)
+        if dest_temp is not None:
+            _remove_temporary(dest_temp)
+
+
+async def _run_mv(
+    command: str,
+    raw_arguments: tuple[str, ...],
+    sources: MappingType[str, AsyncFilesystemSource],
+) -> None:
+    request = _preflight(command, raw_arguments, sources)
+    invocation = _SourceInvocation(command, sources)
+    succeeded = False
+    failure: _CpFailure | None = None
+    try:
+        filesystems = await invocation.acquire((request.source.name,))
+        if filesystems is not None:
+            failure = await _confirmed_mv_file(
+                request, filesystems[request.source.name]
+            )
+            if failure is not None:
+                _render_failure(command, failure)
+            succeeded = failure is None
+    finally:
+        active_exc_info = sys.exc_info()
+        if (
+            failure is not None
+            and failure.backend_error is not None
+            and (
+                active_exc_info[1] is None or isinstance(active_exc_info[1], Exception)
+            )
+        ):
+            error = failure.backend_error
+            active_exc_info = (type(error), error, error.__traceback__)
+        cleanup_failed = await invocation.close(active_exc_info)
+    if not succeeded or cleanup_failed:
+        raise typer.Exit(1)

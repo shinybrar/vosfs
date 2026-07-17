@@ -33,6 +33,8 @@ from ._dirname import (
 )
 from ._ls import _LsCommand, _raw_arguments, _run_ls
 from ._mkdir import _MkdirCommand, _run_mkdir
+from ._mv import _MvCommand, _run_mv
+from ._mv import _raw_arguments as _mv_raw_arguments
 from ._rm import _raw_arguments as _rm_raw_arguments
 from ._rm import _RmCommand, _run_rm
 from ._rmdir import _raw_arguments as _rmdir_raw_arguments
@@ -53,6 +55,13 @@ _CP_HELP = (
     "proves target resolution, replacement, bytes, diagnostics, cleanup, and "
     "partial-state reporting only — not POSIX mode, ownership, link identity, "
     "or timestamps."
+)
+_MV_COMMAND = "mv"
+_MV_HELP = (
+    "Move one same-source mapped file with result verification. A passing result "
+    "proves target resolution, replacement, destination bytes, source absence, "
+    "diagnostics, cleanup, and partial-state reporting only — not atomic rename, "
+    "identity preservation, or generic metadata preservation."
 )
 _MKDIR_COMMAND = "mkdir"
 _MKDIR_HELP = (
@@ -188,6 +197,20 @@ class App:
             raw_arguments = _cp_raw_arguments(ctx)
             _ensure_no_active_event_loop(_CP_COMMAND)
             asyncio.run(_run_cp(_CP_COMMAND, raw_arguments, self._sources))
+
+        @self.typer_app.command(
+            _MV_COMMAND,
+            cls=_MvCommand,
+            help=_MV_HELP,
+            context_settings={
+                "allow_extra_args": True,
+                "ignore_unknown_options": True,
+            },
+        )
+        def mv(ctx: typer.Context) -> None:
+            raw_arguments = _mv_raw_arguments(ctx)
+            _ensure_no_active_event_loop(_MV_COMMAND)
+            asyncio.run(_run_mv(_MV_COMMAND, raw_arguments, self._sources))
 
         @self.typer_app.command(
             _MKDIR_COMMAND,
