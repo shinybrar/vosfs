@@ -2,11 +2,12 @@
 
 ## Status
 
-Complete. PR opened against `main`.
+Complete. Sol Important review findings fixed. PR #162 updated.
 
 ## Commits
 
 - `7d25c62` — `feat(fsspec-cli): add binary stdin and dash sequencing for cat`
+- (pending) — `test(fsspec-cli): close cat stdin adversarial failure matrix`
 
 ## PR
 
@@ -24,16 +25,36 @@ Complete. PR opened against `main`.
   repeated-dash EOF; matrix hermetic rows for mixed stdin and `-u` rejection.
 - Matrix/README/changelog updated. Wheel gate already runs `test_cat*`.
 
+## Sol review fix (Important)
+
+Added adversarial failure-matrix tests only (production unchanged):
+
+| Gap | Fix |
+| --- | --- |
+| Multi-source barrier around stdin | `test_cat_all_multi_source_context_entries_complete_before_stdin`; factory/entry failure with forbidden stdin at leading/middle/trailing `-` |
+| Descriptor closed/partial pipe per `-` position | Process tests for broken pipe + prefix stdout failure at leading/middle/trailing; child tracking for source exit + TMPDIR sweep |
+
+### Tests added (16)
+
+**`test_cat.py` (10):**
+
+- `test_cat_all_multi_source_context_entries_complete_before_stdin`
+- `test_cat_stdin_untouched_when_later_source_factory_fails` ×3
+- `test_cat_stdin_untouched_when_later_source_entry_fails` ×3
+- `test_cat_stops_on_stdout_failure_during_stdin_at_each_position` ×3
+
+**`test_cat_process.py` (6):**
+
+- `test_public_seam_cat_broken_pipe_during_stdin_at_each_position_is_silent` ×3
+- `test_public_seam_cat_prefix_stdout_failure_during_stdin_at_each_position` ×3
+
 ## Test summary
 
 | Gate | Result |
 | --- | --- |
-| `uv lock --check` | pass |
-| `uv run --all-packages pre-commit run --all-files` | pass |
-| `uv run pytest` | 405 passed, 50 skipped |
-| `uv run --package fsspec-cli pytest src/fsspec-cli/tests` | 492 passed, 7 skipped |
-| `uv run zensical build --strict --clean` | pass |
-| `uv build --package vosfs` / `fsspec-cli` | pass |
+| `uv run --package fsspec-cli pytest src/fsspec-cli/tests/test_cat*.py` | 85 passed |
+| `uv run --package fsspec-cli pytest src/fsspec-cli/tests` | 508 passed, 7 skipped |
+| `uv run --all-packages pre-commit` (changed files) | pass |
 
 ## Concerns
 
@@ -41,8 +62,6 @@ Complete. PR opened against `main`.
   `fsspec-cli-v0.1.0` tag when that gate remains policy.
 - Native vosfs mapped-file `cat` remains `unverified` until live OpenCADC
   evidence; stdin/dash hermetic rows are memory/process-proven only.
-- One local gate pass hit transient `OSError: out of pty devices` in unrelated
-  basename/output TTY process tests; re-run of `fsspec-cli` suite was green.
 
 ## Non-goals preserved
 
