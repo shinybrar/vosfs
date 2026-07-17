@@ -20,6 +20,7 @@ from ._matrix_support import (
     _exercise_mkdir_locked_profile,
     _exercise_mkdir_memory_over_eager_failure,
     _exercise_mkdir_p_locked_profile,
+    _exercise_multi_source_cp_locked_profile,
     _exercise_rm_directory_profile,
     _exercise_rm_force_profile,
     _exercise_rm_locked_profile,
@@ -671,6 +672,23 @@ def test_adapted_local_cp_profile_uses_native_temporary_storage(
     _exercise_cp_locked_profile("local", source, path)
 
 
+def test_adapted_local_multi_source_cp_profile_uses_native_temporary_storage(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _populate_local(root)
+    (root / "target").mkdir()
+    path = _local_command_path(root)
+    source = _ProbedSource(
+        lambda: AsyncFileSystemWrapper(
+            LocalFileSystem(skip_instance_cache=True),
+            asynchronous=True,
+        )
+    )
+
+    _exercise_multi_source_cp_locked_profile("local", source, path)
+
+
 def test_adapted_memory_base_rm_profile_has_isolated_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -717,6 +735,29 @@ def test_adapted_memory_cp_profile_has_isolated_state(
     source = _ProbedSource(make_filesystem)
 
     _exercise_cp_locked_profile("memory", source, "/docs")
+
+
+def test_adapted_memory_multi_source_cp_profile_has_isolated_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+
+    def make_filesystem() -> AsyncFileSystemWrapper:
+        MemoryFileSystem.store.clear()
+        MemoryFileSystem.pseudo_dirs[:] = [""]
+        MemoryFileSystem.clear_instance_cache()
+        filesystem = MemoryFileSystem()
+        filesystem.makedirs("/docs")
+        filesystem.mkdir("/docs/target")
+        for name in ("notes.txt", ".hidden", "guide.md"):
+            filesystem.pipe_file(f"/docs/{name}", name.encode())
+        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
+
+    source = _ProbedSource(make_filesystem)
+
+    _exercise_multi_source_cp_locked_profile("memory", source, "/docs")
 
 
 @pytest.mark.parametrize("direction", ["local-to-memory", "memory-to-local"])

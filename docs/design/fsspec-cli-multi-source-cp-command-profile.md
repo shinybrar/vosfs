@@ -48,6 +48,7 @@ Hermetic public-`App` tests cover same-source, cross-source, mixed-source,
 repeated-name, duplicate-basename, existing-target, empty, binary, and large
 file paths; destination and source-type negatives; transfer, verification,
 cleanup, cancellation, and lifecycle failures; and partial-state retention.
-Adapted Local and Memory plus hermetic native `vosfs` evidence remains
-source-form-scoped. The isolated-wheel command-matrix gate is required before
-claiming a passing release row.
+Adapted Local and Memory evidence is source-form-scoped. Native `vosfs` stays
+unverified until its multi-source profile has qualifying evidence. The
+isolated-wheel command-matrix gate is required before claiming a passing
+release row.

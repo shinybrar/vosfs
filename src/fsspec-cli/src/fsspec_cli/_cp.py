@@ -185,6 +185,25 @@ def _require_file_size(info: object) -> int | None:
     return size
 
 
+def _require_source_file_size(
+    source: _MappedOperand,
+    info: object,
+) -> tuple[int | None, _CpFailure | None]:
+    if not isinstance(info, Mapping):
+        return None, _CpFailure(source, incompatible="result")
+    result_type = info.get("type")
+    if not isinstance(result_type, str):
+        return None, _CpFailure(source, incompatible="result")
+    if result_type == "directory":
+        return None, _CpFailure(source, incompatible="directory")
+    if result_type != "file":
+        return None, _CpFailure(source, incompatible="result")
+    size = _require_file_size(info)
+    if size is None:
+        return None, _CpFailure(source, incompatible="result")
+    return size, None
+
+
 async def _resolve_destination(  # noqa: C901, PLR0911, PLR0912 - explicit target branches.
     destination: _MappedOperand,
     source_path: str,
@@ -581,13 +600,11 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - exp
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _CpFailure(request.source, backend_error=error)
 
-    if not isinstance(source_info, Mapping) or not isinstance(
-        source_info.get("type"), str
-    ):
-        return _CpFailure(request.source, incompatible="result")
-    if source_info["type"] == "directory":
-        return _CpFailure(request.source, incompatible="directory")
-    expected_size = _require_file_size(source_info)
+    expected_size, source_failure = _require_source_file_size(
+        request.source, source_info
+    )
+    if source_failure is not None:
+        return source_failure
     if expected_size is None:
         return _CpFailure(request.source, incompatible="result")
 
@@ -714,13 +731,11 @@ async def _confirmed_cp_file(  # noqa: PLR0911 - explicit copy outcomes.
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _CpFailure(request.source, backend_error=error)
 
-    if not isinstance(source_info, Mapping) or not isinstance(
-        source_info.get("type"), str
-    ):
-        return _CpFailure(request.source, incompatible="result")
-    if source_info["type"] == "directory":
-        return _CpFailure(request.source, incompatible="directory")
-    expected_size = _require_file_size(source_info)
+    expected_size, source_failure = _require_source_file_size(
+        request.source, source_info
+    )
+    if source_failure is not None:
+        return source_failure
     if expected_size is None:
         return _CpFailure(request.source, incompatible="result")
 

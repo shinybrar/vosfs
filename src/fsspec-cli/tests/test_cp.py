@@ -200,6 +200,209 @@ def test_cp_leaves_completed_multi_source_targets_after_later_failure() -> None:
     assert second.file_contents["/docs/second.txt"] == b"second"
 
 
+def test_cp_rejects_other_source_type_mid_multi_source_sequence() -> None:
+    source = _file_source(
+        file_contents={"/docs/first.txt": b"first"},
+        directories={"/", "/docs", "/target"},
+        info_by_path={
+            "/docs/other": MappingProxyType({"type": "link", "size": 5}),
+        },
+    )
+
+    result = _invoke_cp(
+        [
+            "memory:/docs/first.txt",
+            "memory:/docs/other",
+            "memory:/target",
+        ],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: memory:/docs/other: incompatible result\n",
+    )
+    assert source.file_contents["/target/first.txt"] == b"first"
+    assert "/target/other" not in source.file_contents
+    assert not any(event[0] in {"rm", "rmdir"} for event in source.events)
+
+
+def test_cp_rejects_other_cross_source_type_mid_multi_source_sequence() -> None:
+    first = _file_source(
+        file_contents={"/docs/first.txt": b"first"},
+        directories={"/", "/docs"},
+    )
+    other = _file_source(
+        source_path="/docs/other",
+        info_by_path={
+            "/docs/other": MappingProxyType({"type": "link", "size": 5}),
+        },
+        directories={"/", "/docs"},
+    )
+    destination = _file_source(
+        source_path="/other.txt",
+        directories={"/", "/target"},
+    )
+
+    result = _invoke_cp(
+        [
+            "first:/docs/first.txt",
+            "other:/docs/other",
+            "destination:/target",
+        ],
+        sources={"first": first, "other": other, "destination": destination},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: other:/docs/other: incompatible result\n",
+    )
+    assert destination.file_contents["/target/first.txt"] == b"first"
+    assert "/target/other" not in destination.file_contents
+    assert not any(event[0] in {"rm", "rmdir"} for event in first.events)
+    assert not any(event[0] in {"rm", "rmdir"} for event in other.events)
+
+
+def test_cp_rejects_file_as_multi_source_target_before_copy() -> None:
+    source = _file_source(
+        file_contents={
+            "/docs/first.txt": b"first",
+            "/docs/second.txt": b"second",
+            "/docs/target": b"target",
+        },
+    )
+
+    result = _invoke_cp(
+        [
+            "memory:/docs/first.txt",
+            "memory:/docs/second.txt",
+            "memory:/docs/target",
+        ],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: memory:/docs/target: not a directory\n",
+    )
+    assert not any(event[0] == "cp_file" for event in source.events)
+
+
+def test_cp_reuses_configured_name_for_mixed_multi_source_sequence() -> None:
+    shared = _file_source(
+        file_contents={"/docs/first.txt": b"first", "/docs/third.txt": b"third"},
+        directories={"/", "/docs", "/target"},
+    )
+    other = _file_source(
+        file_contents={"/docs/second.txt": b"second"},
+        directories={"/", "/docs"},
+    )
+
+    result = _invoke_cp(
+        [
+            "shared:/docs/first.txt",
+            "other:/docs/second.txt",
+            "shared:/docs/third.txt",
+            "shared:/target",
+        ],
+        sources={"shared": shared, "other": other},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert shared.call_count == other.call_count == 1
+    assert shared.file_contents["/target/first.txt"] == b"first"
+    assert shared.file_contents["/target/second.txt"] == b"second"
+    assert shared.file_contents["/target/third.txt"] == b"third"
+
+
+def test_cp_keeps_verified_target_after_later_multi_source_verification_failure() -> (
+    None
+):
+    first = _file_source(
+        file_contents={"/docs/first.txt": b"first"},
+        directories={"/", "/docs"},
+    )
+    second = _file_source(
+        file_contents={"/docs/second.txt": b"second"},
+        directories={"/", "/docs"},
+    )
+    destination = _file_source(
+        source_path="/other.txt",
+        directories={"/", "/target"},
+    )
+
+    def corrupt_upload(_local_path: str, remote_path: str) -> None:
+        filesystem = destination.contexts[0].filesystem
+        filesystem._file_contents[remote_path] = b"wrong!"
+        destination.file_contents[remote_path] = b"wrong!"
+
+    destination.put_file_by_path = {"/target/second.txt": corrupt_upload}
+    result = _invoke_cp(
+        [
+            "first:/docs/first.txt",
+            "second:/docs/second.txt",
+            "destination:/target",
+        ],
+        sources={"first": first, "second": second, "destination": destination},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: destination:/target: verification failure; "
+        "destination residue may remain\n",
+    )
+    assert destination.file_contents["/target/first.txt"] == b"first"
+    assert destination.file_contents["/target/second.txt"] == b"wrong!"
+
+
+def test_cp_cleans_later_cross_source_stage_on_multi_source_cancellation() -> None:
+    temporary_paths: list[str] = []
+    first = _file_source(
+        file_contents={"/docs/first.txt": b"first"},
+        directories={"/", "/docs"},
+    )
+    second = _file_source(
+        file_contents={"/docs/second.txt": b"second"},
+        directories={"/", "/docs"},
+    )
+    destination = _file_source(
+        source_path="/other.txt",
+        directories={"/", "/target"},
+    )
+
+    def cancel_staging(local_path: str) -> NoReturn:
+        temporary_paths.append(local_path)
+        Path(local_path).write_bytes(b"second")
+        raise asyncio.CancelledError
+
+    second.get_file_by_path = {"/docs/second.txt": cancel_staging}
+
+    with pytest.raises(asyncio.CancelledError):
+        _invoke_cp(
+            [
+                "first:/docs/first.txt",
+                "second:/docs/second.txt",
+                "destination:/target",
+            ],
+            sources={"first": first, "second": second, "destination": destination},
+        )
+
+    assert destination.file_contents["/target/first.txt"] == b"first"
+    assert "/target/second.txt" not in destination.file_contents
+    assert len(temporary_paths) == 1
+    assert not Path(temporary_paths[0]).exists()
+    assert (
+        len(first.exit_calls)
+        == len(second.exit_calls)
+        == len(destination.exit_calls)
+        == 1
+    )
+
+
 def test_cp_requires_existing_directory_for_multiple_sources() -> None:
     source = _file_source(
         file_contents={"/docs/first.txt": b"first", "/docs/second.txt": b"second"},
@@ -557,6 +760,33 @@ def test_cp_rejects_one_operand() -> None:
     assert result.exit_code == 2
     assert result.stdout == ""
     assert result.stderr == "cp: missing mapped filesystem operand\n"
+
+
+@pytest.mark.parametrize(
+    ("arguments", "diagnostic"),
+    [
+        (
+            ["memory:/docs/first.txt", "other:/docs/second.txt", "memory:/target"],
+            "cp: other:/docs/second.txt: unknown filesystem (known: memory)\n",
+        ),
+        (
+            ["memory:/docs/first.txt", "memory:relative", "memory:/target"],
+            "cp: memory:relative: invalid mapped filesystem operand\n",
+        ),
+        (
+            ["memory:/docs/first.txt", "memory:/docs/second.txt", "memory:target"],
+            "cp: memory:target: invalid mapped filesystem operand\n",
+        ),
+    ],
+    ids=["unknown-source", "malformed-source", "malformed-target"],
+)
+def test_cp_rejects_invalid_multi_source_operand_before_source_entry(
+    arguments: list[str],
+    diagnostic: str,
+) -> None:
+    result = _invoke_cp(arguments)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (2, "", diagnostic)
 
 
 @pytest.mark.parametrize(
