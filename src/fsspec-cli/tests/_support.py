@@ -35,6 +35,16 @@ def _invoke_mkdir(
     return CliRunner().invoke(App(sources).typer_app, ["mkdir", *arguments])
 
 
+def _invoke_rmdir(
+    arguments: list[str],
+    *,
+    sources: dict[str, AsyncFilesystemSource] | None = None,
+) -> Result:
+    if sources is None:
+        sources = {"memory": _source_must_not_run}
+    return CliRunner().invoke(App(sources).typer_app, ["rmdir", *arguments])
+
+
 class _RecordingFileSystem(AsyncFileSystem):
     cachable = False
 
@@ -46,7 +56,8 @@ class _RecordingFileSystem(AsyncFileSystem):
         super().__init__(asynchronous=True)
         self.source = source
         self.source_id = source_id
-        self._pending_verify_paths: set[str] = set()
+        self._pending_mkdir_verify: set[str] = set()
+        self._pending_rmdir_verify: set[str] = set()
         self._created_dirs: set[str] = set()
 
     async def _info(self, path: str, **kwargs: object) -> object:
@@ -54,13 +65,23 @@ class _RecordingFileSystem(AsyncFileSystem):
         self.source.events.append(
             ("info", self.source_id, path, id(asyncio.get_running_loop()))
         )
+        if path in self._pending_rmdir_verify:
+            self._pending_rmdir_verify.discard(path)
+            if path in self.source.post_info_by_path:
+                scripted = self.source.post_info_by_path[path]
+                if isinstance(scripted, BaseException):
+                    raise scripted
+                return scripted
+            if self.source.post_info_error is not None:
+                raise self.source.post_info_error
+            raise FileNotFoundError(path)
         if path in self.source.info_by_path:
             scripted = self.source.info_by_path[path]
             if isinstance(scripted, BaseException):
                 raise scripted
             return scripted
-        if path in self._pending_verify_paths:
-            self._pending_verify_paths.discard(path)
+        if path in self._pending_mkdir_verify:
+            self._pending_mkdir_verify.discard(path)
             if path in self.source.post_info_by_path:
                 scripted = self.source.post_info_by_path[path]
                 if isinstance(scripted, BaseException):
@@ -155,7 +176,20 @@ class _RecordingFileSystem(AsyncFileSystem):
         if self.source.mkdir_error is not None:
             raise self.source.mkdir_error
         self._created_dirs.add(path)
-        self._pending_verify_paths.add(path)
+        self._pending_mkdir_verify.add(path)
+
+    async def _rmdir(self, path: str, **kwargs: object) -> None:
+        del kwargs
+        self.source.events.append(
+            ("rmdir", self.source_id, path, id(asyncio.get_running_loop()))
+        )
+        if path in self.source.rmdir_by_path:
+            scripted = self.source.rmdir_by_path[path]
+            if isinstance(scripted, BaseException):
+                raise scripted
+        elif self.source.rmdir_error is not None:
+            raise self.source.rmdir_error
+        self._pending_rmdir_verify.add(path)
 
 
 class _RecordingSource:
@@ -168,12 +202,15 @@ class _RecordingSource:
         ls_result: object = None,
         ls_error: BaseException | None = None,
         mkdir_error: BaseException | None = None,
+        rmdir_error: BaseException | None = None,
         post_info_result: object | None = MappingProxyType({"type": "directory"}),
+        post_info_error: BaseException | None = None,
         exit_result: object = None,
         exit_error: BaseException | None = None,
         info_by_path: Mapping[str, object] | None = None,
         ls_by_path: Mapping[str, object] | None = None,
         mkdir_by_path: Mapping[str, object] | None = None,
+        rmdir_by_path: Mapping[str, object] | None = None,
         post_info_by_path: Mapping[str, object] | None = None,
         get_file_content: bytes = b"",
         get_file_error: BaseException | None = None,
@@ -186,12 +223,15 @@ class _RecordingSource:
         self.ls_result = ls_result
         self.ls_error = ls_error
         self.mkdir_error = mkdir_error
+        self.rmdir_error = rmdir_error
         self.post_info_result = post_info_result
+        self.post_info_error = post_info_error
         self.exit_result = exit_result
         self.exit_error = exit_error
         self.info_by_path = info_by_path or {}
         self.ls_by_path = ls_by_path or {}
         self.mkdir_by_path = mkdir_by_path or {}
+        self.rmdir_by_path = rmdir_by_path or {}
         self.post_info_by_path = post_info_by_path or {}
         self.get_file_content = get_file_content
         self.get_file_error = get_file_error

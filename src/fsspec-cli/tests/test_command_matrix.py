@@ -18,6 +18,7 @@ from ._matrix_support import (
     _exercise_locked_profile,
     _exercise_mkdir_locked_profile,
     _exercise_mkdir_memory_over_eager_failure,
+    _exercise_rmdir_locked_profile,
     _invoke,
     _invoke_ls,
     _ProbedSource,
@@ -33,6 +34,11 @@ def _populate_local(root: Path) -> None:
     root.mkdir()
     for name in ("notes.txt", ".hidden", "guide.md"):
         (root / name).write_text(name, encoding="utf-8")
+
+
+def _populate_local_with_empty(root: Path) -> None:
+    _populate_local(root)
+    (root / "empty").mkdir()
 
 
 def test_hermetic_guard_rejects_name_resolution() -> None:
@@ -269,3 +275,63 @@ def test_adapted_memory_plain_cat_profile(monkeypatch: pytest.MonkeyPatch) -> No
     assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
     assert all(isinstance(fs.sync_fs, MemoryFileSystem) for fs in source.filesystems)
     assert all(fs.asynchronous is True for fs in source.filesystems)
+
+def test_adapted_local_base_rmdir_profile_uses_native_temporary_storage(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _populate_local_with_empty(root)
+    path = _local_command_path(root)
+    source = _ProbedSource(
+        lambda: AsyncFileSystemWrapper(
+            LocalFileSystem(skip_instance_cache=True),
+            asynchronous=True,
+        )
+    )
+
+    _exercise_rmdir_locked_profile("local", source, path)
+
+
+def test_adapted_memory_base_rmdir_profile_has_isolated_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+
+    def make_filesystem() -> AsyncFileSystemWrapper:
+        MemoryFileSystem.store.clear()
+        MemoryFileSystem.pseudo_dirs[:] = [""]
+        MemoryFileSystem.clear_instance_cache()
+        filesystem = MemoryFileSystem()
+        filesystem.makedirs("/docs")
+        filesystem.mkdir("/docs/empty")
+        for name in ("notes.txt", ".hidden", "guide.md"):
+            filesystem.pipe_file(f"/docs/{name}", name.encode())
+        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
+
+    source = _ProbedSource(make_filesystem)
+
+    _exercise_rmdir_locked_profile("memory", source, "/docs")
+
+
+def test_rmdir_option_rejection_is_source_free() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke(
+        App({"memory": source_must_not_run}),
+        "rmdir",
+        ["-p", "memory:/docs/empty"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "rmdir: -p: unsupported option\n",
+    )
+    assert source_calls == 0

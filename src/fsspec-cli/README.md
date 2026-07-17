@@ -23,7 +23,10 @@ profile. Base `mkdir` awaits `_mkdir(path, create_parents=False)` and
 post-verifies `_info(path)` requires `type == "directory"`. Successful `mkdir`
 invocations emit no stdout, continue after ordinary per-operand failure, and
 disclose that passing rows claim only source-default creation semantics, not
-POSIX mode or umask behavior. Rendering is deterministic, ordinary operand
+POSIX mode or umask behavior. Base `rmdir` removes one or more empty directories through `_info`, exact
+`_rmdir`, and a distinguishable post-removal absence proof. It rejects
+configured source roots and final dot components before source entry, emits no
+stdout, and continues after ordinary operand failure without claiming rollback. Rendering is deterministic, ordinary operand
 failures continue with stable diagnostics, and output failures preserve their
 accepted-byte boundary. Backend compatibility claims remain `unverified` until
 their source-form gates run. The package has no console entry point or module
