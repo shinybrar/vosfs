@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 import tempfile
 from pathlib import Path
 from typing import NoReturn
 
 import pytest
+from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App
 from typer.testing import CliRunner, Result
 
@@ -293,6 +296,7 @@ def test_cat_removes_temporary_after_cleanup_failure(monkeypatch) -> None:
 
     def fail_unlink(self: Path, *args: object, **kwargs: object) -> None:
         if temps and self == Path(temps[0]):
+            real_unlink(self, *args, **kwargs)
             message = "busy"
             raise OSError(message)
         real_unlink(self, *args, **kwargs)
@@ -303,6 +307,8 @@ def test_cat_removes_temporary_after_cleanup_failure(monkeypatch) -> None:
     assert result.exit_code == 1
     assert result.stdout_bytes == b"data"
     assert result.stderr == ("cat: memory:/blob: staging failure (OSError): busy\n")
+    assert len(temps) == 1
+    assert not Path(temps[0]).exists()
 
 
 def test_cat_unknown_name_lists_known_sources() -> None:
@@ -316,3 +322,354 @@ def test_cat_unknown_name_lists_known_sources() -> None:
     assert result.stderr == (
         "cat: zeta:/file: unknown filesystem (known: alpha, beta)\n"
     )
+
+
+def test_cat_stops_acquisition_after_a_source_factory_failure() -> None:
+    events: list[tuple[object, ...]] = []
+    factory_error = ValueError("factory\\\0\r\n")
+    first = _RecordingSource(events, exit_result=True)
+
+    def broken_source() -> NoReturn:
+        raise factory_error
+
+    result = _invoke_cat(
+        ["first:/one", "broken:/two", "later:/three"],
+        sources={
+            "first": first,
+            "broken": broken_source,
+            "later": _source_must_not_run,
+        },
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout_bytes == b""
+    assert result.stderr == (
+        "cat: broken: source factory failure (ValueError): factory\\\\\\0\\r\\n\n"
+    )
+    assert [event[0] for event in events] == ["factory", "enter", "exit"]
+    exception_type, exception, traceback = first.exit_calls[0]
+    assert exception_type is ValueError
+    assert exception is factory_error
+    assert traceback is not None
+
+
+@pytest.mark.parametrize(
+    "incompatible_manager",
+    [
+        object(),
+        type("MissingExit", (), {"__aenter__": lambda _self: None})(),
+        type("NonCallable", (), {"__aenter__": 1, "__aexit__": 2})(),
+    ],
+)
+def test_cat_rejects_an_incompatible_source_context_manager(
+    incompatible_manager: object,
+) -> None:
+    def source() -> object:
+        return incompatible_manager
+
+    result = _invoke_cat(["broken:/file"], sources={"broken": source})
+
+    assert result.exit_code == 1
+    assert result.stdout_bytes == b""
+    assert result.stderr == (
+        "cat: broken: source factory returned incompatible async context manager\n"
+    )
+
+
+def test_cat_stops_after_source_entry_failure_without_exiting_failed_entry() -> None:
+    events: list[tuple[object, ...]] = []
+    entry_error = LookupError("entry\\\0\r\n")
+    first = _RecordingSource(events)
+
+    class BrokenContext:
+        async def __aenter__(self) -> NoReturn:
+            events.append(("broken-enter", id(asyncio.get_running_loop())))
+            raise entry_error
+
+        async def __aexit__(self, *exc_info: object) -> NoReturn:
+            raise AssertionError
+
+    def broken_source() -> BrokenContext:
+        events.append(("broken-factory",))
+        return BrokenContext()
+
+    result = _invoke_cat(
+        ["first:/one", "broken:/two", "later:/three"],
+        sources={
+            "first": first,
+            "broken": broken_source,
+            "later": _source_must_not_run,
+        },
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout_bytes == b""
+    assert result.stderr == (
+        "cat: broken: source entry failure (LookupError): entry\\\\\\0\\r\\n\n"
+    )
+    assert [event[0] for event in events] == [
+        "factory",
+        "enter",
+        "broken-factory",
+        "broken-enter",
+        "exit",
+    ]
+    exception_type, exception, traceback = first.exit_calls[0]
+    assert exception_type is LookupError
+    assert exception is entry_error
+    assert traceback is not None
+
+
+@pytest.mark.parametrize(
+    "filesystem_factory",
+    [
+        object,
+        lambda: AsyncFileSystem(asynchronous=False, skip_instance_cache=True),
+        lambda: _async_filesystem_with_flag("async_impl", value=False),
+        lambda: _async_filesystem_with_flag("asynchronous", value=1),
+    ],
+)
+def test_cat_exits_a_source_that_yields_an_incompatible_filesystem(
+    filesystem_factory,
+) -> None:
+    events: list[tuple[object, ...]] = []
+
+    class YieldingContext:
+        async def __aenter__(self) -> object:
+            events.append(("enter", id(asyncio.get_running_loop())))
+            return filesystem_factory()
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            events.append(("exit", id(asyncio.get_running_loop())))
+
+    def source() -> YieldingContext:
+        events.append(("factory",))
+        return YieldingContext()
+
+    result = _invoke_cat(["broken:/file"], sources={"broken": source})
+
+    assert result.exit_code == 1
+    assert result.stdout_bytes == b""
+    assert result.stderr == (
+        "cat: broken: source yielded incompatible async filesystem\n"
+    )
+    assert [event[0] for event in events] == ["factory", "enter", "exit"]
+    assert events[1][-1] == events[2][-1]
+
+
+def _async_filesystem_with_flag(
+    name: str,
+    *,
+    value: object,
+) -> AsyncFileSystem:
+    filesystem = AsyncFileSystem(asynchronous=True, skip_instance_cache=True)
+    setattr(filesystem, name, value)
+    return filesystem
+
+
+class _ControlFlow(BaseException):
+    pass
+
+
+@pytest.mark.parametrize(
+    "control",
+    [asyncio.CancelledError(), _ControlFlow("stop")],
+)
+def test_cat_removes_temporary_on_get_file_cancellation(
+    control: BaseException,
+) -> None:
+    temps: list[str] = []
+    source = _RecordingSource([])
+
+    def tracking_hook(rpath: str, lpath: str) -> None:
+        del rpath
+        temps.append(lpath)
+        Path(lpath).write_bytes(b"secret")
+        raise control
+
+    source.get_file_hook = tracking_hook
+
+    with pytest.raises(type(control)) as caught:
+        _invoke_cat(["memory:/blob"], sources={"memory": source})
+
+    assert type(caught.value) is type(control)
+    if not isinstance(control, asyncio.CancelledError):
+        assert caught.value is control
+    assert len(temps) == 1
+    assert not Path(temps[0]).exists()
+    exception_type, exception, traceback = source.exit_calls[0]
+    assert exception_type is type(control)
+    assert exception is control
+    assert traceback is not None
+
+
+def test_cat_continues_after_temporary_open_failure(monkeypatch) -> None:
+    source = _RecordingSource(
+        [],
+        get_file_by_path={"/bad": b"secret", "/ok": b"OK"},
+    )
+    real_open = Path.open
+    failed = False
+
+    def fail_open(self: Path, *args: object, **kwargs: object):
+        nonlocal failed
+        if not failed and self.name.startswith("fsspec-cli-cat-") and "rb" in args:
+            failed = True
+            message = "open-denied"
+            raise OSError(message)
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_open)
+    result = _invoke_cat(
+        ["memory:/bad", "memory:/ok"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout_bytes == b"OK"
+    assert result.stderr == (
+        "cat: memory:/bad: staging failure (OSError): open-denied\n"
+    )
+    assert "secret" not in result.stderr
+
+
+def test_cat_continues_after_temporary_read_failure(monkeypatch) -> None:
+    source = _RecordingSource(
+        [],
+        get_file_by_path={"/bad": b"secret", "/ok": b"OK"},
+    )
+
+    class _FailingHandle:
+        def read(self, size: int = -1) -> bytes:
+            del size
+            message = "read-denied"
+            raise OSError(message)
+
+        def close(self) -> None:
+            return None
+
+    real_open = Path.open
+    failed = False
+
+    def fail_read_open(self: Path, *args: object, **kwargs: object):
+        nonlocal failed
+        if not failed and self.name.startswith("fsspec-cli-cat-") and "rb" in args:
+            failed = True
+            return _FailingHandle()
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_read_open)
+    result = _invoke_cat(
+        ["memory:/bad", "memory:/ok"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout_bytes == b"OK"
+    assert result.stderr == (
+        "cat: memory:/bad: staging failure (OSError): read-denied\n"
+    )
+    assert "secret" not in result.stderr
+
+
+def test_cat_continues_after_temporary_close_failure(monkeypatch) -> None:
+    source = _RecordingSource(
+        [],
+        get_file_by_path={"/bad": b"data", "/ok": b"OK"},
+    )
+    real_open = Path.open
+    failed = False
+
+    class _CloseFailHandle:
+        def __init__(self, handle: object) -> None:
+            self._handle = handle
+
+        def read(self, size: int = -1) -> bytes:
+            return self._handle.read(size)
+
+        def close(self) -> None:
+            self._handle.close()
+            message = "close-denied"
+            raise OSError(message)
+
+    def wrap_open(self: Path, *args: object, **kwargs: object):
+        nonlocal failed
+        handle = real_open(self, *args, **kwargs)
+        if not failed and self.name.startswith("fsspec-cli-cat-") and "rb" in args:
+            failed = True
+            return _CloseFailHandle(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "open", wrap_open)
+    result = _invoke_cat(
+        ["memory:/bad", "memory:/ok"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout_bytes == b"dataOK"
+    assert result.stderr == (
+        "cat: memory:/bad: staging failure (OSError): close-denied\n"
+    )
+
+
+def test_cat_reports_cleanup_failure_after_download_failure(monkeypatch) -> None:
+    temps: list[str] = []
+    source = _RecordingSource([], get_file_error=OSError("download"))
+    real_unlink = Path.unlink
+    real_mkstemp = tempfile.mkstemp
+
+    def tracking_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        descriptor, path = real_mkstemp(*args, **kwargs)
+        temps.append(path)
+        return descriptor, path
+
+    def fail_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if temps and self == Path(temps[0]):
+            real_unlink(self, *args, **kwargs)
+            message = "busy"
+            raise OSError(message)
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(tempfile, "mkstemp", tracking_mkstemp)
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+    result = _invoke_cat(["memory:/blob"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout_bytes == b""
+    assert result.stderr == ("cat: memory:/blob: staging failure (OSError): busy\n")
+    assert len(temps) == 1
+    assert not Path(temps[0]).exists()
+
+
+def test_cat_unlinks_temporary_when_os_close_fails(monkeypatch) -> None:
+    temps: list[str] = []
+    source = _RecordingSource([], get_file_content=b"secret")
+    real_mkstemp = tempfile.mkstemp
+    real_close = os.close
+
+    def tracking_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        descriptor, path = real_mkstemp(*args, **kwargs)
+        temps.append(path)
+        return descriptor, path
+
+    def fail_close(fd: int) -> None:
+        if temps:
+            real_close(fd)
+            message = "close-denied"
+            raise OSError(message)
+        real_close(fd)
+
+    monkeypatch.setattr(tempfile, "mkstemp", tracking_mkstemp)
+    monkeypatch.setattr(os, "close", fail_close)
+    result = _invoke_cat(["memory:/blob"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout_bytes == b""
+    assert result.stderr == (
+        "cat: memory:/blob: staging failure (OSError): close-denied\n"
+    )
+    assert len(temps) == 1
+    assert not Path(temps[0]).exists()
+    assert [event[0] for event in source.events] == ["factory", "enter", "info", "exit"]
+    assert "secret" not in result.stderr

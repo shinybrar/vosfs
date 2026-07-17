@@ -172,6 +172,21 @@ def _remove_temporary(path: str) -> Exception | None:
     return None
 
 
+def _failure_after_temporary(
+    operand: _MappedOperand,
+    temporary: str,
+    error: Exception,
+    *,
+    staging: bool,
+) -> _StagingFailure | _Failure:
+    cleanup_error = _remove_temporary(temporary)
+    if cleanup_error is not None:
+        return _StagingFailure(operand, cleanup_error)
+    if staging:
+        return _StagingFailure(operand, error)
+    return _Failure(operand, backend_error=error)
+
+
 async def _stage_operand(
     operand: _MappedOperand,
     filesystem: AsyncFileSystem,
@@ -187,26 +202,73 @@ async def _stage_operand(
 
     try:
         descriptor, temporary = tempfile.mkstemp(prefix="fsspec-cli-cat-")
-        os.close(descriptor)
     except Exception as error:  # noqa: BLE001 - local staging creation boundary.
         return None, _StagingFailure(operand, error)
 
     try:
+        os.close(descriptor)
+    except Exception as error:  # noqa: BLE001 - close must not leak the path.
+        return None, _failure_after_temporary(
+            operand,
+            temporary,
+            error,
+            staging=True,
+        )
+
+    try:
         await filesystem._get_file(operand.path, temporary)  # noqa: SLF001
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
+        return None, _failure_after_temporary(
+            operand,
+            temporary,
+            error,
+            staging=False,
+        )
+    except BaseException:
         _remove_temporary(temporary)
-        return None, _Failure(operand, backend_error=error)
+        raise
 
     return temporary, None
 
 
-def _forward_temporary(temporary: str) -> None:
-    with Path(temporary).open("rb") as handle:
+@dataclass(frozen=True)
+class _ForwardResult:
+    staging_error: Exception | None = None
+    output_error: Exception | None = None
+
+
+def _forward_temporary(temporary: str) -> _ForwardResult:
+    """Forward staged bytes; local I/O stays staging, stdout stays output."""
+    try:
+        # Close is classified separately from stdout, so avoid `with`.
+        handle = Path(temporary).open("rb")  # noqa: SIM115
+    except Exception as error:  # noqa: BLE001 - local staging open boundary.
+        return _ForwardResult(staging_error=error)
+
+    staging_error: Exception | None = None
+    output_error: Exception | None = None
+    try:
         while True:
-            chunk = handle.read(_OUTPUT_CHUNK)
+            try:
+                chunk = handle.read(_OUTPUT_CHUNK)
+            except Exception as error:  # noqa: BLE001 - local staging read boundary.
+                staging_error = error
+                break
             if not chunk:
                 break
-            _write_stdout(chunk)
+            try:
+                _write_stdout(chunk)
+            except Exception as error:  # noqa: BLE001 - stdout boundary.
+                output_error = error
+                break
+    finally:
+        try:
+            handle.close()
+        except Exception as error:  # noqa: BLE001 - local staging close boundary.
+            if staging_error is None and output_error is None:
+                staging_error = error
+
+    return _ForwardResult(staging_error=staging_error, output_error=output_error)
 
 
 @dataclass
@@ -253,12 +315,15 @@ async def _emit_operands(
             _render_operand_failure(command, progress.failures[-1])
             continue
         try:
-            _forward_temporary(temporary)
-        except BrokenPipeError as error:
-            progress.output_error = error
-        except Exception as error:  # noqa: BLE001 - output boundary.
-            progress.output_error = error
-            _render_output_failure(command, error)
+            forwarded = _forward_temporary(temporary)
+            if forwarded.staging_error is not None:
+                failure = _StagingFailure(operand, forwarded.staging_error)
+                _render_operand_failure(command, failure)
+                progress.failures.append(failure)
+            elif forwarded.output_error is not None:
+                progress.output_error = forwarded.output_error
+                if not isinstance(forwarded.output_error, BrokenPipeError):
+                    _render_output_failure(command, forwarded.output_error)
         finally:
             cleanup_error = _remove_temporary(temporary)
             if cleanup_error is not None:
@@ -274,11 +339,13 @@ async def _run_cat(
     request = _preflight(command, raw_arguments, sources)
     invocation = _SourceInvocation(command, sources)
     progress = _CatProgress(failures=[])
+    succeeded = False
     try:
         names = dict.fromkeys(operand.name for operand in request.operands)
         filesystems = await invocation.acquire(names)
         if filesystems is not None:
             await _emit_operands(command, request, filesystems, progress)
+            succeeded = progress.succeeded
     finally:
         active_exc_info = sys.exc_info()
         command_error = progress.command_error()
@@ -291,5 +358,5 @@ async def _run_cat(
                 command_error.__traceback__,
             )
         cleanup_failed = await invocation.close(active_exc_info)
-    if not progress.succeeded or cleanup_failed:
+    if not succeeded or cleanup_failed:
         raise typer.Exit(1)
