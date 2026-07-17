@@ -797,6 +797,8 @@ def _exercise_mkdir_p_locked_profile(
         f"mkdir: {source_name}:{parent_file}: {parent_file_category}\n",
         f"mkdir: {source_name}:{parent_file}: file exists\n",
         f"mkdir: {source_name}:{parent_file}: not found\n",
+        f"mkdir: {source_name}:{parent_file}: not a directory\n",
+        f"mkdir: {source_name}:{parent_file}: uncertain state (incompatible result)\n",
     }
     assert (root.exit_code, root.stdout, root.stderr) == (0, "", "")
 
