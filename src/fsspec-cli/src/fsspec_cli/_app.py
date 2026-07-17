@@ -20,6 +20,7 @@ from ._basename import (
 from ._cat import _CatCommand, _run_cat
 from ._diagnostics import _render_diagnostic_prefix
 from ._ls import _LsCommand, _raw_arguments, _run_ls
+from ._mkdir import _MkdirCommand, _run_mkdir
 
 AsyncFilesystemSource: TypeAlias = Callable[
     [], AbstractAsyncContextManager[AbstractFileSystem]
@@ -27,6 +28,12 @@ AsyncFilesystemSource: TypeAlias = Callable[
 _BASENAME_COMMAND = "basename"
 _LS_COMMAND = "ls"
 _CAT_COMMAND = "cat"
+_MKDIR_COMMAND = "mkdir"
+_MKDIR_HELP = (
+    "Create directories without implicit parent creation. A passing result "
+    "claims only source-default creation semantics, not POSIX mode or umask "
+    "behavior."
+)
 
 
 def _validate_source_name(name: object) -> None:
@@ -112,3 +119,17 @@ class App:
             raw_arguments = _raw_arguments(ctx)
             _ensure_no_active_event_loop(_CAT_COMMAND)
             asyncio.run(_run_cat(_CAT_COMMAND, raw_arguments, self._sources))
+
+        @self.typer_app.command(
+            _MKDIR_COMMAND,
+            cls=_MkdirCommand,
+            help=_MKDIR_HELP,
+            context_settings={
+                "allow_extra_args": True,
+                "ignore_unknown_options": True,
+            },
+        )
+        def mkdir(ctx: typer.Context) -> None:
+            raw_arguments = _raw_arguments(ctx)
+            _ensure_no_active_event_loop(_MKDIR_COMMAND)
+            asyncio.run(_run_mkdir(_MKDIR_COMMAND, raw_arguments, self._sources))

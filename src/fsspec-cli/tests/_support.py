@@ -25,6 +25,16 @@ def _invoke_ls(
     return CliRunner().invoke(App(sources).typer_app, ["ls", *arguments])
 
 
+def _invoke_mkdir(
+    arguments: list[str],
+    *,
+    sources: dict[str, AsyncFilesystemSource] | None = None,
+) -> Result:
+    if sources is None:
+        sources = {"memory": _source_must_not_run}
+    return CliRunner().invoke(App(sources).typer_app, ["mkdir", *arguments])
+
+
 class _RecordingFileSystem(AsyncFileSystem):
     cachable = False
 
@@ -36,6 +46,8 @@ class _RecordingFileSystem(AsyncFileSystem):
         super().__init__(asynchronous=True)
         self.source = source
         self.source_id = source_id
+        self._pending_verify_paths: set[str] = set()
+        self._created_dirs: set[str] = set()
 
     async def _info(self, path: str, **kwargs: object) -> object:
         del kwargs
@@ -47,6 +59,15 @@ class _RecordingFileSystem(AsyncFileSystem):
             if isinstance(scripted, BaseException):
                 raise scripted
             return scripted
+        if path in self._pending_verify_paths:
+            self._pending_verify_paths.discard(path)
+            if path in self.source.post_info_by_path:
+                scripted = self.source.post_info_by_path[path]
+                if isinstance(scripted, BaseException):
+                    raise scripted
+                return scripted
+            if self.source.post_info_result is not None:
+                return self.source.post_info_result
         if self.source.info_error is not None:
             raise self.source.info_error
         return self.source.info_result
@@ -109,6 +130,33 @@ class _RecordingFileSystem(AsyncFileSystem):
         with Path(lpath).open("wb") as handle:  # noqa: ASYNC230
             handle.write(self.source.get_file_content)
 
+    async def _mkdir(
+        self,
+        path: str,
+        create_parents: bool = True,  # noqa: FBT002 - matches the fsspec hook signature.
+        **kwargs: object,
+    ) -> None:
+        del kwargs
+        self.source.events.append(
+            (
+                "mkdir",
+                self.source_id,
+                path,
+                create_parents,
+                id(asyncio.get_running_loop()),
+            )
+        )
+        if path in self.source.mkdir_by_path:
+            scripted = self.source.mkdir_by_path[path]
+            if isinstance(scripted, BaseException):
+                raise scripted
+        elif path in self._created_dirs:
+            raise FileExistsError(path)
+        if self.source.mkdir_error is not None:
+            raise self.source.mkdir_error
+        self._created_dirs.add(path)
+        self._pending_verify_paths.add(path)
+
 
 class _RecordingSource:
     def __init__(  # noqa: PLR0913 - configurable external-boundary recording fake.
@@ -119,10 +167,14 @@ class _RecordingSource:
         info_error: BaseException | None = None,
         ls_result: object = None,
         ls_error: BaseException | None = None,
+        mkdir_error: BaseException | None = None,
+        post_info_result: object | None = MappingProxyType({"type": "directory"}),
         exit_result: object = None,
         exit_error: BaseException | None = None,
         info_by_path: Mapping[str, object] | None = None,
         ls_by_path: Mapping[str, object] | None = None,
+        mkdir_by_path: Mapping[str, object] | None = None,
+        post_info_by_path: Mapping[str, object] | None = None,
         get_file_content: bytes = b"",
         get_file_error: BaseException | None = None,
         get_file_by_path: Mapping[str, object] | None = None,
@@ -133,10 +185,14 @@ class _RecordingSource:
         self.info_error = info_error
         self.ls_result = ls_result
         self.ls_error = ls_error
+        self.mkdir_error = mkdir_error
+        self.post_info_result = post_info_result
         self.exit_result = exit_result
         self.exit_error = exit_error
         self.info_by_path = info_by_path or {}
         self.ls_by_path = ls_by_path or {}
+        self.mkdir_by_path = mkdir_by_path or {}
+        self.post_info_by_path = post_info_by_path or {}
         self.get_file_content = get_file_content
         self.get_file_error = get_file_error
         self.get_file_by_path = get_file_by_path or {}

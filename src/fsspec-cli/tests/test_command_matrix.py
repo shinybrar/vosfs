@@ -16,7 +16,10 @@ from ._matrix_support import (
     _block_network,
     _exercise_cat_profile,
     _exercise_locked_profile,
+    _exercise_mkdir_locked_profile,
+    _exercise_mkdir_memory_over_eager_failure,
     _invoke,
+    _invoke_ls,
     _ProbedSource,
 )
 
@@ -104,6 +107,66 @@ def test_adapted_memory_plain_ls_profile_has_isolated_state(
     assert len({id(fs.sync_fs) for fs in source.filesystems}) == 3
 
 
+def test_adapted_local_base_mkdir_profile_uses_native_temporary_storage(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _populate_local(root)
+    path = _local_command_path(root)
+    source = _ProbedSource(
+        lambda: AsyncFileSystemWrapper(
+            LocalFileSystem(skip_instance_cache=True),
+            asynchronous=True,
+        )
+    )
+
+    _exercise_mkdir_locked_profile("local", source, path)
+
+
+def test_adapted_memory_base_mkdir_profile_over_eager_parent_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+
+    def make_filesystem() -> AsyncFileSystemWrapper:
+        MemoryFileSystem.store.clear()
+        MemoryFileSystem.pseudo_dirs[:] = [""]
+        MemoryFileSystem.clear_instance_cache()
+        filesystem = MemoryFileSystem()
+        filesystem.makedirs("/docs")
+        for name in ("notes.txt", ".hidden", "guide.md"):
+            filesystem.pipe_file(f"/docs/{name}", name.encode())
+        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
+
+    source = _ProbedSource(make_filesystem)
+
+    _exercise_mkdir_memory_over_eager_failure("memory", source, "/docs")
+
+
+def test_mkdir_option_rejection_is_source_free() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke(
+        App({"memory": source_must_not_run}),
+        "mkdir",
+        ["-p", "memory:/docs/new"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "mkdir: -p: unsupported option\n",
+    )
+    assert source_calls == 0
+
+
 def test_ls_long_rejection_is_source_free() -> None:
     source_calls = 0
 
@@ -112,7 +175,7 @@ def test_ls_long_rejection_is_source_free() -> None:
         source_calls += 1
         raise AssertionError
 
-    result = _invoke(App({"memory": source_must_not_run}), ["-l", "memory:/docs"])
+    result = _invoke_ls(App({"memory": source_must_not_run}), ["-l", "memory:/docs"])
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         2,
