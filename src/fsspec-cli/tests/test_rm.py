@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import TYPE_CHECKING, NoReturn
 
 import pytest
@@ -769,7 +770,8 @@ def test_rm_help_describes_force_profile() -> None:
     result = _invoke_rm(["--help"])
 
     assert result.exit_code == 0
-    assert "rm -f ignores missing files" in result.stdout
+    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
+    assert "rm -f ignores missing files" in " ".join(plain_help.split())
     assert result.stderr == ""
 
 

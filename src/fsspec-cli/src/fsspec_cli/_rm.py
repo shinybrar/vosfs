@@ -1,4 +1,4 @@
-"""Raw Typer parsing and async execution for base file-only ``rm``."""
+"""Raw Typer parsing and async execution for file-only ``rm`` and its force profile."""
 
 from __future__ import annotations
 
