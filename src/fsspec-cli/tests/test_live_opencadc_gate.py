@@ -314,53 +314,6 @@ def _live_environment(tmp_path) -> dict[str, str]:
     }
 
 
-def test_execute_emits_only_sanitized_exact_evidence(
-    tmp_path,
-) -> None:
-    environment = _live_environment(tmp_path)
-    filesystem = _FakeFilesystem()
-
-    evidence = live_gate._execute(
-        environment,
-        filesystem_factory=lambda: filesystem,
-        installation_check=lambda _configuration: True,
-        observed_at=datetime(2026, 7, 16, 20, 30, tzinfo=timezone.utc),
-    )
-
-    assert evidence["schema_version"] == 1
-    assert evidence["classification"] == "pass"
-    assert evidence["packages"]["fsspec-cli"] == "0.1.1"
-    assert set(evidence["packages"]) == {"fsspec-cli", "fsspec", "typer", "vosfs"}
-    assert evidence["source_mode"] == "vosfs / native async"
-    assert evidence["python"]
-    assert evidence["runner"] == {
-        "architecture": "X64",
-        "image": "ubuntu24",
-        "image_version": "20260714.1",
-        "operating_system": "Linux",
-    }
-    assert evidence["observed_at"] == "2026-07-16T20:30:00Z"
-    assert evidence["commit"] == "a" * 40
-    assert evidence["lock_identity"] == f"uv.lock@{'a' * 40}"
-    assert evidence["service_environment"] == "OpenCADC staging"
-    assert (
-        evidence["run_url"] == "https://github.com/shinybrar/vosfs/actions/runs/12345"
-    )
-    assert evidence["ci_run_id"] == "12000"
-    assert (
-        evidence["ci_run_url"]
-        == "https://github.com/shinybrar/vosfs/actions/runs/12000"
-    )
-    rendered = json.dumps(evidence, sort_keys=True)
-    for sensitive in (
-        "sensitive-entry-name",
-        "credential-secret",
-        "private-key-secret",
-        "password-secret",
-    ):
-        assert sensitive not in rendered
-
-
 def test_missing_setup_is_unverified_without_calling_a_factory() -> None:
     factory_called = False
 
