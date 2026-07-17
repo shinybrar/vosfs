@@ -209,10 +209,10 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `local / adapted async` | `pass` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `memory / adapted async` | `pass` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic and live OpenCADC | Hermetic mocked transport present; live evidence absent |
-| [Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) | source | `local / adapted async` | `unverified` | `pass` | Hermetic | — |
-| [Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) | source | `memory / adapted async` | `fail` | `pass` | Hermetic | pending |
-| [Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) | source | `vosfs / native async` | `unverified` | `pass` | Hermetic | — |
-| [Base `mkdir` `-p` strict rejection](fsspec-cli-base-mkdir-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | — |
+| [Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29565052441](#h-2026-07-17-29565052441) |
+| [Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) | source | `memory / adapted async` | `fail` | `pass` | Hermetic | [H-2026-07-17-29565052441](#h-2026-07-17-29565052441) |
+| [Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29565052441](#h-2026-07-17-29565052441) |
+| [Base `mkdir` `-p` strict rejection](fsspec-cli-base-mkdir-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29565052441](#h-2026-07-17-29565052441) |
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.
@@ -352,6 +352,42 @@ Its sanitized evidence artifact is
 [`fsspec-cli-live-evidence-8cbbfd8f8940f7f4a2f9ff31ea5a130c9b08270e`](https://github.com/shinybrar/vosfs/actions/runs/29536609626/artifacts/8390767659)
 with digest
 `sha256:246547411d8397722c161ba22c829bf107374d697e49681950315526856bc7df`.
+
+### H-2026-07-17-29565052441
+
+This successful exact-commit CI run observed `fsspec-cli` 0.1.1 at
+[commit `7112811ae3a0e632d7d302c9f64d162be2052d61`](https://github.com/shinybrar/vosfs/commit/7112811ae3a0e632d7d302c9f64d162be2052d61)
+with fsspec 2026.6.0, Typer 0.27.0, and vosfs 0.4.0. The complete dependency
+set is recoverable from the
+[commit-pinned `uv.lock`](https://github.com/shinybrar/vosfs/blob/7112811ae3a0e632d7d302c9f64d162be2052d61/uv.lock).
+
+[CI run 29565052441](https://github.com/shinybrar/vosfs/actions/runs/29565052441)
+ran from 2026-07-17T08:02:31Z through 2026-07-17T08:04:42Z. It exercised the
+base `mkdir` production command matrix and the built-wheel gate on every
+supported leg. Adapted Local passed the locked positive gates, including
+missing-parent rejection. Adapted Memory reached contradiction:
+`_mkdir(..., create_parents=False)` for a missing parent still created the
+parent and child, so that row is `fail`. Mocked native `vosfs` passed the
+hermetic mkdir gates. Source-free `-p` rejection completed during command
+preflight without entering a source.
+
+| Python | Operating system | Runner image | Hermetic job | Installed-wheel job |
+| --- | --- | --- | --- | --- |
+| 3.10.20 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87835687205](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687205) | [87835687165](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687165) |
+| 3.11.15 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87835687101](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687101) | [87835687156](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687156) |
+| 3.12.3 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87835687032](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687032) | [87835687224](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687224) |
+| 3.13.14 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87835687115](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687115) | [87835687094](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687094) |
+| 3.14.6 | Ubuntu 24.04.4 LTS | `ubuntu-24.04@20260714.240.1` | [87835687079](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687079) | [87835687249](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687249) |
+| 3.12.10 | Windows Server 2025 | `windows-2025-vs2026@20260714.173.1` | [87835687114](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687114) | [87835687251](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687251) |
+| 3.12.10 | macOS 26.4 | `macos-26-arm64@20260715.0248.1` | [87835687095](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687095) | [87835687120](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87835687120) |
+
+Every leg used runner 2.335.1 and provisioner `20260707.563`. The aggregate
+[Required job](https://github.com/shinybrar/vosfs/actions/runs/29565052441/job/87836052810)
+passed only after the quality, hermetic, and installed-wheel dependencies
+completed successfully. The executable evidence is the commit-pinned
+[Local and Memory command matrix](https://github.com/shinybrar/vosfs/blob/7112811ae3a0e632d7d302c9f64d162be2052d61/src/fsspec-cli/tests/test_command_matrix.py)
+and
+[mocked VOS command matrix](https://github.com/shinybrar/vosfs/blob/7112811ae3a0e632d7d302c9f64d162be2052d61/src/fsspec-cli/tests/test_vosfs_command_matrix.py).
 
 ## 9. CI and release policy
 
