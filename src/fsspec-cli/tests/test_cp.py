@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import MappingProxyType
 from typing import NoReturn
 
+import click
 import pytest
 from fsspec_cli import _cp
 
@@ -602,7 +604,9 @@ def test_cp_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
 
     assert result.exit_code == 0
     assert "cross-source" in result.stdout
-    assert "Recursive (-R) copy is unsupported." in result.stdout
+    # Rich may bold `-R` and wrap the epilog; normalize before the phrase check.
+    help_text = re.sub(r"\s+", " ", click.unstyle(result.stdout))
+    assert "Recursive (-R) copy is unsupported." in help_text
 
 
 def test_cp_cancels_without_claiming_success() -> None:
