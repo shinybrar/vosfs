@@ -47,7 +47,7 @@ Shared backend/path aliases reject `same path` before mutation. `cp` never
 deletes the source; failed or unverifiable copies may leave destination residue.
 A passing row proves target resolution, replacement, bytes, diagnostics,
 cleanup, and partial state only — not POSIX mode, ownership, link identity, or
-timestamps. Same-source `mv` uses exact awaitable `_mv` only after source and target resolution, then proves destination bytes and source absence. It does not claim atomic rename, identity preservation, or generic metadata preservation. Base file-only `rm` removes one or more source-reported files
+timestamps. Same-source `mv` uses exact awaitable `_mv` only after source and target resolution, then proves destination bytes and source absence. Distinct configured source names reject source-free with `mv: cross-source move unsupported`; no copy-then-delete fallback exists. It does not claim atomic rename, identity preservation, or generic metadata preservation. Base file-only `rm` removes one or more source-reported files
 through the same confirmed `_rm_file` and absence boundary as XSI `unlink`, with
 whole-argv root and final-dot guards, all-source acquisition before mutation,
 and sequential continuation after ordinary operand failure. Exact `rm -f`

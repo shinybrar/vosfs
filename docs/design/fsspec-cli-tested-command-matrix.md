@@ -252,6 +252,7 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Positively evidenced same-source file `mv`](fsspec-cli-same-source-mv-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic exact-operation rejection | Hermetic `test_command_matrix.py`; wrapper does not declare `_mv` and sync facade is trapped |
 | [Positively evidenced same-source file `mv`](fsspec-cli-same-source-mv-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic exact-operation classification | Hermetic `test_vosfs_command_matrix.py`; native form does not declare `_mv` |
 | [Same-source file `mv` option rejection](fsspec-cli-same-source-mv-command-profile.md) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | Hermetic `test_mv.py` on this change |
+| [Cross-source `mv` strict rejection](fsspec-cli-cross-source-mv-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | Hermetic `test_mv.py::test_mv_rejects_cross_source_without_factories_or_mutation` on this change |
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.
