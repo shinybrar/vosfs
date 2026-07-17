@@ -82,8 +82,9 @@ because rejection completes before source entry.
   can satisfy the base POSIX profile.
 
 Sparse authoritative metadata may later justify a deliberately non-POSIX
-`stat`-like interface. That is a separate command decision and does not weaken
-this rejection profile.
+`stat`-like interface. That separate decision is now locked as the
+[reduced BSD/macOS `stat` profile](fsspec-cli-bsd-macos-stat-command-profile.md)
+and does not weaken this rejection profile or admit `ls -l`.
 
 ## Implementation handoff
 
