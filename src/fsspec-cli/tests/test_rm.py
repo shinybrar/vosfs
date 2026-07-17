@@ -1,4 +1,4 @@
-"""Base file-only ``rm`` tests through the public embedded-command seam."""
+"""Base ``rm``, ``rm -d``, and ``rm -f`` tests through the public seam."""
 
 from __future__ import annotations
 
@@ -851,12 +851,21 @@ def test_rm_reports_source_exit_failures_in_reverse_order() -> None:
     )
 
 
-@pytest.mark.parametrize("arguments", [["--help"], ["-f", "--help"]])
+@pytest.mark.parametrize("arguments", [["--help"], ["-d", "--help"], ["-f", "--help"]])
 def test_rm_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
     result = _invoke_rm(arguments)
 
     assert result.exit_code == 0
     assert "Usage:" in result.stdout
+    assert result.stderr == ""
+
+
+def test_rm_help_describes_directory_profile() -> None:
+    result = _invoke_rm(["--help"])
+
+    assert result.exit_code == 0
+    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
+    assert "rm -d also removes empty directories" in " ".join(plain_help.split())
     assert result.stderr == ""
 
 
@@ -1064,24 +1073,149 @@ def test_rm_d_preserves_directory_removal_cancellation() -> None:
 
 
 @pytest.mark.parametrize(
-    "arguments",
+    ("arguments", "option"),
     [
-        ["-df", "memory:/file"],
-        ["-fd", "memory:/file"],
-        ["-d", "-f", "memory:/file"],
-        ["-dd", "memory:/file"],
-        ["-d", "-R", "memory:/file"],
-        ["-d", "-v", "memory:/file"],
+        (["-df", "memory:/file"], "-df"),
+        (["-fd", "memory:/file"], "-fd"),
+        (["-d", "-f", "memory:/file"], "-f"),
+        (["-dd", "memory:/file"], "-dd"),
+        (["-d", "-R", "memory:/file"], "-R"),
+        (["-d", "-v", "memory:/file"], "-v"),
     ],
 )
 def test_rm_d_rejects_unsupported_option_combinations_before_source_entry(
     arguments: list[str],
+    option: str,
 ) -> None:
     result = _invoke_rm(arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert "unsupported option" in result.stderr
+    assert result.stderr == f"rm: {option}: unsupported option\n"
+
+
+@pytest.mark.parametrize(
+    "option",
+    ["--directory", "--force", "--recursive", "--verbose"],
+)
+def test_rm_d_rejects_long_options_before_source_entry(option: str) -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> object:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke_rm(
+        ["-d", option, "memory:/file"],
+        sources={"memory": source_must_not_run},
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == f"rm: {option}: unsupported option\n"
+    assert source_calls == 0
+
+
+def test_rm_d_without_operands_rejects_without_source_entry() -> None:
+    source_calls = 0
+
+    def source_must_not_run() -> object:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = _invoke_rm(["-d"], sources={"memory": source_must_not_run})
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == "rm: missing mapped filesystem operand\n"
+    assert source_calls == 0
+
+
+def test_rm_d_uses_distinct_sources_for_files_and_empty_directories() -> None:
+    events: list[tuple[object, ...]] = []
+    alpha = _RecordingSource(events)
+    beta = _RecordingSource(events, info_result={"type": "directory"})
+
+    result = _invoke_rm(
+        ["-d", "alpha:/docs/notes.txt", "beta:/docs/empty"],
+        sources={"alpha": alpha, "beta": beta},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert alpha.call_count == beta.call_count == 1
+    assert [
+        (event[0], event[2]) for event in events if event[0] in {"rm_file", "rmdir"}
+    ] == [
+        ("rm_file", "/docs/notes.txt"),
+        ("rmdir", "/docs/empty"),
+    ]
+    assert not any(event[0] in {"rm", "ls"} for event in events)
+
+
+@pytest.mark.parametrize(
+    ("error_factory", "category"),
+    [
+        (PermissionError, "permission denied"),
+        (RuntimeError, "backend failure (RuntimeError): "),
+    ],
+)
+def test_rm_d_reports_access_and_service_failures(
+    error_factory: Callable[[], Exception],
+    category: str,
+) -> None:
+    source = _RecordingSource([], info_error=error_factory())
+
+    result = _invoke_rm(["-d", "memory:/docs/item"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == f"rm: memory:/docs/item: {category}\n"
+    assert not any(
+        event[0] in {"rm_file", "rmdir", "rm", "ls"} for event in source.events
+    )
+
+
+def test_rm_d_reports_cleanup_failure() -> None:
+    source = _RecordingSource(
+        [],
+        info_result={"type": "directory"},
+        exit_error=OSError("cleanup failed"),
+    )
+
+    result = _invoke_rm(["-d", "memory:/docs/empty"], sources={"memory": source})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert (
+        result.stderr == "rm: memory: source exit failure (OSError): cleanup failed\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "rendered"),
+    [
+        (["-d", "memory:"], "memory:"),
+        (["-d", "memory:relative"], "memory:relative"),
+        (["-d", "/bare"], "/bare"),
+        (["-d", ":/path"], ":/path"),
+        (["-d", "-"], "-"),
+        (["-d", "memory:/bad\0path"], "memory:/bad\\0path"),
+        (["-d", "memory:/bad\npath"], "memory:/bad\\npath"),
+        (["-d", "--", "-f"], "-f"),
+        (["-d", "--", "--"], "--"),
+    ],
+)
+def test_rm_d_rejects_malformed_mapped_filesystem_operands(
+    arguments: list[str],
+    rendered: str,
+) -> None:
+    result = _invoke_rm(arguments)
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == (f"rm: {rendered}: invalid mapped filesystem operand\n")
 
 
 @pytest.mark.parametrize("path", ["memory:/", "memory:/docs/.", "memory:/docs/.."])
