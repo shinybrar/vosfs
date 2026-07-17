@@ -59,7 +59,7 @@ jobs:
           enable-cache: false
 
       - name: Build fsspec-cli distributions
-        run: uv build --package fsspec-cli --out-dir dist/fsspec-cli
+        run: uv build --no-sources --package fsspec-cli --out-dir dist/fsspec-cli
 
       - name: Attach distributions to the GitHub Release
         env:

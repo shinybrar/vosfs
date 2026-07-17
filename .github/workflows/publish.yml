@@ -59,7 +59,7 @@ jobs:
           enable-cache: false
 
       - name: Build release distributions
-        run: uv build
+        run: uv build --no-sources
 
       - name: Attach distributions to the GitHub Release
         env:
