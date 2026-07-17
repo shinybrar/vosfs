@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 import pytest
@@ -243,6 +244,17 @@ def test_mv_rejects_directory_source_before_mutation() -> None:
     assert [event[:3] for event in source.events if event[0] == "info"] == [
         ("info", 1, "/docs")
     ]
+
+
+def test_mv_help_discloses_directory_rejection() -> None:
+    result = _invoke(_source(), "--help")
+
+    assert result.exit_code == 0
+    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
+    assert "Directory sources are rejected before target resolution or mutation." in (
+        " ".join(plain_help.split())
+    )
+    assert result.stderr == ""
 
 
 def test_mv_reports_mutation_exception_as_uncertain_residue() -> None:
