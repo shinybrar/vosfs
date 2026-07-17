@@ -130,8 +130,6 @@ class _RecordingFileSystem(AsyncFileSystem):
         with Path(lpath).open("wb") as handle:  # noqa: ASYNC230
             handle.write(self.source.get_file_content)
 
-
-
     async def _mkdir(
         self,
         path: str,
@@ -158,6 +156,7 @@ class _RecordingFileSystem(AsyncFileSystem):
             raise self.source.mkdir_error
         self._created_dirs.add(path)
         self._pending_verify_paths.add(path)
+
 
 class _RecordingSource:
     def __init__(  # noqa: PLR0913 - configurable external-boundary recording fake.

@@ -157,7 +157,6 @@ class _ProbedSource(Generic[_FilesystemT]):
             self.get_file_results.append((source_id, rpath))
             return result
 
-
         async def mkdir(
             path: str,
             create_parents: bool = True,  # noqa: FBT002 - mirrors the fsspec hook.
@@ -241,16 +240,20 @@ class _ProbedContext(
         self._source.lifecycle.append(LifecycleEvent("exit", self._source_id, loop_id))
 
 
-def _invoke(app: App, arguments: list[str]) -> Result:
-    return CliRunner().invoke(app.typer_app, ["ls", *arguments])
+def _invoke(app: App, command: str, arguments: list[str]) -> Result:
+    return CliRunner().invoke(app.typer_app, [command, *arguments])
+
+
+def _invoke_ls(app: App, arguments: list[str]) -> Result:
+    return _invoke(app, "ls", arguments)
 
 
 def _invoke_cat(app: App, arguments: list[str]) -> Result:
-    return CliRunner().invoke(app.typer_app, ["cat", *arguments])
+    return _invoke(app, "cat", arguments)
 
 
 def _invoke_mkdir(app: App, arguments: list[str]) -> Result:
-    return CliRunner().invoke(app.typer_app, ["mkdir", *arguments])
+    return _invoke(app, "mkdir", arguments)
 
 
 def _exercise_locked_profile(
@@ -262,9 +265,9 @@ def _exercise_locked_profile(
     operand = f"{source_name}:{path}"
     missing_operand = f"{operand}/missing"
 
-    plain = _invoke(app, [operand])
-    almost_all = _invoke(app, ["-A", operand])
-    missing = _invoke(app, [missing_operand])
+    plain = _invoke_ls(app, [operand])
+    almost_all = _invoke_ls(app, ["-A", operand])
+    missing = _invoke_ls(app, [missing_operand])
 
     assert (plain.exit_code, plain.stdout, plain.stderr) == (
         0,

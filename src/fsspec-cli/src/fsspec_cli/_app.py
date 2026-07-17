@@ -18,9 +18,9 @@ from ._basename import (
     _raw_arguments as _basename_raw_arguments,
 )
 from ._cat import _CatCommand, _run_cat
-from ._mkdir import _MkdirCommand, _run_mkdir
 from ._diagnostics import _render_diagnostic_prefix
 from ._ls import _LsCommand, _raw_arguments, _run_ls
+from ._mkdir import _MkdirCommand, _run_mkdir
 
 AsyncFilesystemSource: TypeAlias = Callable[
     [], AbstractAsyncContextManager[AbstractFileSystem]

@@ -95,6 +95,18 @@ _ROOT = f"""<vos:node
 """.encode()
 
 
+_RESPONSES: dict[tuple[str, str], httpx.Response] = {
+    ("GET", "/arc/capabilities"): httpx.Response(200, content=_CAPABILITIES),
+    ("GET", "/arc/nodes"): httpx.Response(200, content=_ROOT),
+    ("GET", "/arc/nodes/docs"): httpx.Response(200, content=_DOCS),
+    ("GET", "/arc/nodes/docs/missing"): httpx.Response(404, text="not found"),
+    ("PUT", "/arc/nodes/docs/subdir"): httpx.Response(201, content=_SUBDIR),
+    ("GET", "/arc/nodes/docs/subdir"): httpx.Response(200, content=_SUBDIR),
+    ("PUT", "/arc/nodes/docs/notes.txt"): httpx.Response(409, text="conflict"),
+    ("PUT", "/arc/nodes/docs/notes.txt/child"): httpx.Response(404, text="not found"),
+    ("PUT", "/arc/nodes/docs/absent/child"): httpx.Response(404, text="not found"),
+}
+
 
 @pytest.fixture(autouse=True)
 def _prohibit_unplanned_network(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -110,26 +122,11 @@ class _StrictMockTransport(httpx.MockTransport):
     async def _respond(self, request: httpx.Request) -> httpx.Response:
         call = (request.method, request.url.path)
         self.requests.append(call)
-        if call == ("GET", "/arc/capabilities"):
-            return httpx.Response(200, content=_CAPABILITIES)
-        if call == ("GET", "/arc/nodes"):
-            return httpx.Response(200, content=_ROOT)
-        if call == ("GET", "/arc/nodes/docs"):
-            return httpx.Response(200, content=_DOCS)
-        if call == ("GET", "/arc/nodes/docs/missing"):
-            return httpx.Response(404, text="not found")
-        if call == ("PUT", "/arc/nodes/docs/subdir"):
-            return httpx.Response(201, content=_SUBDIR)
-        if call == ("GET", "/arc/nodes/docs/subdir"):
-            return httpx.Response(200, content=_SUBDIR)
-        if call == ("PUT", "/arc/nodes/docs/notes.txt"):
-            return httpx.Response(409, text="conflict")
-        if call == ("PUT", "/arc/nodes/docs/notes.txt/child"):
-            return httpx.Response(404, text="not found")
-        if call == ("PUT", "/arc/nodes/docs/absent/child"):
-            return httpx.Response(404, text="not found")
-        message = f"unplanned mocked request: {call!r}"
-        raise AssertionError(message)
+        response = _RESPONSES.get(call)
+        if response is None:
+            message = f"unplanned mocked request: {call!r}"
+            raise AssertionError(message)
+        return response
 
     async def aclose(self) -> None:
         self.closed = True
