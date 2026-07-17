@@ -29,10 +29,10 @@ with `fsspec-cli` 0.1.1, fsspec 2026.6.0, Typer 0.27.0, vosfs 0.4.0, CPython
 [`uv.lock`](https://github.com/shinybrar/vosfs/blob/063f1741b5e2a323119769c4a1f3e36754428bac/uv.lock).
 
 The examined composite is fsspec 2026.6.0
-[`AsyncFileSystem._copy`](https://github.com/fsspec/filesystem_spec/blob/2026.6.0/fsspec/asyn.py).
+[`AsyncFileSystem._copy`](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/asyn.py).
 An adapted `AsyncFileSystemWrapper` replaces that inherited method at instance
 creation with an async wrapper around its synchronous backend `copy`; see
-[its implementation](https://github.com/fsspec/filesystem_spec/blob/2026.6.0/fsspec/implementations/asyn_wrapper.py).
+[its implementation](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/asyn_wrapper.py).
 
 ## 3. Admission failures
 
