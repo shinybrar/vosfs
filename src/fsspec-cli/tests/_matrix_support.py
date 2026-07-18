@@ -44,6 +44,7 @@ class FilesystemCall:
         "info",
         "ls",
         "du",
+        "find",
         "get_file",
         "mkdir",
         "makedirs",
@@ -62,6 +63,8 @@ class FilesystemCall:
     exist_ok: bool | None = None
     destination_path: str | None = None
     total: bool | None = None
+    maxdepth: int | None = None
+    withdirs: bool | None = None
 
 
 def _block_network(monkeypatch) -> None:
@@ -186,6 +189,44 @@ class _ProbedSource(Generic[_FilesystemT]):
                 raise
 
         return du
+
+    def _wrap_find(
+        self,
+        source_id: int,
+        original_find: Callable[..., Awaitable[object]],
+    ) -> Callable[..., Awaitable[object]]:
+        async def find(
+            path: str,
+            maxdepth: int | None = None,
+            withdirs: bool = False,  # noqa: FBT002 - fsspec hook.
+            **kwargs: object,
+        ) -> object:
+            detail = kwargs.pop("detail", False)
+            self.calls.append(
+                FilesystemCall(
+                    "find",
+                    source_id,
+                    path,
+                    detail,
+                    kwargs,
+                    id(asyncio.get_running_loop()),
+                    maxdepth=maxdepth,
+                    withdirs=withdirs,
+                )
+            )
+            try:
+                return await original_find(
+                    path,
+                    maxdepth=maxdepth,
+                    withdirs=withdirs,
+                    detail=detail,
+                    **kwargs,
+                )
+            except Exception as error:
+                self.errors.append((source_id, "find", error))
+                raise
+
+        return find
 
     def _wrap_get_file(
         self,
@@ -400,6 +441,11 @@ class _ProbedSource(Generic[_FilesystemT]):
             filesystem,
             "_du",
             self._wrap_du(source_id, filesystem._du),
+        )
+        setattr(  # noqa: B010 - instrument this instance.
+            filesystem,
+            "_find",
+            self._wrap_find(source_id, filesystem._find),
         )
         setattr(  # noqa: B010 - instrument.
             filesystem,

@@ -1,8 +1,9 @@
 """Shared scaffolding for mapped-source command modules.
 
-Every mapped-operand command (``ls``, ``du``, ``cat``, ``cp``, ``mv``, ``mkdir``,
-``rmdir``, ``rm``, ``unlink``, ``stat``, ``basename``, ``dirname``) parses its
-own raw ``argv`` and renders stable diagnostics. This module is the single home
+Every mapped-operand command (``ls``, ``du``, ``find``, ``cat``, ``cp``,
+``mv``, ``mkdir``, ``rmdir``, ``rm``, ``unlink``, ``stat``, ``basename``,
+``dirname``) parses its own raw ``argv`` and renders stable diagnostics. This
+module is the single home
 for the pieces they all share: raw-argument capture, the malformed-help shield,
 the mapped-operand record, usage-error reporting, and binary stdout access.
 """

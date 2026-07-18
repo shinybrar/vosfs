@@ -45,6 +45,16 @@ def _invoke_du(
     return CliRunner().invoke(App(sources).typer_app, ["du", *arguments])
 
 
+def _invoke_find(
+    arguments: list[str],
+    *,
+    sources: dict[str, AsyncFilesystemSource] | None = None,
+) -> Result:
+    if sources is None:
+        sources = {"memory": _source_must_not_run}
+    return CliRunner().invoke(App(sources).typer_app, ["find", *arguments])
+
+
 def _invoke_mkdir(
     arguments: list[str],
     *,
@@ -257,6 +267,30 @@ class _RecordingFileSystem(AsyncFileSystem):
         if self.source.du_error is not None:
             raise self.source.du_error
         return self.source.du_result
+
+    async def _find(
+        self,
+        path: str,
+        maxdepth: int | None = None,
+        withdirs: bool = False,  # noqa: FBT002 - fsspec hook signature.
+        **kwargs: object,
+    ) -> object:
+        detail = kwargs.pop("detail", False)
+        assert not kwargs
+        self.source.events.append(
+            (
+                "find",
+                self.source_id,
+                path,
+                maxdepth,
+                withdirs,
+                detail,
+                id(asyncio.get_running_loop()),
+            )
+        )
+        if self.source.find_error is not None:
+            raise self.source.find_error
+        return self.source.find_result
 
     async def _get_file(
         self,
@@ -496,6 +530,8 @@ class _RecordingSource:
         ls_error: BaseException | None = None,
         du_result: object = MappingProxyType({"/file": 0}),
         du_error: BaseException | None = None,
+        find_result: object = (),
+        find_error: BaseException | None = None,
         mkdir_error: BaseException | None = None,
         makedirs_error: BaseException | None = None,
         rmdir_error: BaseException | None = None,
@@ -535,6 +571,8 @@ class _RecordingSource:
         self.ls_error = ls_error
         self.du_result = du_result
         self.du_error = du_error
+        self.find_result = find_result
+        self.find_error = find_error
         self.mkdir_error = mkdir_error
         self.makedirs_error = makedirs_error
         self.rmdir_error = rmdir_error
