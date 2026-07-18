@@ -71,16 +71,9 @@ def _copy_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noq
     return None
 
 
-def _put_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noqa: ARG001
-    if "?" in path:
-        return _QUESTION_MARK
-    return None
-
-
 _COPY_GLOB_PARAMS = _glob_params(_copy_glob_reason)
 # Copy and get have the same remaining exclusion: #63's question-mark paths.
 _GET_GLOB_PARAMS = _COPY_GLOB_PARAMS
-_PUT_GLOB_PARAMS = _glob_params(_put_glob_reason)
 
 
 class VOSpaceFixtures(AbstractFixtures):
@@ -178,7 +171,7 @@ class TestGet(VOSpaceFixtures, AbstractGetTests):
 class TestPut(VOSpaceFixtures, AbstractPutTests):
     """Local-to-remote upload suite."""
 
-    @pytest.mark.parametrize(GLOB_EDGE_CASES_TESTS["argnames"], _PUT_GLOB_PARAMS)
+    @pytest.mark.parametrize(GLOB_EDGE_CASES_TESTS["argnames"], _COPY_GLOB_PARAMS)
     def test_put_glob_edge_cases(  # noqa: PLR0913 - mirrors the abstract signature
         self,
         path,
