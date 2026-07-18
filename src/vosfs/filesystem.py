@@ -16,7 +16,7 @@ import errno
 import hashlib
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, overload
 from urllib.parse import unquote, urlsplit
 
 import httpx
@@ -127,9 +127,24 @@ class VOSpaceFileSystem(AsyncFileSystem):
         self._bindings_lock: asyncio.Lock | None = None
         self._authority: str | None = None
 
+    @overload
     @classmethod
-    def _strip_protocol(cls, path: str) -> str:
-        """Normalize a user path to the canonical internal VOSpace path."""
+    def _strip_protocol(cls, path: str) -> str: ...
+
+    @overload
+    @classmethod
+    def _strip_protocol(cls, path: list[str]) -> list[str]: ...
+
+    @classmethod
+    def _strip_protocol(cls, path: str | list[str]) -> str | list[str]:
+        """Normalize a user path, or a list of paths, to canonical VOSpace paths.
+
+        fsspec's bulk coordinators (for example ``get`` with a list of sources)
+        forward a list through this hook; each element is normalized
+        independently, matching fsspec's base ``_strip_protocol`` contract.
+        """
+        if isinstance(path, list):
+            return [paths.strip_protocol(item) for item in path]
         return paths.strip_protocol(path)
 
     def _security_method(self) -> str:
@@ -364,11 +379,27 @@ class VOSpaceFileSystem(AsyncFileSystem):
         pre-authorized or anonymous endpoint gets nothing; a token endpoint gets
         a freshly resolved bearer header over https; a certificate endpoint uses
         the X.509 client over https.
+
+        The negotiated endpoint URL is validated first: it must be an absolute
+        ``http``/``https`` URL without userinfo. A ``user:pass@host`` endpoint is
+        rejected before the request is built, because HTTPX would otherwise
+        derive a ``Basic`` ``Authorization`` header from the URL userinfo and
+        defeat the credential-routing guarantee.
         """
         method = endpoint.security_method
+        parts = urlsplit(endpoint.url)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            msg = (
+                "negotiated byte endpoint is not an absolute http(s) URL: "
+                f"{endpoint.url!r}"
+            )
+            raise errors.VOSpaceError(msg)
+        if parts.username or parts.password:
+            msg = "negotiated byte endpoint must not contain userinfo"
+            raise errors.VOSpaceError(msg)
         if method == capabilities.ANONYMOUS_METHOD:
             return {}, False
-        scheme = urlsplit(endpoint.url).scheme
+        scheme = parts.scheme
         if method == capabilities.TOKEN_METHOD:
             if scheme != "https":
                 msg = "a token byte endpoint must use https"
@@ -617,7 +648,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
             value,
             size=len(value),
             content_type=kwargs.get("content_type"),
-            expected_digest=hashlib.md5(value).digest(),  # noqa: S324 - integrity, not security
+            expected_digest=hashlib.md5(value, usedforsecurity=False).digest(),
         )
 
     async def _put_file(
@@ -928,7 +959,9 @@ def _ancestors_top_down(path: str) -> list[str]:
 
 def _md5_of_file(path: str) -> bytes:
     """Return the MD5 digest of a local file, read in bounded chunks."""
-    digest = hashlib.md5()  # noqa: S324 - integrity check, not a security primitive
+    # usedforsecurity=False keeps the integrity hash available on FIPS hosts,
+    # where an unqualified md5() raises before any byte transfer can complete.
+    digest = hashlib.md5(usedforsecurity=False)
     with Path(path).open("rb") as handle:
         for chunk in iter(lambda: handle.read(_READ_CHUNK), b""):
             digest.update(chunk)

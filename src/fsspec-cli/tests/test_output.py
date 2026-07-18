@@ -163,7 +163,7 @@ def test_ls_cleans_up_after_an_output_failure_and_reports_exit_failure(
     assert result.exit_code == 1
     assert result.stdout == ""
     assert result.stderr == (
-        "ls: output: output failure (RuntimeError): disk\\\\\\0\\r\\n\n"
+        "ls: output: output failure (RuntimeError): disk\\\\\\x00\\x0d\\x0a\n"
         "ls: memory: source exit failure (OSError): cleanup\n"
     )
     exception_type, exception, traceback = source.exit_calls[0]
@@ -237,31 +237,36 @@ def test_ls_cleans_up_then_propagates_stdout_control_flow(
     assert traceback is not None
 
 
-def test_ls_preserves_ansi_in_a_preflight_diagnostic() -> None:
+def test_ls_escapes_ansi_in_a_preflight_diagnostic() -> None:
     operand = "\x1b[31mbad\x1b[0m"
+    escaped = "\\x1b[31mbad\\x1b[0m"
 
     result = _invoke_ls([operand])
 
     assert result.exit_code == 2
-    assert result.stderr == (f"ls: {operand}: invalid mapped filesystem operand\n")
+    assert result.stderr == (f"ls: {escaped}: invalid mapped filesystem operand\n")
 
 
-def test_ls_preserves_ansi_in_a_backend_diagnostic() -> None:
+def test_ls_escapes_ansi_in_a_backend_diagnostic() -> None:
     operand = "memory:/\x1b[31mfile\x1b[0m"
     message = "\x1b[32mfailed\x1b[0m"
+    escaped_operand = "memory:/\\x1b[31mfile\\x1b[0m"
+    escaped_message = "\\x1b[32mfailed\\x1b[0m"
     source = _RecordingSource([], info_error=RuntimeError(message))
 
     result = _invoke_ls([operand], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stderr == (
-        f"ls: {operand}: backend failure (RuntimeError): {message}\n"
+        f"ls: {escaped_operand}: backend failure (RuntimeError): {escaped_message}\n"
     )
 
 
-def test_ls_preserves_ansi_in_a_source_diagnostic() -> None:
+def test_ls_escapes_ansi_in_a_source_diagnostic() -> None:
     name = "\x1b[31mmemory\x1b[0m"
     message = "\x1b[32mfailed\x1b[0m"
+    escaped_name = "\\x1b[31mmemory\\x1b[0m"
+    escaped_message = "\\x1b[32mfailed\\x1b[0m"
 
     def broken_source() -> None:
         raise RuntimeError(message)
@@ -270,7 +275,8 @@ def test_ls_preserves_ansi_in_a_source_diagnostic() -> None:
 
     assert result.exit_code == 1
     assert result.stderr == (
-        f"ls: {name}: source factory failure (RuntimeError): {message}\n"
+        f"ls: {escaped_name}: source factory failure (RuntimeError): "
+        f"{escaped_message}\n"
     )
 
 

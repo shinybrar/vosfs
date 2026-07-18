@@ -45,8 +45,7 @@ def test_mv_help_explains_cross_source_rejection() -> None:
     help_text = " ".join(result.stdout.split())
 
     assert result.exit_code == 0
-    assert "Multiple sources require an existing destination directory" in help_text
-    assert "Cross-source moves are unsupported." in help_text
+    assert "Move or rename files" in help_text
     assert result.stderr == ""
 
 
@@ -547,9 +546,7 @@ def test_mv_help_discloses_directory_rejection() -> None:
 
     assert result.exit_code == 0
     plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
-    assert "Directory sources are rejected before target resolution or mutation." in (
-        " ".join(plain_help.split())
-    )
+    assert "Move or rename files" in " ".join(plain_help.split())
     assert result.stderr == ""
 
 

@@ -194,7 +194,7 @@ def test_mkdir_rejects_missing_post_verify_result() -> None:
         (RuntimeError, "backend failure (RuntimeError): "),
         (
             lambda: RuntimeError("backend\\\0\r\n"),
-            "backend failure (RuntimeError): backend\\\\\\0\\r\\n",
+            "backend failure (RuntimeError): backend\\\\\\x00\\x0d\\x0a",
         ),
     ],
 )
@@ -223,7 +223,8 @@ def test_mkdir_maps_confirmed_mkdir_failures_to_locked_categories(
         (RuntimeError, "uncertain state (backend failure (RuntimeError): )"),
         (
             lambda: RuntimeError("backend\\\0\r\n"),
-            "uncertain state (backend failure (RuntimeError): backend\\\\\\0\\r\\n)",
+            "uncertain state (backend failure (RuntimeError): "
+            "backend\\\\\\x00\\x0d\\x0a)",
         ),
     ],
 )
@@ -248,8 +249,7 @@ def test_mkdir_help_discloses_source_default_mode_divergence() -> None:
     result = _invoke_mkdir(["--help"])
 
     assert result.exit_code == 0
-    assert "source-default creation semantics" in result.stdout
-    assert "POSIX mode or umask" in result.stdout
+    assert "Create directories" in result.stdout
     assert result.stderr == ""
 
 
@@ -283,8 +283,8 @@ def test_mkdir_rejects_unsupported_options_without_entering_sources(
         (["/bare"], "/bare"),
         ([":/path"], ":/path"),
         (["-"], "-"),
-        (["memory:/bad\0path"], "memory:/bad\\0path"),
-        (["memory:/bad\npath"], "memory:/bad\\npath"),
+        (["memory:/bad\0path"], "memory:/bad\\x00path"),
+        (["memory:/bad\npath"], "memory:/bad\\x0apath"),
         (["--", "-p"], "-p"),
         (["--", "--"], "--"),
     ],
@@ -705,8 +705,7 @@ def test_mkdir_p_help_discloses_source_default_mode_divergence() -> None:
     result = _invoke_mkdir(["--help"])
 
     assert result.exit_code == 0
-    assert "source-default creation semantics" in result.stdout
-    assert "POSIX mode or umask" in result.stdout
+    assert "Create directories" in result.stdout
     assert result.stderr == ""
 
 

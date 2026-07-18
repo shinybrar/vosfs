@@ -35,6 +35,9 @@ if TYPE_CHECKING:
     from ._app import AsyncFilesystemSource
 
 _OUTPUT_CHUNK = 1 << 16
+# 128 + SIGPIPE (13): lets pipeline consumers tell "reader went away" from a
+# real error when the sole failure is a broken pipe on stdout.
+_BROKEN_PIPE_EXIT_CODE = 141
 
 
 class _BinaryWriter(Protocol):
@@ -136,13 +139,11 @@ def _binary_stdin() -> BinaryIO:
     return buffer
 
 
-def _write_stdout(chunk: bytes) -> None:
-    stdout = _binary_stdout()
+def _write_stdout(stdout: _BinaryWriter, chunk: bytes) -> None:
     written = stdout.write(chunk)
     if written != len(chunk):
         message = "short write"
         raise OSError(message)
-    stdout.flush()
 
 
 def _render_staging_failure(
@@ -316,18 +317,9 @@ class _ForwardResult:
     wrote_output: bool = False
 
 
-def _validate_handle(handle: BinaryIO) -> Exception | None:
-    while True:
-        try:
-            chunk = handle.read(_OUTPUT_CHUNK)
-        except Exception as error:  # noqa: BLE001 - local staging read boundary.
-            return error
-        if not chunk:
-            return None
-
-
 def _emit_handle(handle: BinaryIO, *, read_is_output: bool) -> _ForwardResult:
     emitted = False
+    stdout: _BinaryWriter | None = None
     while True:
         try:
             chunk = handle.read(_OUTPUT_CHUNK)
@@ -336,12 +328,23 @@ def _emit_handle(handle: BinaryIO, *, read_is_output: bool) -> _ForwardResult:
                 return _ForwardResult(output_error=error, wrote_output=True)
             return _ForwardResult(staging_error=error, wrote_output=emitted)
         if not chunk:
-            return _ForwardResult(wrote_output=emitted)
+            break
+        if stdout is None:
+            try:
+                stdout = _binary_stdout()
+            except Exception as error:  # noqa: BLE001 - stdout boundary.
+                return _ForwardResult(output_error=error, wrote_output=emitted)
         try:
-            _write_stdout(chunk)
+            _write_stdout(stdout, chunk)
         except Exception as error:  # noqa: BLE001 - stdout boundary.
             return _ForwardResult(output_error=error, wrote_output=emitted)
         emitted = True
+    if stdout is not None:
+        try:
+            stdout.flush()
+        except Exception as error:  # noqa: BLE001 - stdout boundary.
+            return _ForwardResult(output_error=error, wrote_output=emitted)
+    return _ForwardResult(wrote_output=emitted)
 
 
 def _forward_stdin() -> _ForwardResult:
@@ -353,7 +356,7 @@ def _forward_stdin() -> _ForwardResult:
 
 
 def _forward_temporary(temporary: str) -> _ForwardResult:
-    """Validate then emit from one staging handle."""
+    """Stream one staging handle straight to stdout."""
     try:
         handle = Path(temporary).open("rb")  # noqa: SIM115
     except Exception as error:  # noqa: BLE001 - local staging open boundary.
@@ -361,16 +364,7 @@ def _forward_temporary(temporary: str) -> _ForwardResult:
 
     forwarded = _ForwardResult()
     try:
-        staging_error = _validate_handle(handle)
-        if staging_error is not None:
-            forwarded = _ForwardResult(staging_error=staging_error)
-        else:
-            try:
-                handle.seek(0)
-            except Exception as error:  # noqa: BLE001 - local staging seek boundary.
-                forwarded = _ForwardResult(staging_error=error)
-            else:
-                forwarded = _emit_handle(handle, read_is_output=True)
+        forwarded = _emit_handle(handle, read_is_output=True)
     finally:
         try:
             handle.close()
@@ -521,4 +515,11 @@ async def _run_cat(
             )
         cleanup_failed = await invocation.close(active_exc_info)
     if not succeeded or cleanup_failed:
+        if (
+            not cleanup_failed
+            and not progress.failures
+            and progress.staging_cleanup_error is None
+            and isinstance(progress.output_error, BrokenPipeError)
+        ):
+            raise typer.Exit(_BROKEN_PIPE_EXIT_CODE)
         raise typer.Exit(1)

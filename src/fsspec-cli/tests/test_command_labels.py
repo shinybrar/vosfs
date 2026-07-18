@@ -18,7 +18,7 @@ from fsspec_cli._stat import _run_stat
 from ._support import _RecordingSource
 
 _COMMAND = "future\\command\0\r\n"
-_RENDERED_COMMAND = "future\\\\command\\0\\r\\n"
+_RENDERED_COMMAND = "future\\\\command\\x00\\x0d\\x0a"
 
 
 def test_ls_preflight_diagnostic_escapes_concrete_command_label(capsys) -> None:
@@ -181,11 +181,15 @@ def test_cat_output_failure_diagnostic_uses_concrete_command_label(
     output_error = OSError("write")
     source = _RecordingSource([], get_file_content=b"data")
 
-    def fail_stdout(chunk: bytes) -> None:
-        del chunk
-        raise output_error
+    class _FailStdout:
+        def write(self, chunk: bytes) -> int:
+            del chunk
+            raise output_error
 
-    monkeypatch.setattr("fsspec_cli._cat._write_stdout", fail_stdout)
+        def flush(self) -> None:
+            return None
+
+    monkeypatch.setattr("fsspec_cli._cat._binary_stdout", _FailStdout)
 
     with pytest.raises(typer.Exit) as caught:
         asyncio.run(_run_cat(_COMMAND, ("memory:/file",), {"memory": source}))

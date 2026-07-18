@@ -16,7 +16,7 @@ _TIMEOUT = 5
 _NATIVE_NEWLINE = os.linesep.encode()
 _EXPECTED_TTY_STDOUT = b"\x1b[31mred\x1b[0m" + _NATIVE_NEWLINE
 _OUTPUT_ERROR = (
-    b"ls: output: output failure (OSError): disk\\\\bad\\nline" + _NATIVE_NEWLINE
+    b"ls: output: output failure (OSError): disk\\\\bad\\x0aline" + _NATIVE_NEWLINE
 )
 _CHILD_PATH = Path(__file__).with_name("_output_process_child.py")
 

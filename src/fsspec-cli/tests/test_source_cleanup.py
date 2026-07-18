@@ -52,7 +52,7 @@ def test_ls_reports_every_source_exit_failure_in_reverse_order() -> None:
     assert result.stdout == "alpha:/one\nbeta:/two\n"
     assert result.stderr == (
         "ls: beta: source exit failure (RuntimeError): beta failure\n"
-        "ls: alpha: source exit failure (OSError): alpha\\\\\\0\\r\\n\n"
+        "ls: alpha: source exit failure (OSError): alpha\\\\\\x00\\x0d\\x0a\n"
     )
     assert len(alpha.exit_calls) == 1
     assert len(beta.exit_calls) == 1
@@ -150,7 +150,7 @@ def test_ls_renders_source_names_and_empty_exception_messages() -> None:
     assert result.exit_code == 1
     assert result.stdout == ""
     assert result.stderr == (
-        "ls: broken\\\\source\\r: source factory failure (RuntimeError): \n"
+        "ls: broken\\\\source\\x0d: source factory failure (RuntimeError): \n"
     )
 
 

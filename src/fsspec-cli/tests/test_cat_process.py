@@ -10,9 +10,10 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _TIMEOUT = 5
+_SIGPIPE_EXIT = 141  # 128 + SIGPIPE (13): sole broken pipe on stdout.
 _NATIVE_NEWLINE = os.linesep.encode()
 _OUTPUT_ERROR = (
-    b"cat: output: output failure (OSError): disk\\\\bad\\nline" + _NATIVE_NEWLINE
+    b"cat: output: output failure (OSError): disk\\\\bad\\x0aline" + _NATIVE_NEWLINE
 )
 _CHILD_PATH = Path(__file__).with_name("_cat_process_child.py")
 
@@ -117,7 +118,7 @@ def test_public_seam_cat_emits_empty_content() -> None:
 def test_public_seam_cat_broken_pipe_is_silent_runtime_failure() -> None:
     result = _run_broken_stdout_pipe("normal", "memory:/docs")
 
-    assert result.returncode == 1
+    assert result.returncode == _SIGPIPE_EXIT
     assert result.stderr == b""
 
 
@@ -168,7 +169,7 @@ def test_public_seam_cat_broken_pipe_during_stdin_at_each_position_is_silent(
         finally:
             tracking_path.unlink(missing_ok=True)
 
-        assert result.returncode == 1
+        assert result.returncode == _SIGPIPE_EXIT
         assert result.stdout is None or result.stdout == expected_stdout
         assert result.stderr == b""
         assert tracking_events[0] == "source-enter"
@@ -297,5 +298,5 @@ def test_public_seam_cat_repeated_dash_second_sees_eof_on_pipe() -> None:
 def test_public_seam_cat_broken_pipe_during_stdin_is_silent() -> None:
     result = _run_broken_stdout_pipe("stdin", stdin=b"stdin-bytes")
 
-    assert result.returncode == 1
+    assert result.returncode == _SIGPIPE_EXIT
     assert result.stderr == b""

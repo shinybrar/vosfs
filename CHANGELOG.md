@@ -2,6 +2,10 @@
 
 ## [0.4.0](https://github.com/shinybrar/vosfs/compare/v0.3.3...v0.4.0) (2026-07-17)
 
+> **Note:** This release changed no `vosfs` package source. Every feature below
+> is `fsspec-cli` or CI/release-automation work; `vosfs` behavior is unchanged
+> from v0.3.0.
+
 
 ### Features
 

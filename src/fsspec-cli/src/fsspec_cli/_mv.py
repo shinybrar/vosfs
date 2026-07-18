@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import sys
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import typer
 from typer.core import TyperCommand
@@ -33,7 +33,6 @@ from ._sources import _SourceInvocation
 if TYPE_CHECKING:
     from collections.abc import Collection
     from collections.abc import Mapping as MappingType
-    from types import FunctionType
 
     from fsspec.asyn import AsyncFileSystem
     from typer._click import Context
@@ -114,9 +113,6 @@ async def _confirmed_mv_file(  # noqa: C901, PLR0911, PLR0912
             request.destination,
             backend_error=NotImplementedError("_mv must be configured by source form"),
         )
-    operation = cast("FunctionType", declared_operation).__get__(
-        filesystem, type(filesystem)
-    )
 
     source_temp, error = await _stage_remote(
         filesystem, request.source.path, "fsspec-cli-mv-src-"
@@ -128,7 +124,7 @@ async def _confirmed_mv_file(  # noqa: C901, PLR0911, PLR0912
     dest_temp: str | None = None
     try:
         try:
-            await operation(request.source.path, resolved)
+            await declared_operation(filesystem, request.source.path, resolved)
         except Exception as operation_error:  # noqa: BLE001
             return _CpFailure(
                 request.destination,

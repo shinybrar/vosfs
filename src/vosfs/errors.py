@@ -253,8 +253,9 @@ def http_exception(
     The returned exception is not raised. Authentication and authorization
     (401, 403) map to :class:`PermissionError`; a missing node (404) to
     :class:`FileNotFoundError`; a conflict (409) to :class:`FileExistsError`; a
-    locked node (423) to :class:`BlockingIOError`; quota exhaustion (413 or a
-    quota fault) to ``OSError`` with :data:`errno.ENOSPC`. Every other status,
+    locked node (423) to :class:`BlockingIOError`; quota exhaustion (413, a
+    recognised quota fault, or a body that mentions ``quota`` in prose) to
+    ``OSError`` with :data:`errno.ENOSPC`. Every other status,
     including 5xx, 412, and an ambiguous 400, becomes a :class:`VOSpaceError`
     carrying the status, fault, and retry guidance.
 
@@ -274,7 +275,11 @@ def http_exception(
     detail = f": {snippet}" if snippet else ""
     base = f"VOSpace request failed{location}{detail}"
 
-    if status == _STATUS_PAYLOAD_TOO_LARGE or _is_quota_fault(fault):
+    if (
+        status == _STATUS_PAYLOAD_TOO_LARGE
+        or _is_quota_fault(fault)
+        or "quota" in body.lower()
+    ):
         return OSError(errno.ENOSPC, f"{base} (HTTP {status})")
 
     factory = _STATUS_EXCEPTIONS.get(status)

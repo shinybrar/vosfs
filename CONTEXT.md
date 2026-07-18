@@ -7,7 +7,8 @@ capability contract and implementation backlog.
 
 **OpenCADC VOSpace profile**:
 The VOSpace behavior implemented by the pinned `opencadc/vos` Cavern source
-and tests that bounds the `vosfs` v0.3.0 contract.
+and tests that bounds the `vosfs` capability contract in
+[`docs/design/trd.md`](docs/design/trd.md).
 _Avoid_: Full VOSpace 2.1 conformance, generic VOSpace support
 
 **Native capability**:
@@ -26,9 +27,10 @@ advertises it and the required behavior is verified.
 _Avoid_: Portable VOSpace capability, guaranteed extension
 
 **Unsupported capability**:
-A behavior deliberately excluded from v0.3.0 because the OpenCADC VOSpace
-profile lacks the required semantics, no approved client-derived behavior
-supplies them, or the behavior is outside the v0.3.0 product scope.
+A behavior deliberately excluded from the capability contract because the
+OpenCADC VOSpace profile lacks the required semantics, no approved
+client-derived behavior supplies them, or the behavior is outside the
+contract's product scope.
 _Avoid_: Unimplemented endpoint
 
 **Embedded command library**:

@@ -2,13 +2,18 @@
 
 <!-- pyml disable line-length -->
 
-Status: **Approved for implementation**
+Status: **Approved and implemented**
 
-Implementation status: **Not yet released**
+Implementation status: **Implemented and released**
+
+Contract version vs package version: this v0.3.0 capability contract has governed
+every shipped `vosfs` release from v0.3.0 through v0.4.0; the `vosfs` source is
+unchanged since v0.3.0, so the capability contract remains at v0.3.0 independently
+of the package version.
 
 Contract target: **`vosfs` v0.3.0**
 
-Last updated: **2026-07-10**
+Last updated: **2026-07-17**
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**,
 and **MAY** in this document are to be interpreted as described by
@@ -505,7 +510,7 @@ project.
 | pandas | `read_csv("vos://...", storage_options=...)` and `DataFrame.to_csv(...)` in a fresh process. | No blanket Excel, SQL, or engine claim. |
 | NumPy | Round-trip `.npy` and `.npz` through file objects; `loadtxt` through a file object. | `numpy.load("vos://...")` and remote `mmap_mode` are unsupported. |
 | Dask | CSV read/write through a fresh worker process with `blocksize=None`; deterministic reconstruction and tokenization. | Partitioned remote-range reads are unsupported. |
-| Zarr v3 | `FsspecStore` create, read, overwrite, list, delete, and partial-value reads. | Partial reads transfer the complete object. |
+| Zarr v3 | `FsspecStore` create, read, overwrite, list, delete, and partial-value reads. | Partial reads transfer the complete object. Zarr v3 requires Python >= 3.11; the gate does not apply on 3.10. |
 | PyArrow/Parquet | `FSSpecHandler` dataset discovery and Parquet read/write. | Footer seeks stage complete objects; append streams are unsupported. |
 | `fsspec.fuse` | No release gate. | Unsupported in v0.3.0. |
 
@@ -628,7 +633,7 @@ This RFC becomes a release claim only after every required gate passes and the
 release evidence records the tested OpenCADC, fsspec, Python, HTTPX, RESpx, and
 scientific-stack versions.
 
-After v0.3.0 is released:
+Now that v0.3.0 is released:
 
 - patch releases **MUST NOT** rename constructor options, remove a supported
   matrix row, weaken an exception guarantee, or change path identity;

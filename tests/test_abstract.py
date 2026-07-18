@@ -20,13 +20,12 @@ a small set of root causes:
   entries, but a ``ContainerNode`` has no negotiable byte endpoint (HTTP 404).
 * ``_QUESTION_MARK`` -- path normalization treats ``?`` as a URL query delimiter,
   so glob patterns containing ``?`` cannot be resolved.
-* ``_LIST_SOURCE`` -- ``_strip_protocol`` normalizes a single scalar path, so the
-  list of remote sources that fsspec's ``get`` forwards raises before transfer.
 """
 
 from __future__ import annotations
 
 import posixpath
+from importlib.metadata import version
 from typing import TYPE_CHECKING
 
 import pytest
@@ -48,7 +47,10 @@ if TYPE_CHECKING:
 
     from vosfs import VOSpaceFileSystem
 
-_VERSION = "vosfs v0.3.0"
+# Derived from the installed package so skip reasons never drift from the
+# shipped version. The unsupported capabilities they describe are fixed by the
+# capability contract; the version label simply tracks the release under test.
+_VERSION = f"vosfs v{version('vosfs')}"
 
 _WRITE_PARENT = (
     f"unsupported in {_VERSION}: a byte write materializes only the target data "
@@ -63,11 +65,6 @@ _GET_TREE = (
 _QUESTION_MARK = (
     f"unsupported in {_VERSION}: path normalization treats '?' as a URL query "
     "delimiter, so glob patterns containing '?' cannot be resolved"
-)
-_LIST_SOURCE = (
-    f"unsupported in {_VERSION}: getting a list of remote sources into a single "
-    "local directory routes that list through _strip_protocol, which normalizes "
-    "only a scalar path"
 )
 _HASHED_TEARDOWN = (
     f"unsupported in {_VERSION}: the hashed-names scenario pipes files under "
@@ -236,11 +233,9 @@ class TestGet(VOSpaceFixtures, AbstractGetTests):
     @pytest.mark.skip(reason=_GET_TREE)
     def test_get_directory_without_files_with_same_name_prefix(self): ...
 
-    @pytest.mark.skip(reason=_LIST_SOURCE)
-    def test_get_list_of_files_to_existing_directory(self): ...
-
-    @pytest.mark.skip(reason=_LIST_SOURCE)
-    def test_get_list_of_files_to_new_directory(self): ...
+    # test_get_list_of_files_to_{existing,new}_directory now run: _strip_protocol
+    # normalizes fsspec's forwarded list of sources (see the list branch on
+    # VOSpaceFileSystem._strip_protocol).
 
     @pytest.mark.skip(reason=_HASHED_TEARDOWN)
     def test_get_with_source_and_destination_as_list(self): ...
