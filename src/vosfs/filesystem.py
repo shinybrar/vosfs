@@ -51,6 +51,7 @@ _HTTP_PRECONDITION_FAILED = 412
 _IDENTITY_ENCODING = {"Accept-Encoding": "identity"}
 _READ_CHUNK = 1 << 20
 _DEFAULT_CONTENT_TYPE = "application/octet-stream"
+_GET_CONTAINER_MARKER = "_vosfs_materialize_get_container"
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -487,6 +488,26 @@ class VOSpaceFileSystem(AsyncFileSystem):
         finally:
             await response.aclose()
 
+    async def _get(
+        self,
+        rpath: str | list[str],
+        lpath: str | list[str],
+        recursive: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
+        callback: Callback = DEFAULT_CALLBACK,
+        maxdepth: int | None = None,
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> list[Any] | None:
+        """Use fsspec's coordinator while marking entries for container handling."""
+        kwargs[_GET_CONTAINER_MARKER] = True
+        return await super()._get(
+            rpath,
+            lpath,
+            recursive=recursive,
+            callback=callback,
+            maxdepth=maxdepth,
+            **kwargs,
+        )
+
     async def _get_file(
         self,
         rpath: str,
@@ -494,8 +515,13 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> None:
         """Stream one negotiated whole-object GET to a local file."""
-        callback: Callback = kwargs.get("callback", DEFAULT_CALLBACK)
         rpath = self._strip_protocol(rpath)
+        if kwargs.pop(_GET_CONTAINER_MARKER, False):
+            info = await self._info(rpath)
+            if info["type"] == "directory":
+                Path(lpath).mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+                return
+        callback: Callback = kwargs.get("callback", DEFAULT_CALLBACK)
         response = await self._open_read_stream(rpath)
         try:
             size = response.headers.get("content-length")

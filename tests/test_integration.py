@@ -113,3 +113,27 @@ def test_directory_operations(fs: VOSpaceFileSystem, run_namespace: str) -> None
     fs.pipe_file(f"{nested}/leaf.txt", b"leaf")
     found = fs.find(run_namespace)
     assert f"{nested}/leaf.txt" in found
+
+
+@requires_service
+def test_recursive_get(
+    fs: VOSpaceFileSystem,
+    run_namespace: str,
+    tmp_path,
+) -> None:
+    remote_tree = f"{run_namespace}/recursive-get"
+    remote_empty = f"{remote_tree}/empty"
+    remote_nested = f"{remote_tree}/nested"
+    fs.makedirs(remote_empty)
+    fs.makedirs(remote_nested)
+    fs.pipe_file(f"{remote_tree}/root.bin", b"root-live-bytes")
+    fs.pipe_file(f"{remote_nested}/leaf.bin", b"leaf-live-bytes")
+
+    local_tree = tmp_path / "download"
+    fs.get(remote_tree, str(local_tree), recursive=True)
+
+    assert local_tree.is_dir()
+    assert (local_tree / "empty").is_dir()
+    assert list((local_tree / "empty").iterdir()) == []
+    assert (local_tree / "root.bin").read_bytes() == b"root-live-bytes"
+    assert (local_tree / "nested" / "leaf.bin").read_bytes() == b"leaf-live-bytes"

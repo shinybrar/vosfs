@@ -16,8 +16,6 @@ a small set of root causes:
   Files written below a not-yet-created directory are orphaned: unreachable by
   ``ls``/``find`` and the parent is not an ``isdir``. (``cp_file`` does create
   the destination parent, so copy trees are supported.)
-* ``_GET_TREE`` -- recursive download invokes the per-file byte hook on directory
-  entries, but a ``ContainerNode`` has no negotiable byte endpoint (HTTP 404).
 * ``_QUESTION_MARK`` -- path normalization treats ``?`` as a URL query delimiter,
   so glob patterns containing ``?`` cannot be resolved.
 """
@@ -57,11 +55,6 @@ _WRITE_PARENT = (
     "node and never creates a missing parent ContainerNode, so a file written "
     "below a not-yet-created directory is orphaned (no isdir, absent from ls/find)"
 )
-_GET_TREE = (
-    f"unsupported in {_VERSION}: recursive download invokes the per-file byte hook "
-    "on directory entries, but a ContainerNode has no negotiable byte endpoint "
-    "(HTTP 404)"
-)
 _QUESTION_MARK = (
     f"unsupported in {_VERSION}: path normalization treats '?' as a URL query "
     "delimiter, so glob patterns containing '?' cannot be resolved"
@@ -71,18 +64,6 @@ _HASHED_TEARDOWN = (
     "'source' without creating that container (writes never create parents), so "
     "the fixture's recursive-rm teardown cannot resolve the 'source' node"
 )
-
-# Exact (path, recursive, maxdepth) glob-edge-case rows that recursive download
-# cannot serve: a matched ContainerNode is fed to the per-file byte hook.
-_GET_GLOB_UNSUPPORTED = {
-    ("*", True, None),
-    ("*1", True, None),
-    ("**", True, None),
-    ("**/*1", True, None),
-    ("**/subdir0", True, None),
-    ("subdir[1-2]", True, None),
-    ("subdir[0-1]", True, None),
-}
 
 # Exact (path, recursive, maxdepth) glob-edge-case rows whose upload writes files
 # below a directory that is never materialized (no source directory forces a
@@ -133,12 +114,6 @@ def _copy_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noq
     return None
 
 
-def _get_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noqa: ARG001
-    if "?" in path:
-        return _QUESTION_MARK
-    return _GET_TREE if (path, recursive, maxdepth) in _GET_GLOB_UNSUPPORTED else None
-
-
 def _put_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noqa: ARG001
     if "?" in path:
         return _QUESTION_MARK
@@ -148,7 +123,8 @@ def _put_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noqa
 
 
 _COPY_GLOB_PARAMS = _glob_params(_copy_glob_reason)
-_GET_GLOB_PARAMS = _glob_params(_get_glob_reason)
+# Copy and get have the same remaining exclusion: #63's question-mark paths.
+_GET_GLOB_PARAMS = _COPY_GLOB_PARAMS
 _PUT_GLOB_PARAMS = _glob_params(_put_glob_reason)
 
 
@@ -214,24 +190,6 @@ class TestCopy(VOSpaceFixtures, AbstractCopyTests):
 
 class TestGet(VOSpaceFixtures, AbstractGetTests):
     """Remote-to-local download suite."""
-
-    @pytest.mark.skip(reason=_GET_TREE)
-    def test_get_directory_to_existing_directory(self): ...
-
-    @pytest.mark.skip(reason=_GET_TREE)
-    def test_get_directory_to_new_directory(self): ...
-
-    @pytest.mark.skip(reason=_GET_TREE)
-    def test_get_glob_to_existing_directory(self): ...
-
-    @pytest.mark.skip(reason=_GET_TREE)
-    def test_get_glob_to_new_directory(self): ...
-
-    @pytest.mark.skip(reason=_GET_TREE)
-    def test_get_directory_recursive(self): ...
-
-    @pytest.mark.skip(reason=_GET_TREE)
-    def test_get_directory_without_files_with_same_name_prefix(self): ...
 
     # test_get_list_of_files_to_{existing,new}_directory now run: _strip_protocol
     # normalizes fsspec's forwarded list of sources (see the list branch on
