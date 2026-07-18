@@ -36,6 +36,11 @@ _SIZE_BASE = 1024
 _SINGLE_DECIMAL_LIMIT = 100
 
 ListingKind = Literal["file", "dir", "link", "other"]
+_MODE_KIND_BY_TYPE: dict[int, ListingKind] = {
+    stat.S_IFREG: "file",
+    stat.S_IFDIR: "dir",
+    stat.S_IFLNK: "link",
+}
 
 
 @dataclass(frozen=True)
@@ -103,19 +108,13 @@ def _datetime_time(value: datetime) -> float | None:
         return None
 
 
-def _numeric_time(value: float) -> float | None:
-    try:
-        normalized = float(value)
-    except OverflowError:
-        return None
-    return _supported_time(normalized)
-
-
 def _normalize_time(value: object) -> float | None:
-    if type(value) is int:
-        return _numeric_time(value)
-    if type(value) is float:
-        return _numeric_time(value)
+    if type(value) is int or type(value) is float:
+        try:
+            normalized = float(value)
+        except OverflowError:
+            return None
+        return _supported_time(normalized)
     if isinstance(value, datetime):
         return _datetime_time(value)
     if type(value) is not str:
@@ -188,9 +187,6 @@ def format_size(size: int | None, *, human_readable: bool = False) -> str:
 
     unit_index = 0
     unit_size = _SIZE_BASE
-    while unit_index < len(_SIZE_UNITS) - 1 and size >= unit_size * _SIZE_BASE:
-        unit_index += 1
-        unit_size *= _SIZE_BASE
     while True:
         tenths = (size * 10 + unit_size // 2) // unit_size
         if tenths < _SINGLE_DECIMAL_LIMIT:
@@ -211,22 +207,11 @@ def _format_mtime(value: float | None) -> str:
     return time.strftime("%b %e %H:%M", time.localtime(value))
 
 
-def _mode_matches_kind(row: ListingRow) -> bool:
-    if row.mode is None:
-        return False
-    if row.kind == "file":
-        return stat.S_ISREG(row.mode)
-    if row.kind == "dir":
-        return stat.S_ISDIR(row.mode)
-    if row.kind == "link":
-        return stat.S_ISLNK(row.mode)
-    return not any(
-        predicate(row.mode) for predicate in (stat.S_ISREG, stat.S_ISDIR, stat.S_ISLNK)
-    )
-
-
 def _type_indicator(row: ListingRow) -> str:
-    if row.mode is None or not _mode_matches_kind(row):
+    if row.mode is None:
+        return row.kind
+    mode_kind = _MODE_KIND_BY_TYPE.get(stat.S_IFMT(row.mode), "other")
+    if mode_kind != row.kind:
         return row.kind
     return stat.filemode(row.mode)
 
