@@ -21,15 +21,11 @@ from __future__ import annotations
 import contextlib
 import os
 import uuid
-from typing import TYPE_CHECKING
 
 import pytest
 from fsspec.asyn import sync
 
 from vosfs import VOSpaceFileSystem
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 pytestmark = pytest.mark.integration
 
@@ -123,7 +119,7 @@ def test_directory_operations(fs: VOSpaceFileSystem, run_namespace: str) -> None
 def test_recursive_get(
     fs: VOSpaceFileSystem,
     run_namespace: str,
-    tmp_path: Path,
+    tmp_path,
 ) -> None:
     remote_tree = f"{run_namespace}/recursive-get"
     remote_empty = f"{remote_tree}/empty"
