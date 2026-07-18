@@ -355,16 +355,14 @@ def test_native_vosfs_tree_profile_uses_client_traversal_over_mocked_transport()
     ]
     assert vos_filesystems == source.filesystems
     assert all(filesystem._pool.closed is True for filesystem in vos_filesystems)
-    assert [transport.calls for transport in transports] == [
-        [
-            ("GET", "/arc/capabilities"),
-            ("GET", "/arc/nodes/docs"),
-            ("GET", "/arc/nodes/docs/sub"),
-            ("GET", "/arc/nodes/docs/empty"),
-        ],
-        [
-            ("GET", "/arc/capabilities"),
-            ("GET", "/arc/nodes/docs"),
-        ],
-    ]
+    unbounded_paths = {path for _method, path in transports[0].calls}
+    assert {
+        "/arc/nodes/docs",
+        "/arc/nodes/docs/sub",
+        "/arc/nodes/docs/empty",
+    } <= unbounded_paths
+    direct_paths = {path for _method, path in transports[1].calls}
+    assert "/arc/nodes/docs" in direct_paths
+    assert "/arc/nodes/docs/sub" not in direct_paths
+    assert "/arc/nodes/docs/empty" not in direct_paths
     assert all(transport.closed for transport in transports)

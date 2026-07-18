@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import locale
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeGuard, cast
 
@@ -222,25 +223,48 @@ def _render_tree(request: _TreeRequest, rows: Mapping[str, _WalkRow]) -> str:
     if root.files == ("",):
         return f"{request.operand.path}\n"
 
-    def render_children(row: _WalkRow, depth: int, prefix: str) -> None:
+    stack: list[tuple[_WalkRow, int, str, str, bool, bool]] = []
+
+    def push_children(row: _WalkRow, depth: int, prefix: str) -> None:
         if request.maxdepth is not None and depth >= request.maxdepth:
             return
         directories = _sorted_entries(row.directories)
         files = _sorted_entries(row.files)
         children = [(name, True) for name in directories]
         children.extend((name, False) for name in files)
-        for index, (name, is_directory) in enumerate(children):
+        for index in range(len(children) - 1, -1, -1):
+            name, is_directory = children[index]
             is_last = index == len(children) - 1
-            connector = "└── " if is_last else "├── "
-            lines.append(f"{prefix}{connector}{name}")
-            if is_directory:
-                child = rows.get(_canonical_root(_child_root(row.root, name)))
-                if child is not None:
-                    continuation = "    " if is_last else "│   "
-                    render_children(child, depth + 1, prefix + continuation)
+            stack.append((row, depth, prefix, name, is_directory, is_last))
 
-    render_children(root, 0, "")
+    push_children(root, 0, "")
+    while stack:
+        parent, depth, prefix, name, is_directory, is_last = stack.pop()
+        connector = "└── " if is_last else "├── "
+        lines.append(f"{prefix}{connector}{name}")
+        if not is_directory:
+            continue
+        child = rows.get(_canonical_root(_child_root(parent.root, name)))
+        if child is None:
+            continue
+        continuation = "    " if is_last else "│   "
+        push_children(child, depth + 1, prefix + continuation)
+
     return "\n".join(lines) + "\n"
+
+
+async def _materialize_iterator(iterator: Iterator[object]) -> list[object]:
+    worker = asyncio.create_task(asyncio.to_thread(list, iterator))
+    try:
+        values = await asyncio.shield(worker)
+    except BaseException:
+        while not worker.done():
+            with suppress(BaseException):
+                await asyncio.shield(worker)
+        with suppress(BaseException):
+            worker.result()
+        raise
+    return cast("list[object]", values)
 
 
 async def _consume_walk(result: object) -> list[object] | None:
@@ -251,8 +275,7 @@ async def _consume_walk(result: object) -> list[object] | None:
     resolved = await result
     if not isinstance(resolved, Iterator):
         return None
-    values = await asyncio.to_thread(list, resolved)
-    return cast("list[object]", values)
+    return await _materialize_iterator(resolved)
 
 
 async def _walk(request: _TreeRequest, filesystem: AsyncFileSystem) -> str | _Failure:

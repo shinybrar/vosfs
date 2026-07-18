@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import locale
+import sys
 import threading
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager
@@ -16,6 +18,7 @@ from fsspec_cli import App, AsyncFilesystemSource
 from typer.testing import CliRunner, Result
 
 if TYPE_CHECKING:
+    from collections.abc import Coroutine
     from types import TracebackType
 
 _EXACT_TREE_HELP = (
@@ -165,6 +168,78 @@ class _TreeContext(AbstractAsyncContextManager[_TreeFileSystem]):
             raise self.source.exit_error
 
 
+class _BlockingIterator(Iterator[object]):
+    def __init__(self, source: _BlockingSource) -> None:
+        self.source = source
+
+    def __next__(self) -> object:
+        self.source.events.append("iterator-start")
+        self.source.started.set()
+        if not self.source.release.wait(timeout=5):
+            message = "timed out waiting to release blocking iterator"
+            raise AssertionError(message)
+        self.source.events.append("iterator-done")
+        raise StopIteration
+
+
+class _BlockingFileSystem(AsyncFileSystem):
+    cachable = False
+
+    def __init__(self, source: _BlockingSource) -> None:
+        super().__init__(asynchronous=True)
+        self.source = source
+
+    def _walk(  # type: ignore[override]
+        self,
+        path: str,
+        maxdepth: int | None = None,
+        on_error: str = "omit",
+        **kwargs: object,
+    ) -> object:
+        assert (path, maxdepth, on_error, kwargs) == (
+            "/docs",
+            None,
+            "raise",
+            {"detail": False},
+        )
+
+        async def adapted_walk() -> Iterator[object]:
+            return _BlockingIterator(self.source)
+
+        return adapted_walk()
+
+
+class _BlockingSource:
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.events: list[str] = []
+
+    def __call__(self) -> _BlockingContext:
+        self.events.append("factory")
+        return _BlockingContext(self)
+
+
+class _BlockingContext(AbstractAsyncContextManager[_BlockingFileSystem]):
+    def __init__(self, source: _BlockingSource) -> None:
+        self.source = source
+
+    async def __aenter__(self) -> _BlockingFileSystem:
+        self.source.events.append("enter")
+        return _BlockingFileSystem(self.source)
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        del traceback
+        assert exc_type is asyncio.CancelledError
+        assert isinstance(exc, asyncio.CancelledError)
+        self.source.events.append("exit")
+
+
 def _source_must_not_run() -> NoReturn:
     raise AssertionError
 
@@ -218,6 +293,38 @@ def test_tree_consumes_both_pinned_walk_shapes_and_renders_exactly(
     if shape == "adapted":
         assert source.iterators[0].thread_ids
         assert set(source.iterators[0].thread_ids).isdisjoint({threading.get_ident()})
+
+
+def test_tree_joins_adapted_iterator_before_source_exit_on_task_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _BlockingSource()
+    real_run = asyncio.run
+
+    def cancelling_run(coroutine: Coroutine[object, object, None]) -> None:
+        async def supervise() -> None:
+            command_task = asyncio.create_task(coroutine)
+            started = await asyncio.to_thread(source.started.wait, 5)
+            assert started
+            command_task.cancel("original tree cancellation")
+            asyncio.get_running_loop().call_later(0.01, source.release.set)
+            await command_task
+
+        real_run(supervise())
+
+    monkeypatch.setattr(asyncio, "run", cancelling_run)
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        _invoke_tree(["memory:/docs"], sources={"memory": source})
+
+    assert caught.value.args == ("original tree cancellation",)
+    assert source.events == [
+        "factory",
+        "enter",
+        "iterator-start",
+        "iterator-done",
+        "exit",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -303,18 +410,44 @@ def test_tree_preserves_operand_root_spelling_after_relationship_validation(
     assert (result.exit_code, result.stdout, result.stderr) == (0, stdout, "")
 
 
+def test_tree_renders_a_valid_chain_deeper_than_the_python_recursion_limit() -> None:
+    depth = sys.getrecursionlimit() + 25
+    rows: list[object] = []
+    path = "/root"
+    for index in range(depth):
+        name = f"d{index}"
+        rows.append((path, [name], []))
+        path = f"{path}/{name}"
+    rows.append((path, [], ["leaf"]))
+    source = _TreeSource(rows=rows)
+    expected = "/root\n" + "".join(
+        f"{'    ' * index}└── d{index}\n" for index in range(depth)
+    )
+    expected += f"{'    ' * depth}└── leaf\n"
+
+    result = _invoke_tree(["memory:/root"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, expected, "")
+    assert source.walk_calls == [("/root", None, False, "raise", {})]
+
+
 def test_tree_orders_each_group_by_locale_then_raw(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = _TreeSource(rows=[("/docs", ["z-dir", "a-dir"], ["z", "a"])])
-    transformed = {"z-dir": "0", "a-dir": "1", "z": "0", "a": "1"}
+    transformed = {
+        "z-dir": "directory",
+        "a-dir": "directory",
+        "z": "file",
+        "a": "file",
+    }
     monkeypatch.setattr(locale, "strxfrm", transformed.__getitem__)
 
     result = _invoke_tree(["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
-        "/docs\n├── z-dir\n├── a-dir\n├── z\n└── a\n",
+        "/docs\n├── a-dir\n├── z-dir\n├── a\n└── z\n",
         "",
     )
 
