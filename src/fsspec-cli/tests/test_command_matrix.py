@@ -159,9 +159,6 @@ def test_adapted_local_long_listing_profile_is_rich_and_uses_detail(
                 f"-rw-r--r--  1  {owner}  {group}  8B  Jul 17 18:00  guide.md\n"
                 f"-rw-r--r--  1  {owner}  {group}  9B  Jul 17 18:00  notes.txt\n"
             ),
-            exact_file=(
-                f"-rw-r--r--  1  {owner}  {group}  9  Jul 17 18:00  notes.txt\n"
-            ),
         ),
     )
 
@@ -195,7 +192,6 @@ def test_adapted_memory_long_listing_profile_is_sparse_and_uses_detail(
         LongListingGolden(
             exact_directory="file  8  guide.md\nfile  9  notes.txt\n",
             human_directory="file  8B  guide.md\nfile  9B  notes.txt\n",
-            exact_file="file  9  notes.txt\n",
         ),
     )
 

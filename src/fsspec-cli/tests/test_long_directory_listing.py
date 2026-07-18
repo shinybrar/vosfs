@@ -3,6 +3,7 @@
 from types import MappingProxyType
 
 import pytest
+from fsspec_cli._listing import to_listing as normalize_listing
 
 from ._support import _invoke_ll, _invoke_ls, _RecordingSource
 
@@ -95,6 +96,62 @@ def test_long_listing_preserves_almost_all_selection_and_sorting() -> None:
         0,
         "file  2  .hidden\nfile  1  visible\n",
         "",
+    )
+
+
+def test_long_listing_does_not_normalize_omitted_hidden_rows(monkeypatch) -> None:
+    hidden = {"name": "/docs/.hidden", "type": "file", "size": 2}
+
+    def normalize_visible(info):
+        if info is hidden:
+            msg = "omitted hidden metadata must not be normalized"
+            raise AssertionError(msg)
+        return normalize_listing(info)
+
+    monkeypatch.setattr("fsspec_cli._ls.to_listing", normalize_visible)
+    source = _RecordingSource(
+        [],
+        {"name": "/docs", "type": "directory"},
+        ls_result=[
+            hidden,
+            {"name": "/docs/visible", "type": "file", "size": 1},
+        ],
+    )
+
+    result = _invoke_ls(["-l", "memory:/docs"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "file  1  visible\n",
+        "",
+    )
+
+
+def test_long_listing_selected_normalization_failure_is_atomic(monkeypatch) -> None:
+    rejected = {"name": "/docs/rejected", "type": "file", "size": 2}
+
+    def reject_selected(info):
+        if info is rejected:
+            msg = "invalid selected metadata"
+            raise ValueError(msg)
+        return normalize_listing(info)
+
+    monkeypatch.setattr("fsspec_cli._ls.to_listing", reject_selected)
+    source = _RecordingSource(
+        [],
+        {"name": "/docs", "type": "directory"},
+        ls_result=[
+            {"name": "/docs/accepted", "type": "file", "size": 1},
+            rejected,
+        ],
+    )
+
+    result = _invoke_ls(["-l", "memory:/docs"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "ls: memory:/docs: incompatible result\n",
     )
 
 

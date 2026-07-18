@@ -2,17 +2,16 @@
 
 <!-- pyml disable line-length -->
 
-> **Partially superseded** by
-> [`fsspec-cli-shell-experience-spec.md`](fsspec-cli-shell-experience-spec.md):
-> the core-vs-extension classification moved there (the ubiquitous commands are
-> now CORE, not extensions). This document is retained as the verified command
-> **inventory** and as background for the backend-specific extension seam.
+> **Historical inventory.** Every core/extension classification and priority in
+> this document is superseded by the
+> [`fsspec-cli` shell-experience specification](fsspec-cli-shell-experience-spec.md).
+> The current long-listing contract is the separate
+> [long-listing command profile](fsspec-cli-ls-long-command-profile.md). The
+> content below is retained only as historical capability evidence and design
+> background; it is not a current implementation plan.
 
-Status: **Proposal / roadmap.** This is not a locked command compatibility
-profile. It records a way to grow `fsspec-cli` beyond its ubiquitous core and an
-inventory of the storage commands worth adding, each mapped to a **verified**
-fsspec capability. Any command adopted from here gets its own profile and tests
-before it ships.
+Status: **Historical and superseded.** This is not a locked command
+compatibility profile.
 
 Client baseline for the capability claims below: fsspec **2026.6.0**, method
 surface introspected live in this repository (not recalled).
@@ -86,17 +85,14 @@ reports, do not hardcode it.
 
 ## 4. Making `ls` better without touching core `ls`
 
-### 4.1 Historical constraint and current resolution
+### 4.1 The constraint (already decided)
 
-`ls -l` as a complete **POSIX** option was locked-rejected in
+`ls -l` as a **POSIX** option is locked-rejected in
 [`fsspec-cli-ls-long-rejection-profile.md`](fsspec-cli-ls-long-rejection-profile.md):
 no tested backend (Local, Memory, vosfs) can supply a **complete** POSIX long row
 (none exposes allocated-block `total`; Memory and vosfs lack mode/nlink/owner).
-The later shell-experience specification deliberately stopped claiming complete
-POSIX semantics and admitted adaptive `ls -l` / `-lh` plus `ll` under the
-[long-listing profile](fsspec-cli-ls-long-command-profile.md). The rejection
-profile remains the rationale for never describing those adaptive rows as
-POSIX long output.
+Placeholders under a POSIX option are refused. So "make `ls` better" must **not**
+mean adding `-l` to `ls`.
 
 ### 4.2 A separate, honest `ll`
 
@@ -115,10 +111,8 @@ Serve the demand with a distinct non-POSIX command built on a **single
 
 The honest cross-backend column set is **type + size (+ human) + conditional
 mtime + conditional link target**. Never fabricate a `0` size or substitute
-`created` for `mtime`. Bare `ls` stays `_ls(detail=False)`, names only, one call
-— untouched and with no backend branch. Explicit `ls -l` and inherent-long
-`ll` share the adaptive runner defined by the normative profile. Cost is not
-the blocker; honesty is.
+`created` for `mtime`. Core `ls` stays `_ls(detail=False)`, names only, one call —
+untouched, no `-l` flag, no backend branch. Cost is not the blocker; honesty is.
 
 ## 5. Verified fsspec method surface
 

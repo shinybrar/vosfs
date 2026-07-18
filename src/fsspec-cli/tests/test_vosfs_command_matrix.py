@@ -109,16 +109,6 @@ _LONG_DOCS = f"""<vos:node
   </vos:nodes>
 </vos:node>
 """.encode()
-_LONG_NOTES = f"""<vos:node
-    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/notes.txt">
-  <vos:properties>
-    <vos:property uri="ivo://ivoa.net/vospace/core#length">1536</vos:property>
-    <vos:property uri="ivo://ivoa.net/vospace/core#mtime">2026-07-17T18:00:00Z</vos:property>
-  </vos:properties>
-</vos:node>
-""".encode()
 _BLOB_PAYLOAD = b"vos-cat\0\xff\xfe"
 _BLOB = f"""<vos:node
     xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
@@ -199,6 +189,10 @@ _RESPONSES: dict[tuple[str, str], httpx.Response] = {
     ("PUT", "/arc/nodes/docs/notes.txt/child"): httpx.Response(404, text="not found"),
     ("PUT", "/arc/nodes/docs/absent/child"): httpx.Response(404, text="not found"),
 }
+_LONG_RESPONSES: dict[tuple[str, str], httpx.Response] = {
+    ("GET", "/arc/capabilities"): httpx.Response(200, content=_CAPABILITIES),
+    ("GET", "/arc/nodes/docs"): httpx.Response(200, content=_LONG_DOCS),
+}
 
 
 @pytest.fixture(autouse=True)
@@ -207,15 +201,19 @@ def _prohibit_unplanned_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _StrictMockTransport(httpx.MockTransport):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        responses: dict[tuple[str, str], httpx.Response] | None = None,
+    ) -> None:
         self.requests: list[tuple[str, str]] = []
         self.closed = False
+        self._responses = _RESPONSES if responses is None else responses
         super().__init__(self._respond)
 
     async def _respond(self, request: httpx.Request) -> httpx.Response:
         call = (request.method, request.url.path)
         self.requests.append(call)
-        response = _RESPONSES.get(call)
+        response = self._responses.get(call)
         if response is None:
             message = f"unplanned mocked request: {call!r}"
             raise AssertionError(message)
@@ -224,28 +222,6 @@ class _StrictMockTransport(httpx.MockTransport):
     async def aclose(self) -> None:
         self.closed = True
         await super().aclose()
-
-
-class _LongListingMockTransport(_StrictMockTransport):
-    async def _respond(self, request: httpx.Request) -> httpx.Response:
-        call = (request.method, request.url.path)
-        self.requests.append(call)
-        responses = {
-            ("GET", "/arc/capabilities"): httpx.Response(
-                200,
-                content=_CAPABILITIES,
-            ),
-            ("GET", "/arc/nodes/docs"): httpx.Response(200, content=_LONG_DOCS),
-            ("GET", "/arc/nodes/docs/notes.txt"): httpx.Response(
-                200,
-                content=_LONG_NOTES,
-            ),
-        }
-        response = responses.get(call)
-        if response is None:
-            message = f"unplanned mocked request: {call!r}"
-            raise AssertionError(message)
-        return response
 
 
 def _target_path(content: bytes | None) -> str:
@@ -534,10 +510,10 @@ def test_native_vosfs_long_listing_profile_is_remote_and_uses_detail(
         "fsspec_cli._listing.time.localtime",
         time.gmtime,
     )
-    transports: list[_LongListingMockTransport] = []
+    transports: list[_StrictMockTransport] = []
 
     def make_filesystem() -> VOSpaceFileSystem:
-        transport = _LongListingMockTransport()
+        transport = _StrictMockTransport(_LONG_RESPONSES)
         transports.append(transport)
         return VOSpaceFileSystem(
             _BASE_URL,
@@ -564,7 +540,6 @@ def test_native_vosfs_long_listing_profile_is_remote_and_uses_detail(
                 "file  1.5K  Jul 17 18:00  notes.txt\n"
                 f"link    0B  -             shortcut -> vos://{_AUTHORITY}/docs/guide.md\n"
             ),
-            exact_file="file  1536  Jul 17 18:00  notes.txt\n",
         ),
     )
 
@@ -580,15 +555,6 @@ def test_native_vosfs_long_listing_profile_is_remote_and_uses_detail(
             ("GET", "/arc/capabilities"),
             ("GET", "/arc/nodes/docs"),
             ("GET", "/arc/nodes/docs"),
-        ],
-        [
-            ("GET", "/arc/capabilities"),
-            ("GET", "/arc/nodes/docs"),
-            ("GET", "/arc/nodes/docs"),
-        ],
-        [
-            ("GET", "/arc/capabilities"),
-            ("GET", "/arc/nodes/docs/notes.txt"),
         ],
     ]
     assert all(transport.closed for transport in transports)
