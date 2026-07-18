@@ -2,13 +2,84 @@
 
 import pytest
 import respx
-from conftest import make_fs
+from conftest import AUTHORITY, NODES_URL, make_fs
+from defusedxml import ElementTree
 from vospace_sim import VOSpaceSim
+
+from vosfs.nodes import LENGTH_PROPERTY_URI, VOSPACE_NS, XML_HEADERS
 
 
 def _fs(router, sim, *, asynchronous=True):
     sim.install(router)
     return make_fs(router, asynchronous=asynchronous)
+
+
+async def test_update_node_posts_property_and_refreshes_metadata(
+    router: respx.Router,
+) -> None:
+    property_uri = "ivo://example.org/vosfs#issue-65"
+    sim = VOSpaceSim().add_container("/dir").add_file("/dir/café.bin", b"data")
+    fs = _fs(router, sim)
+
+    before = await fs._ls("/dir", detail=True)
+    assert property_uri not in before[0]["properties"]
+
+    await fs._update_node(
+        "vos://dir/caf%C3%A9.bin",
+        {property_uri: "hermetic-update"},
+    )
+
+    request = sim.node_update_requests[-1]
+    assert request.method == "POST"
+    assert str(request.url) == f"{NODES_URL}/dir/caf%C3%A9.bin"
+    assert {name: request.headers[name] for name in XML_HEADERS} == XML_HEADERS
+    document = ElementTree.fromstring(request.content)
+    assert document.get("uri") == f"vos://{AUTHORITY}/dir/café.bin"
+    assert document.get("{http://www.w3.org/2001/XMLSchema-instance}type") is None
+    properties = {
+        element.get("uri"): element.text
+        for element in document.findall(
+            f"{{{VOSPACE_NS}}}properties/{{{VOSPACE_NS}}}property"
+        )
+    }
+    assert properties == {property_uri: "hermetic-update"}
+
+    refreshed = await fs._ls("/dir", detail=True)
+    assert refreshed[0]["properties"][property_uri] == "hermetic-update"
+    assert (await fs._info("/dir/café.bin"))["properties"][property_uri] == (
+        "hermetic-update"
+    )
+    await fs.aclose()
+
+
+async def test_update_node_maps_service_failure_without_changing_metadata(
+    router: respx.Router,
+) -> None:
+    property_uri = "ivo://example.org/vosfs#issue-65"
+    sim = VOSpaceSim().add_file("/data.bin", b"data")
+    sim.node_update_status = 409
+    fs = _fs(router, sim)
+    await fs._ls("/", detail=True)
+
+    with pytest.raises(FileExistsError):
+        await fs._update_node("/data.bin", {property_uri: "rejected"})
+
+    assert "/" in fs.dircache
+    assert property_uri not in (await fs._info("/data.bin"))["properties"]
+    await fs.aclose()
+
+
+async def test_update_node_rejects_core_property_before_http(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_file("/data.bin", b"data")
+    fs = _fs(router, sim)
+
+    with pytest.raises(ValueError, match="administrative"):
+        await fs._update_node("/data.bin", {LENGTH_PROPERTY_URI: "99"})
+
+    assert len(router.calls) == 0
+    await fs.aclose()
 
 
 # --- mkdir / makedirs -----------------------------------------------------------

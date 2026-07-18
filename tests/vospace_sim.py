@@ -1,7 +1,7 @@
 """An in-memory OpenCADC VOSpace simulator wired onto a respx router.
 
 The simulator maintains a node tree and blob store and serves the exact
-requests the filesystem makes: capabilities, node GET/PUT/DELETE with child
+requests the filesystem makes: capabilities, node GET/PUT/POST/DELETE with child
 listings, synchronous transfer negotiation, and negotiated byte GET/PUT. It
 lets namespace, copy/move, and the fsspec reusable-abstract tests run against a
 faithful, hermetic backend.
@@ -22,6 +22,7 @@ from conftest import (
     mock_capabilities,
     transfer_details,
 )
+from defusedxml import ElementTree
 
 from vosfs import paths
 
@@ -44,16 +45,21 @@ class VOSpaceSim:
         """Start with an empty root container."""
         self.nodes: dict[str, str] = {"/": "container"}
         self.blobs: dict[str, bytes] = {}
+        self.properties: dict[str, dict[str, str]] = {"/": {}}
+        self.node_update_requests: list[httpx.Request] = []
+        self.node_update_status = 200
 
     def add_container(self, path: str) -> VOSpaceSim:
         """Seed a container node and return self for chaining."""
         self.nodes[path] = "container"
+        self.properties.setdefault(path, {})
         return self
 
     def add_file(self, path: str, content: bytes = b"") -> VOSpaceSim:
         """Seed a data node with content and return self for chaining."""
         self.nodes[path] = "data"
         self.blobs[path] = content
+        self.properties.setdefault(path, {})
         return self
 
     def install(self, router: respx.Router) -> None:
@@ -78,14 +84,27 @@ class VOSpaceSim:
             return self._node_get(path)
         if request.method == "PUT":
             self.nodes[path] = "container"
+            self.properties[path] = {}
             return httpx.Response(201)
+        if request.method == "POST":
+            return self._node_post(path, request)
         if request.method == "DELETE":
             if path not in self.nodes:
                 return httpx.Response(404)
             del self.nodes[path]
             self.blobs.pop(path, None)
+            self.properties.pop(path, None)
             return httpx.Response(200)
         return httpx.Response(405)  # pragma: no cover - unused verbs
+
+    def _node_post(self, path: str, request: httpx.Request) -> httpx.Response:
+        self.node_update_requests.append(request)
+        if path not in self.nodes:
+            return httpx.Response(404)
+        if self.node_update_status != 200:
+            return httpx.Response(self.node_update_status)
+        self.properties.setdefault(path, {}).update(_properties(request.content))
+        return httpx.Response(200)
 
     def _node_get(self, path: str) -> httpx.Response:
         kind = self.nodes.get(path)
@@ -110,14 +129,16 @@ class VOSpaceSim:
         )
         return (
             f'<vos:node {_NS} xsi:type="vos:ContainerNode" uri="{self._uri(path)}">'
-            f"<vos:properties/><vos:nodes>{children}</vos:nodes></vos:node>"
+            f"<vos:properties>{self._property_elements(path)}</vos:properties>"
+            f"<vos:nodes>{children}</vos:nodes></vos:node>"
         ).encode()
 
     def _child_element(self, path: str) -> str:
         if self.nodes[path] == "container":
             return (
                 f'<vos:node {_NS} xsi:type="vos:ContainerNode" uri="{self._uri(path)}">'
-                f"<vos:properties/></vos:node>"
+                f"<vos:properties>{self._property_elements(path)}</vos:properties>"
+                f"</vos:node>"
             )
         return self._data_element(path)
 
@@ -127,7 +148,14 @@ class VOSpaceSim:
         return (
             f'<vos:node {_NS} xsi:type="vos:DataNode" uri="{self._uri(path)}">'
             f'<vos:properties><vos:property uri="{length_uri}">{length}</vos:property>'
+            f"{self._property_elements(path)}"
             f"</vos:properties></vos:node>"
+        )
+
+    def _property_elements(self, path: str) -> str:
+        return "".join(
+            f'<vos:property uri="{uri}">{value}</vos:property>'
+            for uri, value in self.properties.get(path, {}).items()
         )
 
     def _data_document(self, path: str) -> bytes:
@@ -150,6 +178,7 @@ class VOSpaceSim:
         if request.method == "PUT":
             self.nodes[path] = "data"
             self.blobs[path] = request.content
+            self.properties.setdefault(path, {})
             return httpx.Response(201)
         content = self.blobs.get(path)
         if content is None:
@@ -169,3 +198,12 @@ def _target_path(content: bytes | None) -> str:
         return "/"
     prefix = f"vos://{AUTHORITY}"
     return match.group(1).strip()[len(prefix) :] or "/"
+
+
+def _properties(content: bytes | None) -> dict[str, str]:
+    root = ElementTree.fromstring(content or b"")
+    namespace = "{http://www.ivoa.net/xml/VOSpace/v2.0}"
+    return {
+        element.get("uri", ""): element.text or ""
+        for element in root.findall(f"{namespace}properties/{namespace}property")
+    }

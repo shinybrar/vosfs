@@ -23,6 +23,7 @@ import os
 import uuid
 
 import pytest
+from fsspec.asyn import sync
 
 from vosfs import VOSpaceFileSystem
 
@@ -75,6 +76,17 @@ def test_full_lifecycle(fs: VOSpaceFileSystem, run_namespace: str) -> None:
     assert fs.exists(remote)
     assert fs.info(remote)["size"] == len(payload)
     assert fs.ls(run_namespace, detail=False) == [remote]
+
+    # Private protocol-conformance update, verified only through public metadata.
+    property_uri = f"ivo://example.org/vosfs/integration#{uuid.uuid4().hex}"
+    property_value = f"vosfs-{uuid.uuid4().hex}"
+    sync(
+        fs.loop,
+        fs._update_node,
+        remote,
+        {property_uri: property_value},
+    )
+    assert fs.info(remote)["properties"][property_uri] == property_value
 
     # Byte round trip.
     assert fs.cat_file(remote) == payload

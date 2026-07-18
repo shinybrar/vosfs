@@ -746,6 +746,23 @@ class VOSpaceFileSystem(AsyncFileSystem):
 
     # -- namespace and mutation ----------------------------------------------
 
+    async def _update_node(self, path: str, properties: Mapping[str, str]) -> None:
+        """POST mutable properties to one node and invalidate cached metadata."""
+        path = self._strip_protocol(path)
+        nodes._validate_property_update(properties)  # noqa: SLF001 - package-private seam
+        bindings = await self._get_bindings()
+        authority = await self._require_authority()
+        document = nodes.build_property_update(
+            f"vos://{authority}{path}",
+            properties,
+        )
+        url = bindings.require_nodes() + paths.encode_url_path(path)
+        response = await self._send_to_service(
+            "POST", url, content=document, headers=nodes.XML_HEADERS
+        )
+        self._raise_for_status(response, path=path, allowed=(_HTTP_OK,))
+        self._invalidate(path)
+
     async def _create_container(self, path: str) -> None:
         """PUT one ContainerNode at ``path``."""
         bindings = await self._get_bindings()

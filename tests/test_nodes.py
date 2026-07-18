@@ -440,6 +440,31 @@ def test_build_property_update_is_valid_and_sets_properties() -> None:
     assert values[CONTENT_TYPE_PROPERTY_URI] == "application/x-fits"
 
 
+def test_build_property_update_allows_non_core_property_named_type() -> None:
+    property_uri = "ivo://example.org/props#type"
+    document = build_property_update("vos://x/f", {property_uri: "catalog"})
+    tree = etree.fromstring(document)
+    values = {
+        prop.get("uri"): prop.text
+        for prop in tree.iterfind(
+            f"{{{VOSPACE_NS}}}properties/{{{VOSPACE_NS}}}property",
+        )
+    }
+    assert values == {property_uri: "catalog"}
+
+
+def test_build_property_update_rejects_case_variant_core_namespace() -> None:
+    property_uri = "IVO://IVOA.NET/VOSPACE/CORE#contenttype"
+    with pytest.raises(ValueError, match="administrative"):
+        build_property_update("vos://x/f", {property_uri: "text/plain"})
+
+
+def test_build_property_update_rejects_whitespace_disguised_core_uri() -> None:
+    property_uri = f" {CONTENT_TYPE_PROPERTY_URI}"
+    with pytest.raises(ValueError, match="administrative"):
+        build_property_update("vos://x/f", {property_uri: "text/plain"})
+
+
 @pytest.mark.parametrize(
     "admin_uri",
     [
@@ -449,6 +474,7 @@ def test_build_property_update_is_valid_and_sets_properties() -> None:
         "ivo://ivoa.net/vospace/core#groupwrite",
         "ivo://ivoa.net/vospace/core#publicread",
         "ivo://ivoa.net/vospace/core#quota",
+        "ivo://ivoa.net/vospace/core#availablespace",
         LENGTH_PROPERTY_URI,
         MD5_PROPERTY_URI,
         DATE_PROPERTY_URI.replace("date", "creator"),
@@ -456,9 +482,11 @@ def test_build_property_update_is_valid_and_sets_properties() -> None:
         "ivo://ivoa.net/vospace/core#checksum",
         "ivo://ivoa.net/vospace/core#type",
         MTIME_PROPERTY_URI,  # IVOA server-computed timestamp
+        "ivo://ivoa.net/vospace/core#ctime",
+        "ivo://ivoa.net/vospace/core#btime",
         DATE_PROPERTY_URI,  # IVOA server-computed timestamp
         "ivo://ivoa.net/vospace/core#OWNER",  # case-insensitive
-        "urn:example/owner",  # slash-delimited suffix, no fragment
+        "ivo://ivoa.net/vospace/core#future-reserved-property",
     ],
 )
 def test_build_property_update_rejects_admin_properties(admin_uri: str) -> None:

@@ -47,6 +47,8 @@ MD5_PROPERTY_URI = "ivo://ivoa.net/vospace/core#MD5"  # OpenCADC extension
 CONTENT_TYPE_PROPERTY_URI = (
     "ivo://ivoa.net/vospace/core#contenttype"  # OpenCADC extension
 )
+_CORE_PROPERTY_NAMESPACE = "ivo://ivoa.net/vospace/core#"
+_MUTABLE_CORE_PROPERTY_URIS = frozenset({CONTENT_TYPE_PROPERTY_URI})
 
 # Directions this profile emits during synchronous byte negotiation.
 _ALLOWED_DIRECTIONS = ("pullFromVoSpace", "pushToVoSpace")
@@ -67,34 +69,6 @@ _INFO_TYPE_BY_NODE_TYPE = {
     "container": "directory",
     "link": "other",
 }
-
-# Property-URI suffixes an update primitive must refuse. These are the
-# administrative, server-computed, or type-defining properties; any of them
-# would smuggle an owner, group, permission, quota, size, checksum, creator, or
-# node-type change into an otherwise mutable property write. Matched
-# case-insensitively against the fragment after the final ``#`` or ``/``.
-_ADMIN_PROPERTY_SUFFIXES = frozenset(
-    {
-        "owner",
-        "group",
-        "groupread",
-        "groupwrite",
-        "publicread",
-        "permission",
-        "quota",
-        "availablespace",
-        "length",
-        "md5",
-        "checksum",
-        "creator",
-        "type",
-        # IVOA 2.1 server-computed timestamps: immutable, rejected server-side.
-        "mtime",
-        "ctime",
-        "btime",
-        "date",
-    },
-)
 
 # ElementTree serializes namespaces by prefix from a process-global registry.
 # Registering the VOSpace and XML-Schema-instance prefixes keeps generated
@@ -270,8 +244,9 @@ def build_property_update(uri: str, properties: Mapping[str, str]) -> bytes:
     """Build a node POST body that sets mutable, non-administrative properties.
 
     The document carries no ``xsi:type`` so it asserts no node-type change, and
-    every supplied property URI is checked against the administrative deny-list
-    before serialization.
+    every supplied property URI in the VOSpace core namespace is checked against
+    the profile's full-URI allow-list before serialization. Non-core property
+    URIs remain available for service-defined custom metadata.
 
     Args:
         uri: The node identifier URI to update.
@@ -284,8 +259,7 @@ def build_property_update(uri: str, properties: Mapping[str, str]) -> bytes:
         ValueError: If any property URI names an administrative, server-
             computed, or type-defining property.
     """
-    for property_uri in properties:
-        _reject_admin_property(property_uri)
+    _validate_property_update(properties)
     root = _new_node_element(uri)
     properties_element = ET.SubElement(root, _PROPERTIES_TAG)
     for property_uri, value in properties.items():
@@ -293,6 +267,12 @@ def build_property_update(uri: str, properties: Mapping[str, str]) -> bytes:
         element.set("uri", property_uri)
         element.text = value
     return _serialize(root)
+
+
+def _validate_property_update(properties: Mapping[str, str]) -> None:
+    """Validate every property URI before a node update performs network I/O."""
+    for property_uri in properties:
+        _reject_admin_property(property_uri)
 
 
 def _node_from_element(element: ET.Element) -> Node:
@@ -432,17 +412,21 @@ def _parse_size(properties: Mapping[str, str]) -> int:
 
 
 def _reject_admin_property(property_uri: str) -> None:
-    """Reject a property URI that names an administrative or immutable field.
+    """Reject a core property URI outside the profile's mutable allow-list.
 
     Args:
         property_uri: The candidate property URI.
 
     Raises:
-        ValueError: If the URI's suffix matches the administrative deny-list.
+        ValueError: If the URI names a non-mutable VOSpace core property.
     """
-    suffix = property_uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1].lower()
-    if suffix in _ADMIN_PROPERTY_SUFFIXES:
-        msg = f"property {property_uri!r} is administrative and cannot be set"
+    malformed = any(character.isspace() for character in property_uri)
+    is_core = property_uri.casefold().startswith(_CORE_PROPERTY_NAMESPACE)
+    if malformed or (is_core and property_uri not in _MUTABLE_CORE_PROPERTY_URIS):
+        msg = (
+            f"property {property_uri!r} is malformed or administrative "
+            "and cannot be set"
+        )
         raise ValueError(msg)
 
 
