@@ -35,6 +35,16 @@ def _invoke_ll(
     return CliRunner().invoke(App(sources).typer_app, ["ll", *arguments])
 
 
+def _invoke_du(
+    arguments: list[str],
+    *,
+    sources: dict[str, AsyncFilesystemSource] | None = None,
+) -> Result:
+    if sources is None:
+        sources = {"memory": _source_must_not_run}
+    return CliRunner().invoke(App(sources).typer_app, ["du", *arguments])
+
+
 def _invoke_mkdir(
     arguments: list[str],
     *,
@@ -233,6 +243,20 @@ class _RecordingFileSystem(AsyncFileSystem):
         if self.source.ls_error is not None:
             raise self.source.ls_error
         return self.source.ls_result
+
+    async def _du(
+        self,
+        path: str,
+        total: bool = True,  # noqa: FBT002 - matches the fsspec hook signature.
+        **kwargs: object,
+    ) -> object:
+        del kwargs
+        self.source.events.append(
+            ("du", self.source_id, path, total, id(asyncio.get_running_loop()))
+        )
+        if self.source.du_error is not None:
+            raise self.source.du_error
+        return self.source.du_result
 
     async def _get_file(
         self,
@@ -470,6 +494,8 @@ class _RecordingSource:
         info_error: BaseException | None = None,
         ls_result: object = None,
         ls_error: BaseException | None = None,
+        du_result: object = MappingProxyType({"/file": 0}),
+        du_error: BaseException | None = None,
         mkdir_error: BaseException | None = None,
         makedirs_error: BaseException | None = None,
         rmdir_error: BaseException | None = None,
@@ -507,6 +533,8 @@ class _RecordingSource:
         self.info_error = info_error
         self.ls_result = ls_result
         self.ls_error = ls_error
+        self.du_result = du_result
+        self.du_error = du_error
         self.mkdir_error = mkdir_error
         self.makedirs_error = makedirs_error
         self.rmdir_error = rmdir_error

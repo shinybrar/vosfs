@@ -17,6 +17,7 @@ from ._command import _raw_arguments, _RawCommand
 from ._cp import _run_cp
 from ._diagnostics import _render_diagnostic_prefix
 from ._dirname import _run_dirname
+from ._du import _DuCommand, _run_du
 from ._ls import _run_ls
 from ._mkdir import _run_mkdir
 from ._mv import _run_mv
@@ -57,6 +58,7 @@ _ASYNC_COMMANDS: tuple[tuple[str, str, _AsyncRunner, type[TyperCommand]], ...] =
         _RawCommand,
     ),
     ("cat", "Concatenate files to standard output", _run_cat, _RawCommand),
+    ("du", "Estimate file space usage", _run_du, _DuCommand),
     ("cp", "Copy a file (no recursion)", _run_cp, _RawCommand),
     ("mv", "Move or rename files", _run_mv, _RawCommand),
     ("mkdir", "Create directories", _run_mkdir, _RawCommand),

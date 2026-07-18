@@ -43,6 +43,7 @@ class FilesystemCall:
     operation: Literal[
         "info",
         "ls",
+        "du",
         "get_file",
         "mkdir",
         "makedirs",
@@ -60,6 +61,7 @@ class FilesystemCall:
     create_parents: bool | None = None
     exist_ok: bool | None = None
     destination_path: str | None = None
+    total: bool | None = None
 
 
 def _block_network(monkeypatch) -> None:
@@ -155,6 +157,35 @@ class _ProbedSource(Generic[_FilesystemT]):
             return result
 
         return ls
+
+    def _wrap_du(
+        self,
+        source_id: int,
+        original_du: Callable[..., Awaitable[object]],
+    ) -> Callable[..., Awaitable[object]]:
+        async def du(
+            path: str,
+            total: bool = True,  # noqa: FBT002 - mirrors the fsspec hook.
+            **kwargs: object,
+        ) -> object:
+            self.calls.append(
+                FilesystemCall(
+                    "du",
+                    source_id,
+                    path,
+                    None,
+                    kwargs,
+                    id(asyncio.get_running_loop()),
+                    total=total,
+                )
+            )
+            try:
+                return await original_du(path, total=total, **kwargs)
+            except Exception as error:
+                self.errors.append((source_id, "du", error))
+                raise
+
+        return du
 
     def _wrap_get_file(
         self,
@@ -364,6 +395,11 @@ class _ProbedSource(Generic[_FilesystemT]):
             filesystem,
             "_ls",
             self._wrap_ls(source_id, filesystem._ls),
+        )
+        setattr(  # noqa: B010 - instrument this instance.
+            filesystem,
+            "_du",
+            self._wrap_du(source_id, filesystem._du),
         )
         setattr(  # noqa: B010 - instrument.
             filesystem,

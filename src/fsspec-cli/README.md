@@ -60,6 +60,7 @@ python app.py fs ls data:/
 | Command | Summary |
 | --- | --- |
 | `ls`, `ll` | Names-only `ls`; adaptive long `ls -l` / `-lh`; inherent-long `ll` |
+| `du` | Recursive exact-byte usage; `-s` total only, `-h` human-readable |
 | `cat` | Concatenate mapped files (and stdin `-`) to stdout |
 | `cp` | Verified same-source, cross-source, and multi-source file copy (no `-R`) |
 | `mv` | Same-source file move, single or multi-file into a directory |
@@ -69,6 +70,11 @@ python app.py fs ls data:/
 | `unlink` | XSI single-file removal |
 | `stat` | Reduced BSD/macOS-shaped file status |
 | `basename`, `dirname` | Source-free path-string slicing |
+
+`du` is recursive. On fsspec implementations that inherit the default async
+hook, it can traverse the complete subtree and read metadata for every file;
+remote sources may therefore make many requests. `-s` changes only the output,
+not the traversal cost.
 
 Each command locks an observable compatibility profile. The exhaustive
 per-command semantics, diagnostics, and tested-source evidence live in the
