@@ -1,7 +1,7 @@
 """An in-memory OpenCADC VOSpace simulator wired onto a respx router.
 
 The simulator maintains a node tree and blob store and serves the exact
-requests the filesystem makes: capabilities, node GET/PUT/DELETE with child
+requests the filesystem makes: capabilities, node GET/PUT/POST/DELETE with child
 listings, synchronous transfer negotiation, and negotiated byte GET/PUT. It
 lets namespace, copy/move, and the fsspec reusable-abstract tests run against a
 faithful, hermetic backend.
@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote, urlsplit
+from xml.sax.saxutils import escape, quoteattr
 
 import httpx
 from conftest import (
@@ -22,6 +23,7 @@ from conftest import (
     mock_capabilities,
     transfer_details,
 )
+from defusedxml import ElementTree
 
 from vosfs import paths
 
@@ -42,19 +44,69 @@ class VOSpaceSim:
 
     def __init__(self) -> None:
         """Start with an empty root container."""
-        self.nodes: dict[str, str] = {"/": "container"}
+        self.nodes: dict[str, str] = {}
+        self.wire_types: dict[str, str] = {}
+        self.authorities: dict[str, str] = {}
         self.blobs: dict[str, bytes] = {}
+        self.properties: dict[str, dict[str, str]] = {}
+        self.node_update_requests: list[httpx.Request] = []
+        self.node_update_status = 200
+        self._transition_node("/", wire_type="ContainerNode")
 
     def add_container(self, path: str) -> VOSpaceSim:
         """Seed a container node and return self for chaining."""
-        self.nodes[path] = "container"
+        self._transition_node(path, wire_type="ContainerNode")
         return self
 
-    def add_file(self, path: str, content: bytes = b"") -> VOSpaceSim:
+    def add_file(
+        self,
+        path: str,
+        content: bytes = b"",
+        *,
+        wire_type: str = "DataNode",
+    ) -> VOSpaceSim:
         """Seed a data node with content and return self for chaining."""
-        self.nodes[path] = "data"
-        self.blobs[path] = content
+        self._transition_node(
+            path,
+            wire_type=wire_type,
+            content=content,
+        )
         return self
+
+    def with_authority(self, path: str, authority: str) -> VOSpaceSim:
+        """Override one node URI authority and return self for chaining."""
+        self.authorities[path] = authority
+        return self
+
+    def _transition_node(
+        self,
+        path: str,
+        *,
+        wire_type: str | None,
+        content: bytes | None = None,
+        preserve_identity: bool = False,
+    ) -> None:
+        """Create, replace, or delete a node across every per-path state map."""
+        if wire_type is None:
+            self.nodes.pop(path, None)
+            self.wire_types.pop(path, None)
+            self.authorities.pop(path, None)
+            self.blobs.pop(path, None)
+            self.properties.pop(path, None)
+            return
+        properties = self.properties.get(path) if preserve_identity else None
+        authority = self.authorities.get(path) if preserve_identity else None
+        self.nodes[path] = "container" if content is None else "data"
+        self.wire_types[path] = wire_type
+        if authority is None:
+            self.authorities.pop(path, None)
+        else:
+            self.authorities[path] = authority
+        if content is None:
+            self.blobs.pop(path, None)
+        else:
+            self.blobs[path] = content
+        self.properties[path] = dict(properties or {})
 
     def install(self, router: respx.Router) -> None:
         """Register every simulator route on ``router``."""
@@ -77,15 +129,27 @@ class VOSpaceSim:
         if request.method == "GET":
             return self._node_get(path)
         if request.method == "PUT":
-            self.nodes[path] = "container"
+            self._transition_node(path, wire_type="ContainerNode")
             return httpx.Response(201)
+        if request.method == "POST":
+            return self._node_post(path, request)
         if request.method == "DELETE":
             if path not in self.nodes:
                 return httpx.Response(404)
-            del self.nodes[path]
-            self.blobs.pop(path, None)
+            self._transition_node(path, wire_type=None)
             return httpx.Response(200)
         return httpx.Response(405)  # pragma: no cover - unused verbs
+
+    def _node_post(self, path: str, request: httpx.Request) -> httpx.Response:
+        self.node_update_requests.append(request)
+        if path not in self.nodes:
+            return httpx.Response(404)
+        if self.node_update_status != 200:
+            return httpx.Response(self.node_update_status)
+        if _wire_type(request.content) != self.wire_types[path]:
+            return httpx.Response(400, text="node xsi:type does not match stored node")
+        self.properties.setdefault(path, {}).update(_properties(request.content))
+        return httpx.Response(200)
 
     def _node_get(self, path: str) -> httpx.Response:
         kind = self.nodes.get(path)
@@ -100,7 +164,8 @@ class VOSpaceSim:
         return paths.strip_protocol(unquote(suffix)) if suffix else "/"
 
     def _uri(self, path: str) -> str:
-        return f"vos://{AUTHORITY}" if path == "/" else f"vos://{AUTHORITY}{path}"
+        authority = self.authorities.get(path, AUTHORITY)
+        return f"vos://{authority}" if path == "/" else f"vos://{authority}{path}"
 
     def _container_document(self, path: str) -> bytes:
         children = "".join(
@@ -110,24 +175,34 @@ class VOSpaceSim:
         )
         return (
             f'<vos:node {_NS} xsi:type="vos:ContainerNode" uri="{self._uri(path)}">'
-            f"<vos:properties/><vos:nodes>{children}</vos:nodes></vos:node>"
+            f"<vos:properties>{self._property_elements(path)}</vos:properties>"
+            f"<vos:nodes>{children}</vos:nodes></vos:node>"
         ).encode()
 
     def _child_element(self, path: str) -> str:
         if self.nodes[path] == "container":
             return (
                 f'<vos:node {_NS} xsi:type="vos:ContainerNode" uri="{self._uri(path)}">'
-                f"<vos:properties/></vos:node>"
+                f"<vos:properties>{self._property_elements(path)}</vos:properties>"
+                f"</vos:node>"
             )
         return self._data_element(path)
 
     def _data_element(self, path: str) -> str:
         length = len(self.blobs.get(path, b""))
         length_uri = "ivo://ivoa.net/vospace/core#length"
+        wire_type = self.wire_types[path]
         return (
-            f'<vos:node {_NS} xsi:type="vos:DataNode" uri="{self._uri(path)}">'
+            f'<vos:node {_NS} xsi:type="vos:{wire_type}" uri="{self._uri(path)}">'
             f'<vos:properties><vos:property uri="{length_uri}">{length}</vos:property>'
+            f"{self._property_elements(path)}"
             f"</vos:properties></vos:node>"
+        )
+
+    def _property_elements(self, path: str) -> str:
+        return "".join(
+            f"<vos:property uri={quoteattr(uri)}>{escape(value)}</vos:property>"
+            for uri, value in self.properties.get(path, {}).items()
         )
 
     def _data_document(self, path: str) -> bytes:
@@ -148,8 +223,12 @@ class VOSpaceSim:
     def _byte_op(self, request: httpx.Request) -> httpx.Response:
         path = request.url.params["p"]
         if request.method == "PUT":
-            self.nodes[path] = "data"
-            self.blobs[path] = request.content
+            self._transition_node(
+                path,
+                wire_type="DataNode",
+                content=request.content,
+                preserve_identity=True,
+            )
             return httpx.Response(201)
         content = self.blobs.get(path)
         if content is None:
@@ -169,3 +248,18 @@ def _target_path(content: bytes | None) -> str:
         return "/"
     prefix = f"vos://{AUTHORITY}"
     return match.group(1).strip()[len(prefix) :] or "/"
+
+
+def _properties(content: bytes | None) -> dict[str, str]:
+    root = ElementTree.fromstring(content or b"")
+    namespace = "{http://www.ivoa.net/xml/VOSpace/v2.0}"
+    return {
+        element.get("uri", ""): element.text or ""
+        for element in root.findall(f"{namespace}properties/{namespace}property")
+    }
+
+
+def _wire_type(content: bytes | None) -> str:
+    root = ElementTree.fromstring(content or b"")
+    xsi_type = root.get("{http://www.w3.org/2001/XMLSchema-instance}type", "")
+    return xsi_type.rsplit(":", 1)[-1]

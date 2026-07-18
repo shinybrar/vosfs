@@ -146,6 +146,7 @@ def test_structured_and_unstructured_are_opaque_files(local_name: str) -> None:
     ).encode()
     node = parse_node(document)
     assert node.node_type == "data"
+    assert node.wire_type == local_name
     assert node.size == 7
     assert to_info(node, "/x/f")["type"] == "file"
 
@@ -315,6 +316,7 @@ def test_to_info_for_data_node() -> None:
 def test_to_info_for_minimal_data_node_omits_optional_fields() -> None:
     node = Node(
         node_type="data",
+        wire_type="DataNode",
         uri="vos://x/f",
         size=3,
         mtime=None,
@@ -423,14 +425,15 @@ def test_build_property_update_is_valid_and_sets_properties() -> None:
             CONTENT_TYPE_PROPERTY_URI: "application/x-fits",
             "ivo://cadc.nrc.ca/vospace/custom#experiment": "orion-survey",
         },
+        wire_type="DataNode",
     )
     assert isinstance(document, bytes)
     assert_schema_valid(document)
     tree = etree.fromstring(document)
     assert tree.tag == f"{{{VOSPACE_NS}}}node"
     assert tree.get("version") == "2.1"
-    # No xsi:type: the update asserts no node-type change.
-    assert tree.get("{http://www.w3.org/2001/XMLSchema-instance}type") is None
+    # The existing concrete type is required on the wire and cannot be changed.
+    assert tree.get("{http://www.w3.org/2001/XMLSchema-instance}type") == "vos:DataNode"
     values = {
         prop.get("uri"): prop.text
         for prop in tree.iterfind(
@@ -438,6 +441,47 @@ def test_build_property_update_is_valid_and_sets_properties() -> None:
         )
     }
     assert values[CONTENT_TYPE_PROPERTY_URI] == "application/x-fits"
+
+
+def test_build_property_update_allows_non_core_property_named_type() -> None:
+    property_uri = "ivo://example.org/props#type"
+    document = build_property_update(
+        "vos://x/f", {property_uri: "catalog"}, wire_type="DataNode"
+    )
+    tree = etree.fromstring(document)
+    values = {
+        prop.get("uri"): prop.text
+        for prop in tree.iterfind(
+            f"{{{VOSPACE_NS}}}properties/{{{VOSPACE_NS}}}property",
+        )
+    }
+    assert values == {property_uri: "catalog"}
+
+
+@pytest.mark.parametrize("wire_type", ["LinkNode", "MysteryNode"])
+def test_build_property_update_rejects_unsupported_node_types(wire_type: str) -> None:
+    with pytest.raises(ValueError, match="unsupported"):
+        build_property_update(
+            "vos://x/node",
+            {"ivo://example.org/props#label": "value"},
+            wire_type=wire_type,
+        )
+
+
+def test_build_property_update_rejects_case_variant_core_namespace() -> None:
+    property_uri = "IVO://IVOA.NET/VOSPACE/CORE#contenttype"
+    with pytest.raises(ValueError, match="administrative"):
+        build_property_update(
+            "vos://x/f", {property_uri: "text/plain"}, wire_type="DataNode"
+        )
+
+
+def test_build_property_update_rejects_whitespace_disguised_core_uri() -> None:
+    property_uri = f" {CONTENT_TYPE_PROPERTY_URI}"
+    with pytest.raises(ValueError, match="administrative"):
+        build_property_update(
+            "vos://x/f", {property_uri: "text/plain"}, wire_type="DataNode"
+        )
 
 
 @pytest.mark.parametrize(
@@ -449,6 +493,7 @@ def test_build_property_update_is_valid_and_sets_properties() -> None:
         "ivo://ivoa.net/vospace/core#groupwrite",
         "ivo://ivoa.net/vospace/core#publicread",
         "ivo://ivoa.net/vospace/core#quota",
+        "ivo://ivoa.net/vospace/core#availablespace",
         LENGTH_PROPERTY_URI,
         MD5_PROPERTY_URI,
         DATE_PROPERTY_URI.replace("date", "creator"),
@@ -456,11 +501,13 @@ def test_build_property_update_is_valid_and_sets_properties() -> None:
         "ivo://ivoa.net/vospace/core#checksum",
         "ivo://ivoa.net/vospace/core#type",
         MTIME_PROPERTY_URI,  # IVOA server-computed timestamp
+        "ivo://ivoa.net/vospace/core#ctime",
+        "ivo://ivoa.net/vospace/core#btime",
         DATE_PROPERTY_URI,  # IVOA server-computed timestamp
         "ivo://ivoa.net/vospace/core#OWNER",  # case-insensitive
-        "urn:example/owner",  # slash-delimited suffix, no fragment
+        "ivo://ivoa.net/vospace/core#future-reserved-property",
     ],
 )
 def test_build_property_update_rejects_admin_properties(admin_uri: str) -> None:
     with pytest.raises(ValueError, match="administrative"):
-        build_property_update("vos://x/f", {admin_uri: "value"})
+        build_property_update("vos://x/f", {admin_uri: "value"}, wire_type="DataNode")

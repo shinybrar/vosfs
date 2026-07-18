@@ -2,13 +2,174 @@
 
 import pytest
 import respx
-from conftest import make_fs
+from conftest import AUTHORITY, NODES_URL, make_fs
+from defusedxml import ElementTree
 from vospace_sim import VOSpaceSim
+
+from vosfs.nodes import LENGTH_PROPERTY_URI, VOSPACE_NS, XML_HEADERS
 
 
 def _fs(router, sim, *, asynchronous=True):
     sim.install(router)
     return make_fs(router, asynchronous=asynchronous)
+
+
+async def test_update_node_posts_property_and_refreshes_metadata(
+    router: respx.Router,
+) -> None:
+    property_uri = "ivo://example.org/vosfs#issue-65"
+    sim = VOSpaceSim().add_container("/dir").add_file("/dir/café.bin", b"data")
+    fs = _fs(router, sim)
+
+    before = await fs._ls("/dir", detail=True)
+    assert property_uri not in before[0]["properties"]
+
+    await fs._update_node(
+        "vos://dir/caf%C3%A9.bin",
+        {property_uri: "hermetic-update"},
+    )
+
+    request = sim.node_update_requests[-1]
+    assert request.method == "POST"
+    assert str(request.url) == f"{NODES_URL}/dir/caf%C3%A9.bin"
+    assert {name: request.headers[name] for name in XML_HEADERS} == XML_HEADERS
+    document = ElementTree.fromstring(request.content)
+    assert document.get("uri") == f"vos://{AUTHORITY}/dir/café.bin"
+    assert document.get("{http://www.w3.org/2001/XMLSchema-instance}type") == (
+        "vos:DataNode"
+    )
+    assert document.get("busy") == "false"
+    properties = {
+        element.get("uri"): element.text
+        for element in document.findall(
+            f"{{{VOSPACE_NS}}}properties/{{{VOSPACE_NS}}}property"
+        )
+    }
+    assert properties == {property_uri: "hermetic-update"}
+
+    refreshed = await fs._ls("/dir", detail=True)
+    assert refreshed[0]["properties"][property_uri] == "hermetic-update"
+    assert (await fs._info("/dir/café.bin"))["properties"][property_uri] == (
+        "hermetic-update"
+    )
+    await fs.aclose()
+
+
+async def test_update_node_discovers_root_authority_before_target(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_file("/data.bin", b"data")
+    fs = _fs(router, sim)
+
+    await fs._update_node("/data.bin", {"ivo://example.org/props#x": "value"})
+
+    node_requests = [
+        call.request
+        for call in router.calls
+        if str(call.request.url).startswith(NODES_URL)
+    ]
+    assert [(request.method, str(request.url)) for request in node_requests] == [
+        ("GET", NODES_URL),
+        ("GET", f"{NODES_URL}/data.bin"),
+        ("POST", f"{NODES_URL}/data.bin"),
+    ]
+    await fs.aclose()
+
+
+async def test_update_node_rejects_target_authority_mismatch_before_post(
+    router: respx.Router,
+) -> None:
+    sim = (
+        VOSpaceSim()
+        .add_file("/data.bin", b"data")
+        .with_authority("/data.bin", "other.example!vault")
+    )
+    fs = _fs(router, sim)
+
+    with pytest.raises(OSError, match="does not match"):
+        await fs._update_node("/data.bin", {"ivo://example.org/props#x": "value"})
+
+    assert sim.node_update_requests == []
+    await fs.aclose()
+
+
+@pytest.mark.parametrize("wire_type", ["StructuredDataNode", "UnstructuredDataNode"])
+async def test_update_node_preserves_concrete_data_node_type(
+    router: respx.Router,
+    wire_type: str,
+) -> None:
+    sim = VOSpaceSim().add_file("/data.bin", b"data", wire_type=wire_type)
+    fs = _fs(router, sim)
+
+    await fs._update_node("/data.bin", {"ivo://example.org/props#x": "value"})
+
+    request = sim.node_update_requests[-1]
+    document = ElementTree.fromstring(request.content)
+    assert document.get("{http://www.w3.org/2001/XMLSchema-instance}type") == (
+        f"vos:{wire_type}"
+    )
+    await fs.aclose()
+
+
+async def test_update_node_round_trips_xml_metacharacters(
+    router: respx.Router,
+) -> None:
+    property_uri = "ivo://example.org/vosfs/custom?left=1&right=2"
+    property_value = 'R&D <science> "quoted"'
+    sim = VOSpaceSim().add_file("/data.bin", b"data")
+    fs = _fs(router, sim)
+
+    await fs._update_node("/data.bin", {property_uri: property_value})
+
+    assert (await fs._info("/data.bin"))["properties"][property_uri] == property_value
+    await fs.aclose()
+
+
+async def test_update_node_preserves_container_type(router: respx.Router) -> None:
+    property_uri = "ivo://example.org/vosfs#container-update"
+    sim = VOSpaceSim().add_container("/dir")
+    fs = _fs(router, sim)
+
+    await fs._update_node("/dir", {property_uri: "container"})
+
+    request = sim.node_update_requests[-1]
+    document = ElementTree.fromstring(request.content)
+    assert document.get("{http://www.w3.org/2001/XMLSchema-instance}type") == (
+        "vos:ContainerNode"
+    )
+    assert document.find(f"{{{VOSPACE_NS}}}nodes") is not None
+    assert (await fs._info("/dir"))["properties"][property_uri] == "container"
+    await fs.aclose()
+
+
+async def test_update_node_maps_service_failure_without_changing_metadata(
+    router: respx.Router,
+) -> None:
+    property_uri = "ivo://example.org/vosfs#issue-65"
+    sim = VOSpaceSim().add_file("/data.bin", b"data")
+    sim.node_update_status = 409
+    fs = _fs(router, sim)
+    await fs._ls("/", detail=True)
+
+    with pytest.raises(FileExistsError):
+        await fs._update_node("/data.bin", {property_uri: "rejected"})
+
+    assert "/" in fs.dircache
+    assert property_uri not in (await fs._info("/data.bin"))["properties"]
+    await fs.aclose()
+
+
+async def test_update_node_rejects_core_property_before_http(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_file("/data.bin", b"data")
+    fs = _fs(router, sim)
+
+    with pytest.raises(ValueError, match="administrative"):
+        await fs._update_node("/data.bin", {LENGTH_PROPERTY_URI: "99"})
+
+    assert len(router.calls) == 0
+    await fs.aclose()
 
 
 # --- mkdir / makedirs -----------------------------------------------------------
@@ -19,6 +180,19 @@ async def test_mkdir_creates_container(router: respx.Router) -> None:
     fs = _fs(router, sim)
     await fs._mkdir("/dir", create_parents=False)
     assert sim.nodes["/dir"] == "container"
+    await fs.aclose()
+
+
+async def test_delete_then_recreate_discards_stale_node_authority(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_container("/dir").with_authority("/dir", "old.example!vault")
+    fs = _fs(router, sim)
+
+    await fs._delete_node("/dir")
+    await fs._create_container("/dir")
+
+    assert (await fs._info("/dir"))["uri"] == f"vos://{AUTHORITY}/dir"
     await fs.aclose()
 
 
