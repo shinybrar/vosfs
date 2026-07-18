@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import locale
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import typer
 
-from ._command import _MappedOperand, _usage_error
+from ._command import _MappedOperand, _parse_mapped_operand, _usage_error
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._sources import _SourceInvocation
 
@@ -64,32 +63,7 @@ def _preflight(
             rendered = _render_diagnostic_value(argument)
             _usage_error(command, f"{rendered}: unsupported option")
 
-        name, separator, path = argument.partition(":")
-        if (
-            not name
-            or not separator
-            or not path.startswith("/")
-            or "\0" in argument
-            or "\n" in argument
-        ):
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: invalid mapped filesystem operand")
-
-        if name not in known_names:
-            known = sorted(
-                known_names,
-                key=lambda candidate: (locale.strxfrm(candidate), candidate),
-            )
-            rendered_operand = _render_diagnostic_value(argument)
-            rendered_names = ", ".join(
-                _render_diagnostic_value(candidate) for candidate in known
-            )
-            _usage_error(
-                command,
-                f"{rendered_operand}: unknown filesystem (known: {rendered_names})",
-            )
-
-        operands.append(_MappedOperand(spelling=argument, name=name, path=path))
+        operands.append(_parse_mapped_operand(command, argument, known_names))
         seen_operand = True
         if options_active:
             options_active = False

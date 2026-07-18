@@ -9,6 +9,7 @@ the mapped-operand record, usage-error reporting, and binary stdout access.
 
 from __future__ import annotations
 
+import locale
 import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NoReturn, Protocol, cast
@@ -19,6 +20,8 @@ from typer.core import TyperCommand
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from typer._click import Context
 
 _RAW_ARGUMENTS = "fsspec_cli.raw_arguments"
@@ -141,3 +144,41 @@ def _render_output_failure(command: str, error: Exception) -> None:
         err=True,
         color=True,
     )
+
+
+def _sorted_known(known_names: Collection[str]) -> list[str]:
+    """Return the configured source names in locale order for diagnostics."""
+    return sorted(
+        known_names, key=lambda candidate: (locale.strxfrm(candidate), candidate)
+    )
+
+
+def _parse_mapped_operand(
+    command: str,
+    argument: str,
+    known_names: Collection[str],
+) -> _MappedOperand:
+    """Parse and validate one ``name:/path`` operand against the known sources."""
+    name, separator, path = argument.partition(":")
+    if (
+        not name
+        or not separator
+        or not path.startswith("/")
+        or "\0" in argument
+        or "\n" in argument
+    ):
+        rendered = _render_diagnostic_value(argument)
+        _usage_error(command, f"{rendered}: invalid mapped filesystem operand")
+
+    if name not in known_names:
+        rendered_operand = _render_diagnostic_value(argument)
+        rendered_names = ", ".join(
+            _render_diagnostic_value(candidate)
+            for candidate in _sorted_known(known_names)
+        )
+        _usage_error(
+            command,
+            f"{rendered_operand}: unknown filesystem (known: {rendered_names})",
+        )
+
+    return _MappedOperand(spelling=argument, name=name, path=path)

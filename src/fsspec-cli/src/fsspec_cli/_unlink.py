@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-import locale
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 import typer
 
-from ._command import _MappedOperand, _render_backend_failure, _usage_error
+from ._command import (
+    _MappedOperand,
+    _parse_mapped_operand,
+    _render_backend_failure,
+    _usage_error,
+)
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._sources import _SourceInvocation
 
@@ -47,36 +51,11 @@ def _validate_mapped_operand(
     argument: str,
     known_names: Collection[str],
 ) -> _MappedOperand:
-    name, separator, path = argument.partition(":")
-    if (
-        not name
-        or not separator
-        or not path.startswith("/")
-        or "\0" in argument
-        or "\n" in argument
-    ):
-        rendered = _render_diagnostic_value(argument)
-        _usage_error(command, f"{rendered}: invalid mapped filesystem operand")
-
-    if name not in known_names:
-        known = sorted(
-            known_names,
-            key=lambda candidate: (locale.strxfrm(candidate), candidate),
-        )
-        rendered_operand = _render_diagnostic_value(argument)
-        rendered_names = ", ".join(
-            _render_diagnostic_value(candidate) for candidate in known
-        )
-        _usage_error(
-            command,
-            f"{rendered_operand}: unknown filesystem (known: {rendered_names})",
-        )
-
-    if _is_rejected_path(path):
+    operand = _parse_mapped_operand(command, argument, known_names)
+    if _is_rejected_path(operand.path):
         rendered = _render_diagnostic_value(argument)
         _usage_error(command, f"{rendered}: rejected path")
-
-    return _MappedOperand(spelling=argument, name=name, path=path)
+    return operand
 
 
 def _preflight(

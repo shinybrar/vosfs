@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import locale
 import os
 import shutil
 import sys
@@ -17,7 +16,12 @@ from typing import TYPE_CHECKING, Literal
 
 import typer
 
-from ._command import _MappedOperand, _render_backend_failure, _usage_error
+from ._command import (
+    _MappedOperand,
+    _parse_mapped_operand,
+    _render_backend_failure,
+    _usage_error,
+)
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._sources import _SourceInvocation
 
@@ -54,39 +58,6 @@ class _CpFailure:
     residue: bool = False
 
 
-def _validate_mapped_operand(
-    command: str,
-    argument: str,
-    known_names: Collection[str],
-) -> _MappedOperand:
-    name, separator, path = argument.partition(":")
-    if (
-        not name
-        or not separator
-        or not path.startswith("/")
-        or "\0" in argument
-        or "\n" in argument
-    ):
-        rendered = _render_diagnostic_value(argument)
-        _usage_error(command, f"{rendered}: invalid mapped filesystem operand")
-
-    if name not in known_names:
-        known = sorted(
-            known_names,
-            key=lambda candidate: (locale.strxfrm(candidate), candidate),
-        )
-        rendered_operand = _render_diagnostic_value(argument)
-        rendered_names = ", ".join(
-            _render_diagnostic_value(candidate) for candidate in known
-        )
-        _usage_error(
-            command,
-            f"{rendered_operand}: unknown filesystem (known: {rendered_names})",
-        )
-
-    return _MappedOperand(spelling=argument, name=name, path=path)
-
-
 def _preflight(
     command: str,
     raw_arguments: tuple[str, ...],
@@ -108,7 +79,7 @@ def _preflight(
         _usage_error(command, "missing mapped filesystem operand")
 
     mapped = tuple(
-        _validate_mapped_operand(command, operand, known_names) for operand in operands
+        _parse_mapped_operand(command, operand, known_names) for operand in operands
     )
     destination = mapped[-1]
     return _CpPlan(

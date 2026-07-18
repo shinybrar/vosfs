@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import typer
 
-from ._command import _usage_error
+from ._command import _parse_mapped_operand, _usage_error
 from ._cp import (
     _CpFailure,
     _CpRequest,
@@ -19,7 +19,6 @@ from ._cp import (
     _require_file_size,
     _resolve_destination,
     _stage_remote,
-    _validate_mapped_operand,
 )
 from ._diagnostics import _render_diagnostic_value
 from ._sources import _SourceInvocation
@@ -53,10 +52,10 @@ def _preflight(
     if len(operands) < _OPERAND_COUNT:
         _usage_error(command, "missing mapped filesystem operand")
     sources = tuple(
-        _validate_mapped_operand(command, operand, known_names)
+        _parse_mapped_operand(command, operand, known_names)
         for operand in operands[:-1]
     )
-    destination = _validate_mapped_operand(command, operands[-1], known_names)
+    destination = _parse_mapped_operand(command, operands[-1], known_names)
     if any(source.name != destination.name for source in sources):
         _usage_error(command, "cross-source move unsupported")
     return (
