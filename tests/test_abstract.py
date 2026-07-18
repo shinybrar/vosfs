@@ -63,15 +63,14 @@ def _glob_params(reason_for: Callable[..., str | None]) -> list:
     return params
 
 
-def _copy_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noqa: ARG001
+def _question_mark_glob_reason(path, _recursive, _maxdepth, _expected) -> str | None:
     if "?" in path:
         return _QUESTION_MARK
-    # Recursive copy now materializes intermediate ContainerNodes, so only the
-    # '?'-glob rows (unresolvable path normalization) remain unsupported.
+    # Copy, get, and put share the same path-normalization limitation.
     return None
 
 
-_QUESTION_MARK_GLOB_PARAMS = _glob_params(_copy_glob_reason)
+_QUESTION_MARK_GLOB_PARAMS = _glob_params(_question_mark_glob_reason)
 
 
 class VOSpaceFixtures(AbstractFixtures):

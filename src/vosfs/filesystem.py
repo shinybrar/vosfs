@@ -26,7 +26,7 @@ from fsspec.compression import compr
 from fsspec.core import get_compression
 
 from vosfs import (
-    _coordination,
+    _write_coordination,
     capabilities,
     config,
     errors,
@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 
     from fsspec.callbacks import Callback
 
+    from vosfs._write_coordination import _WriteParentState
     from vosfs.capabilities import ServiceBindings
     from vosfs.negotiate import NegotiatedEndpoint
     from vosfs.nodes import Node
@@ -61,15 +62,6 @@ _IDENTITY_ENCODING = {"Accept-Encoding": "identity"}
 _READ_CHUNK = 1 << 20
 _DEFAULT_CONTENT_TYPE = "application/octet-stream"
 _GET_CONTAINER_MARKER = "_vosfs_materialize_get_container"
-
-
-class _WriteParentState:
-    """Operation-scoped coordination for remote upload containers."""
-
-    def __init__(self) -> None:
-        self.lock = asyncio.Lock()
-        self.materialized: set[str] = set()
-        self.failure: Exception | None = None
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -707,7 +699,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's upload coordinator with one shared parent-creation scope."""
-        async with _coordination.scope(self, _WriteParentState()):
+        async with _write_coordination.scope(self):
             return await super()._put(
                 lpath,
                 rpath,
@@ -726,7 +718,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's pipe coordinator with one shared parent-creation scope."""
-        async with _coordination.scope(self, _WriteParentState()):
+        async with _write_coordination.scope(self):
             return await super()._pipe(
                 path,
                 value=value,
@@ -775,7 +767,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
     ) -> None:
         """Write ``value`` to ``path`` with one whole PUT (create or overwrite)."""
         path = self._strip_protocol(path)
-        state = _coordination.current(self, _WriteParentState)
+        state = _write_coordination.current(self)
         if mode == "create" and await self._exists(path):
             msg = f"path already exists: {path}"
             raise FileExistsError(msg)
@@ -798,7 +790,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         """Stream one local file through one negotiated whole PUT."""
         callback: Callback = kwargs.get("callback", DEFAULT_CALLBACK)
         rpath = self._strip_protocol(rpath)
-        state = _coordination.current(self, _WriteParentState)
+        state = _write_coordination.current(self)
         if mode == "create" and await self._exists(rpath):
             msg = f"path already exists: {rpath}"
             raise FileExistsError(msg)
@@ -889,7 +881,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
     async def _makedirs(self, path: str, exist_ok: bool = False) -> None:  # noqa: FBT001, FBT002
         """Create ``path`` and every missing ancestor, top-down."""
         path = self._strip_protocol(path)
-        state = _coordination.current(self, _WriteParentState)
+        state = _write_coordination.current(self)
         if not exist_ok and await self._exists(path):
             msg = f"path already exists: {path}"
             raise FileExistsError(msg)
