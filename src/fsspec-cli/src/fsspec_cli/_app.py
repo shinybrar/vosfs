@@ -3,95 +3,61 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import typer
 from fsspec import AbstractFileSystem
 
+from ._basename import _run_basename
+from ._cat import _run_cat
+from ._command import _raw_arguments, _RawCommand
+from ._cp import _run_cp
+from ._diagnostics import _render_diagnostic_prefix
+from ._dirname import _run_dirname
+from ._ls import _run_ls
+from ._mkdir import _run_mkdir
+from ._mv import _run_mv
+from ._rm import _run_rm
+from ._rmdir import _run_rmdir
+from ._stat import _run_stat, _StatCommand
+from ._unlink import _run_unlink
+
 if TYPE_CHECKING:
     from typer.core import TyperCommand
-
-from ._basename import (
-    _BasenameCommand,
-    _run_basename,
-)
-from ._basename import (
-    _raw_arguments as _basename_raw_arguments,
-)
-from ._cat import _CatCommand, _run_cat
-from ._cp import _CpCommand, _run_cp
-from ._cp import _raw_arguments as _cp_raw_arguments
-from ._diagnostics import _render_diagnostic_prefix
-from ._dirname import (
-    _DirnameCommand,
-    _run_dirname,
-)
-from ._dirname import (
-    _raw_arguments as _dirname_raw_arguments,
-)
-from ._ls import _LsCommand, _raw_arguments, _run_ls
-from ._mkdir import _MkdirCommand, _run_mkdir
-from ._mv import _MvCommand, _run_mv
-from ._mv import _raw_arguments as _mv_raw_arguments
-from ._rm import _raw_arguments as _rm_raw_arguments
-from ._rm import _RmCommand, _run_rm
-from ._rmdir import _raw_arguments as _rmdir_raw_arguments
-from ._rmdir import _RmdirCommand, _run_rmdir
-from ._stat import _raw_arguments as _stat_raw_arguments
-from ._stat import _run_stat, _StatCommand
-from ._unlink import _raw_arguments as _unlink_raw_arguments
-from ._unlink import _run_unlink, _UnlinkCommand
 
 AsyncFilesystemSource: TypeAlias = Callable[
     [], AbstractAsyncContextManager[AbstractFileSystem]
 ]
-_BASENAME_COMMAND = "basename"
-_BASENAME_HELP = "Strip directory and suffix from a path"
-_DIRNAME_COMMAND = "dirname"
-_DIRNAME_HELP = "Strip the last component from a path"
-_LS_COMMAND = "ls"
-_LS_HELP = "List directory contents"
-_CAT_COMMAND = "cat"
-_CAT_HELP = "Concatenate files to standard output"
-_CP_COMMAND = "cp"
-_CP_HELP = "Copy a file (no recursion)"
-_MV_COMMAND = "mv"
-_MV_HELP = "Move or rename files"
-_MKDIR_COMMAND = "mkdir"
-_MKDIR_HELP = "Create directories"
-_RMDIR_COMMAND = "rmdir"
-_RMDIR_HELP = "Remove empty directories"
-_RM_COMMAND = "rm"
-_RM_HELP = "Remove files"
-_UNLINK_COMMAND = "unlink"
-_UNLINK_HELP = "Remove a single file"
-_STAT_COMMAND = "stat"
-_STAT_HELP = "Display file status"
+_SourceFreeRunner: TypeAlias = Callable[[str, tuple[str, ...]], None]
+_AsyncRunner: TypeAlias = Callable[
+    [str, tuple[str, ...], Mapping[str, AsyncFilesystemSource]],
+    Coroutine[Any, Any, None],
+]
+
 _COMMAND_CONTEXT = {
     "allow_extra_args": True,
     "ignore_unknown_options": True,
 }
-_SOURCE_FREE_CONTEXT = _COMMAND_CONTEXT
 
-
-def _register_source_free_command(  # noqa: PLR0913 - one argument per registration facet.
-    app: typer.Typer,
-    name: str,
-    command_cls: type[TyperCommand],
-    runner: Callable[[str, tuple[str, ...]], None],
-    raw_arguments: Callable[[typer.Context], tuple[str, ...]],
-    help_text: str,
-) -> None:
-    @app.command(
-        name,
-        cls=command_cls,
-        help=help_text,
-        context_settings=_SOURCE_FREE_CONTEXT,
-    )
-    def handler(ctx: typer.Context) -> None:
-        runner(name, raw_arguments(ctx))
+# Commands that render their raw arguments without acquiring a source.
+_SOURCE_FREE_COMMANDS: tuple[tuple[str, str, _SourceFreeRunner], ...] = (
+    ("basename", "Strip directory and suffix from a path", _run_basename),
+    ("dirname", "Strip the last component from a path", _run_dirname),
+)
+# Commands that acquire mapped sources and run on the invocation event loop.
+_ASYNC_COMMANDS: tuple[tuple[str, str, _AsyncRunner, type[TyperCommand]], ...] = (
+    ("ls", "List directory contents", _run_ls, _RawCommand),
+    ("cat", "Concatenate files to standard output", _run_cat, _RawCommand),
+    ("cp", "Copy a file (no recursion)", _run_cp, _RawCommand),
+    ("mv", "Move or rename files", _run_mv, _RawCommand),
+    ("mkdir", "Create directories", _run_mkdir, _RawCommand),
+    ("rmdir", "Remove empty directories", _run_rmdir, _RawCommand),
+    ("rm", "Remove files", _run_rm, _RawCommand),
+    ("unlink", "Remove a single file", _run_unlink, _RawCommand),
+    ("stat", "Display file status", _run_stat, _StatCommand),
+)
 
 
 def _validate_source_name(name: object) -> None:
@@ -140,123 +106,45 @@ class App:
         self.typer_app = typer.Typer(add_completion=False)
         self._register_commands()
 
-    def _register_commands(self) -> None:  # noqa: C901 - one registration site per command.
+    def _register_commands(self) -> None:
         @self.typer_app.callback()
         def root() -> None:
             pass
 
-        _register_source_free_command(
-            self.typer_app,
-            _BASENAME_COMMAND,
-            _BasenameCommand,
-            _run_basename,
-            _basename_raw_arguments,
-            _BASENAME_HELP,
-        )
-        _register_source_free_command(
-            self.typer_app,
-            _DIRNAME_COMMAND,
-            _DirnameCommand,
-            _run_dirname,
-            _dirname_raw_arguments,
-            _DIRNAME_HELP,
-        )
+        for name, help_text, source_free_runner in _SOURCE_FREE_COMMANDS:
+            self._register_source_free(name, help_text, source_free_runner)
+        for name, help_text, async_runner, command_cls in _ASYNC_COMMANDS:
+            self._register_async(name, help_text, async_runner, command_cls)
 
+    def _register_source_free(
+        self,
+        name: str,
+        help_text: str,
+        runner: _SourceFreeRunner,
+    ) -> None:
         @self.typer_app.command(
-            _LS_COMMAND,
-            cls=_LsCommand,
-            help=_LS_HELP,
+            name,
+            cls=_RawCommand,
+            help=help_text,
             context_settings=_COMMAND_CONTEXT,
         )
-        def ls(ctx: typer.Context) -> None:
+        def handler(ctx: typer.Context) -> None:
+            runner(name, _raw_arguments(ctx))
+
+    def _register_async(
+        self,
+        name: str,
+        help_text: str,
+        runner: _AsyncRunner,
+        command_cls: type[TyperCommand],
+    ) -> None:
+        @self.typer_app.command(
+            name,
+            cls=command_cls,
+            help=help_text,
+            context_settings=_COMMAND_CONTEXT,
+        )
+        def handler(ctx: typer.Context) -> None:
             raw_arguments = _raw_arguments(ctx)
-            _ensure_no_active_event_loop(_LS_COMMAND)
-            asyncio.run(_run_ls(_LS_COMMAND, raw_arguments, self._sources))
-
-        @self.typer_app.command(
-            _CAT_COMMAND,
-            cls=_CatCommand,
-            help=_CAT_HELP,
-            context_settings=_COMMAND_CONTEXT,
-        )
-        def cat(ctx: typer.Context) -> None:
-            raw_arguments = _raw_arguments(ctx)
-            _ensure_no_active_event_loop(_CAT_COMMAND)
-            asyncio.run(_run_cat(_CAT_COMMAND, raw_arguments, self._sources))
-
-        @self.typer_app.command(
-            _CP_COMMAND,
-            cls=_CpCommand,
-            help=_CP_HELP,
-            context_settings=_COMMAND_CONTEXT,
-        )
-        def cp(ctx: typer.Context) -> None:
-            raw_arguments = _cp_raw_arguments(ctx)
-            _ensure_no_active_event_loop(_CP_COMMAND)
-            asyncio.run(_run_cp(_CP_COMMAND, raw_arguments, self._sources))
-
-        @self.typer_app.command(
-            _MV_COMMAND,
-            cls=_MvCommand,
-            help=_MV_HELP,
-            context_settings=_COMMAND_CONTEXT,
-        )
-        def mv(ctx: typer.Context) -> None:
-            raw_arguments = _mv_raw_arguments(ctx)
-            _ensure_no_active_event_loop(_MV_COMMAND)
-            asyncio.run(_run_mv(_MV_COMMAND, raw_arguments, self._sources))
-
-        @self.typer_app.command(
-            _MKDIR_COMMAND,
-            cls=_MkdirCommand,
-            help=_MKDIR_HELP,
-            context_settings=_COMMAND_CONTEXT,
-        )
-        def mkdir(ctx: typer.Context) -> None:
-            raw_arguments = _raw_arguments(ctx)
-            _ensure_no_active_event_loop(_MKDIR_COMMAND)
-            asyncio.run(_run_mkdir(_MKDIR_COMMAND, raw_arguments, self._sources))
-
-        @self.typer_app.command(
-            _RMDIR_COMMAND,
-            cls=_RmdirCommand,
-            help=_RMDIR_HELP,
-            context_settings=_COMMAND_CONTEXT,
-        )
-        def rmdir(ctx: typer.Context) -> None:
-            raw_arguments = _rmdir_raw_arguments(ctx)
-            _ensure_no_active_event_loop(_RMDIR_COMMAND)
-            asyncio.run(_run_rmdir(_RMDIR_COMMAND, raw_arguments, self._sources))
-
-        @self.typer_app.command(
-            _RM_COMMAND,
-            cls=_RmCommand,
-            help=_RM_HELP,
-            context_settings=_COMMAND_CONTEXT,
-        )
-        def rm(ctx: typer.Context) -> None:
-            raw_arguments = _rm_raw_arguments(ctx)
-            _ensure_no_active_event_loop(_RM_COMMAND)
-            asyncio.run(_run_rm(_RM_COMMAND, raw_arguments, self._sources))
-
-        @self.typer_app.command(
-            _UNLINK_COMMAND,
-            cls=_UnlinkCommand,
-            help=_UNLINK_HELP,
-            context_settings=_COMMAND_CONTEXT,
-        )
-        def unlink(ctx: typer.Context) -> None:
-            raw_arguments = _unlink_raw_arguments(ctx)
-            _ensure_no_active_event_loop(_UNLINK_COMMAND)
-            asyncio.run(_run_unlink(_UNLINK_COMMAND, raw_arguments, self._sources))
-
-        @self.typer_app.command(
-            _STAT_COMMAND,
-            cls=_StatCommand,
-            help=_STAT_HELP,
-            context_settings=_COMMAND_CONTEXT,
-        )
-        def stat(ctx: typer.Context) -> None:
-            raw_arguments = _stat_raw_arguments(ctx)
-            _ensure_no_active_event_loop(_STAT_COMMAND)
-            asyncio.run(_run_stat(_STAT_COMMAND, raw_arguments, self._sources))
+            _ensure_no_active_event_loop(name)
+            asyncio.run(runner(name, raw_arguments, self._sources))

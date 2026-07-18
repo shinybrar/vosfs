@@ -9,20 +9,21 @@ import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO, Protocol
+from typing import TYPE_CHECKING, BinaryIO
 
 import typer
-from typer.core import TyperCommand
 
+from ._command import (
+    _binary_stdout,
+    _BinaryWriter,
+    _MappedOperand,
+    _usage_error,
+)
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._ls import (
-    _RAW_ARGUMENTS,
     _Failure,
-    _MappedOperand,
     _render_failure,
     _render_output_failure,
-    _shield_help_values,
-    _usage_error,
 )
 from ._sources import _SourceInvocation
 
@@ -30,7 +31,6 @@ if TYPE_CHECKING:
     from collections.abc import Collection
 
     from fsspec.asyn import AsyncFileSystem
-    from typer._click import Context
 
     from ._app import AsyncFilesystemSource
 
@@ -38,12 +38,6 @@ _OUTPUT_CHUNK = 1 << 16
 # 128 + SIGPIPE (13): lets pipeline consumers tell "reader went away" from a
 # real error when the sole failure is a broken pipe on stdout.
 _BROKEN_PIPE_EXIT_CODE = 141
-
-
-class _BinaryWriter(Protocol):
-    def write(self, data: bytes) -> int: ...
-
-    def flush(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -63,12 +57,6 @@ class _CatRequest:
 class _StagingFailure:
     operand: _CatOperand
     error: Exception
-
-
-class _CatCommand(TyperCommand):
-    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
-        ctx.meta[_RAW_ARGUMENTS] = tuple(args)
-        return super().parse_args(ctx, _shield_help_values(args))
 
 
 def _preflight(
@@ -121,14 +109,6 @@ def _preflight(
         operands.append(_StdinOperand())
 
     return _CatRequest(operands=tuple(operands))
-
-
-def _binary_stdout() -> _BinaryWriter:
-    buffer = getattr(sys.stdout, "buffer", None)
-    if buffer is None:
-        message = "stdout has no binary buffer"
-        raise OSError(message)
-    return buffer
 
 
 def _binary_stdin() -> BinaryIO:

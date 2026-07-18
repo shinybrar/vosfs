@@ -8,8 +8,8 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import typer
-from typer.core import TyperCommand
 
+from ._command import _usage_error
 from ._cp import (
     _CpFailure,
     _CpRequest,
@@ -22,12 +22,7 @@ from ._cp import (
     _stage_remote,
     _validate_mapped_operand,
 )
-from ._ls import (
-    _RAW_ARGUMENTS,
-    _render_diagnostic_value,
-    _shield_help_values,
-    _usage_error,
-)
+from ._ls import _render_diagnostic_value
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
@@ -35,21 +30,10 @@ if TYPE_CHECKING:
     from collections.abc import Mapping as MappingType
 
     from fsspec.asyn import AsyncFileSystem
-    from typer._click import Context
 
     from ._app import AsyncFilesystemSource
 
 _OPERAND_COUNT = 2
-
-
-class _MvCommand(TyperCommand):
-    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
-        ctx.meta[_RAW_ARGUMENTS] = tuple(args)
-        return super().parse_args(ctx, _shield_help_values(args))
-
-
-def _raw_arguments(ctx: typer.Context) -> tuple[str, ...]:
-    return tuple(ctx.meta[_RAW_ARGUMENTS])
 
 
 def _preflight(

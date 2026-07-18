@@ -3,52 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NoReturn, cast
 
 import typer
-from typer.core import TyperCommand
 
-from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
-
-if TYPE_CHECKING:
-    from typer._click import Context
-
-_RAW_ARGUMENTS = "fsspec_cli.raw_arguments"
+from ._command import _usage_error
+from ._diagnostics import _render_diagnostic_value
 
 
 @dataclass(frozen=True)
 class _DirnameRequest:
     operand: str
-
-
-class _DirnameCommand(TyperCommand):
-    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
-        ctx.meta[_RAW_ARGUMENTS] = tuple(args)
-        return super().parse_args(ctx, _shield_help_values(args))
-
-
-def _shield_help_values(arguments: list[str]) -> list[str]:
-    """Keep malformed help tokens available to command preflight."""
-    shielded = []
-    options_active = True
-    for argument in arguments:
-        if argument == "--":
-            options_active = False
-        if options_active and argument.startswith("--help="):
-            shielded.append("--fsspec-cli-unsupported-help-value")
-        else:
-            shielded.append(argument)
-    return shielded
-
-
-def _raw_arguments(ctx: typer.Context) -> tuple[str, ...]:
-    return cast("tuple[str, ...]", ctx.meta[_RAW_ARGUMENTS])
-
-
-def _usage_error(command: str, diagnostic: str) -> NoReturn:
-    prefix = _render_diagnostic_prefix(command)
-    typer.echo(f"{prefix} {diagnostic}", err=True, color=True)
-    raise typer.Exit(2)
 
 
 def _preflight(
