@@ -37,30 +37,53 @@ _STANDARD_ROLE = "std"
 class ServiceBindings:
     """The resolved node and synchronous-transfer operation URLs.
 
-    A ``None`` URL means the deployment did not advertise that binding; the
-    dependent operation raises ``NotImplementedError`` when used.
+    Byte access is a *negotiated capability*. A ``None`` URL means the
+    deployment advertises no binding for that operation usable with the
+    configured credential; the dependent operation raises
+    ``NotImplementedError`` naming the missing capability when used. A
+    deployment that advertises no usable synchronous-transfer binding still
+    supports node metadata operations — only byte read/write is disabled — so
+    the absence of a transfer binding is a supported degradation, not a fault.
     """
 
     nodes_url: str | None
     sync_url: str | None
+    endpoint_url: str = ""
+    security_method: str = ""
 
     def require_nodes(self) -> str:
-        """Return the node binding URL or raise if it was not advertised."""
-        return _require(self.nodes_url, "node")
+        """Return the node binding URL or raise naming the missing capability."""
+        if self.nodes_url is None:
+            msg = (
+                f"{self.endpoint_url} advertises no node binding "
+                f"({NODES_STANDARD_ID}) usable with the configured credential "
+                f"(security method {self.security_method!r})"
+            )
+            raise NotImplementedError(msg)
+        return self.nodes_url
 
     def require_sync(self) -> str:
-        """Return the synchronous-transfer binding URL or raise if absent."""
-        return _require(self.sync_url, "synchronous-transfer")
+        """Return the synchronous-transfer binding URL or raise if unavailable.
+
+        The error names the missing ``#sync-2.1`` capability, the endpoint, and
+        the configured security method, and makes clear that byte read/write is
+        unavailable on this deployment while node metadata operations remain.
+        """
+        if self.sync_url is None:
+            msg = (
+                f"{self.endpoint_url} advertises no synchronous-transfer binding "
+                f"({SYNC_STANDARD_ID}) usable with the configured credential "
+                f"(security method {self.security_method!r}); byte read and write "
+                f"are unavailable on this deployment, but node metadata "
+                f"operations remain available"
+            )
+            raise NotImplementedError(msg)
+        return self.sync_url
 
 
-def _require(url: str | None, name: str) -> str:
-    if url is None:
-        msg = f"the OpenCADC service does not advertise a {name} binding"
-        raise NotImplementedError(msg)
-    return url
-
-
-def parse_bindings(data: bytes, *, security_method: str) -> ServiceBindings:
+def parse_bindings(
+    data: bytes, *, security_method: str, endpoint_url: str = ""
+) -> ServiceBindings:
     """Resolve the node and sync bindings for the configured credential.
 
     Args:
@@ -68,6 +91,9 @@ def parse_bindings(data: bytes, *, security_method: str) -> ServiceBindings:
         security_method: The configured credential's security-method
             identifier (``ANONYMOUS_METHOD``, ``TOKEN_METHOD``, or
             ``CERTIFICATE_METHOD``).
+        endpoint_url: The service base URL, named in the actionable
+            ``NotImplementedError`` raised when a required binding is
+            unavailable.
 
     Returns:
         The resolved bindings, with a ``None`` URL for any binding the
@@ -82,6 +108,8 @@ def parse_bindings(data: bytes, *, security_method: str) -> ServiceBindings:
     return ServiceBindings(
         nodes_url=_resolve(root, NODES_STANDARD_ID, security_method, use="base"),
         sync_url=_resolve(root, SYNC_STANDARD_ID, security_method, use="full"),
+        endpoint_url=endpoint_url,
+        security_method=security_method,
     )
 
 

@@ -192,6 +192,16 @@ fetches it again.
 `vosfs` **MUST NOT** guess a missing operation URL. A missing binding disables
 only its dependent operation and raises an actionable `NotImplementedError`.
 
+Byte access is a *negotiated capability*: `sync-2.1` is an optional IVOA 2.1
+addition, so a deployment MAY advertise no usable synchronous-transfer binding.
+That is a **supported degradation**, not a fault — node metadata operations
+(which need only the node binding) continue to work, and only byte read and
+write are disabled. The raised `NotImplementedError` **MUST** name the missing
+`#sync-2.1` capability, the `endpoint_url`, and the configured security method.
+Constructing a `/files` byte URL directly as a fallback remains out of scope
+(section 16); the evidence is in
+[transfer-endpoint variability](../research/vosfs-transfer-endpoint-variability.md).
+
 The client **MUST NOT** construct a `/files` URL directly.
 
 ### 5.1 Explicitly excluded server resources

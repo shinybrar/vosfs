@@ -174,7 +174,9 @@ class VOSpaceFileSystem(AsyncFileSystem):
         )
         self._raise_for_status(response, path="/capabilities", allowed=(_HTTP_OK,))
         return capabilities.parse_bindings(
-            response.content, security_method=self._security_method()
+            response.content,
+            security_method=self._security_method(),
+            endpoint_url=self.endpoint_url,
         )
 
     async def _send_to_service(
