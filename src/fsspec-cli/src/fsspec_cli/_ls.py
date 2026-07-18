@@ -5,7 +5,7 @@ from __future__ import annotations
 import locale
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Generic, TypeAlias, TypeVar, cast
 
 import typer
 
@@ -22,7 +22,7 @@ from ._listing import ListingRow, render_listing, to_listing
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Awaitable, Callable, Collection
 
     from fsspec.asyn import AsyncFileSystem
 
@@ -37,56 +37,25 @@ class _LsRequest:
     operands: tuple[_MappedOperand, ...]
 
 
-@dataclass(frozen=True)
-class _ShortOptions:
-    include_almost_all: bool
-    long_listing: bool
-    human_readable: bool
+_PayloadT = TypeVar("_PayloadT")
 
 
 @dataclass(frozen=True)
-class _ClassifiedInfo:
-    info: Mapping[str, object]
-    kind: Literal["file", "directory"]
-
-
-@dataclass(frozen=True)
-class _PlainFileResult:
+class _Result(Generic[_PayloadT]):
     operand: _MappedOperand
+    is_directory: bool
+    payload: _PayloadT
 
 
-@dataclass(frozen=True)
-class _PlainDirectoryResult:
-    operand: _MappedOperand
-    children: tuple[str, ...]
+_PlainResult: TypeAlias = _Result[tuple[str, ...]]
+_LongResult: TypeAlias = _Result[tuple[ListingRow, ...]]
 
 
-@dataclass(frozen=True)
-class _LongFileResult:
-    operand: _MappedOperand
-    row: ListingRow
-
-
-@dataclass(frozen=True)
-class _LongDirectoryResult:
-    operand: _MappedOperand
-    rows: tuple[ListingRow, ...]
-
-
-_PlainResult: TypeAlias = _PlainFileResult | _PlainDirectoryResult
-_LongResult: TypeAlias = _LongFileResult | _LongDirectoryResult
-_AnyResult: TypeAlias = _PlainResult | _LongResult
-
-
-def _classify_short_options(argument: str) -> _ShortOptions | None:
+def _short_options(argument: str) -> str | None:
     characters = argument[1:]
     if not characters or not set(characters) <= {"A", "h", "l"}:
         return None
-    return _ShortOptions(
-        include_almost_all="A" in characters,
-        long_listing="l" in characters,
-        human_readable="h" in characters,
-    )
+    return characters
 
 
 def _long_requested(
@@ -104,8 +73,8 @@ def _long_requested(
             continue
         if not options_active or not argument.startswith("-") or argument == "-":
             continue
-        options = _classify_short_options(argument)
-        if options is not None and options.long_listing:
+        options = _short_options(argument)
+        if options is not None and "l" in options:
             return True
     return False
 
@@ -131,15 +100,15 @@ def _preflight(
             options_active = False
             continue
         if options_active and argument.startswith("-") and argument != "-":
-            options = _classify_short_options(argument)
+            options = _short_options(argument)
             if options is None:
                 rendered = _render_diagnostic_value(argument)
                 _usage_error(command, f"{rendered}: unsupported option")
-            if options.human_readable and not long_listing:
+            if "h" in options and not long_listing:
                 rendered = _render_diagnostic_value(argument)
                 _usage_error(command, f"{rendered}: unsupported option")
-            include_almost_all = include_almost_all or options.include_almost_all
-            human_readable = human_readable or options.human_readable
+            include_almost_all = include_almost_all or "A" in options
+            human_readable = human_readable or "h" in options
             continue
 
         operands.append(_parse_mapped_operand(command, argument, known_names))
@@ -177,9 +146,14 @@ async def _run_ls(
         filesystems = await invocation.acquire(names)
         if filesystems is not None:
             if request.long_listing:
-                long_successes, failures = await _trace_long_operands(
-                    request,
+                long_successes, failures = await _trace_operands(
+                    request.operands,
                     filesystems,
+                    lambda operand, filesystem: _read_long_operand(
+                        operand,
+                        filesystem,
+                        include_almost_all=request.include_almost_all,
+                    ),
                 )
                 output = _format_long_successes(
                     long_successes,
@@ -187,9 +161,14 @@ async def _run_ls(
                     multiple_operands=len(request.operands) > 1,
                 )
             else:
-                plain_successes, failures = await _trace_plain_operands(
-                    request,
+                plain_successes, failures = await _trace_operands(
+                    request.operands,
                     filesystems,
+                    lambda operand, filesystem: _read_plain_operand(
+                        operand,
+                        filesystem,
+                        include_almost_all=request.include_almost_all,
+                    ),
                 )
                 output = _format_plain_successes(
                     plain_successes,
@@ -221,37 +200,18 @@ async def _run_ls(
         raise typer.Exit(1)
 
 
-async def _trace_plain_operands(
-    request: _LsRequest,
+async def _trace_operands(
+    operands: tuple[_MappedOperand, ...],
     filesystems: Mapping[str, AsyncFileSystem],
-) -> tuple[tuple[_PlainResult, ...], tuple[_Failure, ...]]:
-    successes: list[_PlainResult] = []
+    reader: Callable[
+        [_MappedOperand, AsyncFileSystem],
+        Awaitable[_Result[_PayloadT] | _Failure],
+    ],
+) -> tuple[tuple[_Result[_PayloadT], ...], tuple[_Failure, ...]]:
+    successes: list[_Result[_PayloadT]] = []
     failures = []
-    for operand in request.operands:
-        result = await _read_plain_operand(
-            operand,
-            filesystems[operand.name],
-            include_almost_all=request.include_almost_all,
-        )
-        if isinstance(result, _Failure):
-            failures.append(result)
-        else:
-            successes.append(result)
-    return tuple(successes), tuple(failures)
-
-
-async def _trace_long_operands(
-    request: _LsRequest,
-    filesystems: Mapping[str, AsyncFileSystem],
-) -> tuple[tuple[_LongResult, ...], tuple[_Failure, ...]]:
-    successes: list[_LongResult] = []
-    failures = []
-    for operand in request.operands:
-        result = await _read_long_operand(
-            operand,
-            filesystems[operand.name],
-            include_almost_all=request.include_almost_all,
-        )
+    for operand in operands:
+        result = await reader(operand, filesystems[operand.name])
         if isinstance(result, _Failure):
             failures.append(result)
         else:
@@ -262,26 +222,16 @@ async def _trace_long_operands(
 async def _classify_operand(
     operand: _MappedOperand,
     filesystem: AsyncFileSystem,
-) -> _ClassifiedInfo | _Failure:
+) -> Mapping[str, object] | _Failure:
     # fsspec's native async API intentionally exposes underscore coroutines.
     try:
         info = await filesystem._info(operand.path)  # noqa: SLF001
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _Failure(operand, backend_error=error)
 
-    if not isinstance(info, Mapping) or not isinstance(info.get("type"), str):
+    if not isinstance(info, Mapping) or info.get("type") not in {"file", "directory"}:
         return _Failure(operand)
-
-    result_type = info["type"]
-    if result_type not in {"file", "directory"}:
-        return _Failure(operand)
-    kind: Literal["file", "directory"] = (
-        "file" if result_type == "file" else "directory"
-    )
-    return _ClassifiedInfo(
-        cast("Mapping[str, object]", info),
-        kind,
-    )
+    return cast("Mapping[str, object]", info)
 
 
 async def _read_plain_operand(
@@ -290,11 +240,15 @@ async def _read_plain_operand(
     *,
     include_almost_all: bool,
 ) -> _PlainResult | _Failure:
-    classified = await _classify_operand(operand, filesystem)
-    if isinstance(classified, _Failure):
-        return classified
-    if classified.kind == "file":
-        return _PlainFileResult(operand)
+    info = await _classify_operand(operand, filesystem)
+    if isinstance(info, _Failure):
+        return info
+    if info["type"] == "file":
+        return _Result(
+            operand=operand,
+            is_directory=False,
+            payload=(operand.spelling,),
+        )
 
     listing = await _list_directory(operand, filesystem, detail=False)
     if isinstance(listing, _Failure):
@@ -306,7 +260,7 @@ async def _read_plain_operand(
     )
     if children is None:
         return _Failure(operand)
-    return _PlainDirectoryResult(operand, children)
+    return _Result(operand=operand, is_directory=True, payload=children)
 
 
 async def _read_long_operand(
@@ -315,14 +269,14 @@ async def _read_long_operand(
     *,
     include_almost_all: bool,
 ) -> _LongResult | _Failure:
-    classified = await _classify_operand(operand, filesystem)
-    if isinstance(classified, _Failure):
-        return classified
-    if classified.kind == "file":
-        row = _listing_row(classified.info)
+    info = await _classify_operand(operand, filesystem)
+    if isinstance(info, _Failure):
+        return info
+    if info["type"] == "file":
+        row = _listing_row(info)
         if row is None or not row.name or "\0" in row.name or "\n" in row.name:
             return _Failure(operand)
-        return _LongFileResult(operand, row)
+        return _Result(operand=operand, is_directory=False, payload=(row,))
 
     listing = await _list_directory(operand, filesystem, detail=True)
     if isinstance(listing, _Failure):
@@ -334,7 +288,7 @@ async def _read_long_operand(
     )
     if rows is None:
         return _Failure(operand)
-    return _LongDirectoryResult(operand, rows)
+    return _Result(operand=operand, is_directory=True, payload=rows)
 
 
 def _listing_row(info: Mapping[str, object]) -> ListingRow | None:
@@ -359,7 +313,7 @@ async def _list_directory(
         return _Failure(operand, backend_error=error)
 
 
-def _sort_key(result: _AnyResult) -> tuple[str, str]:
+def _sort_key(result: _Result[_PayloadT]) -> tuple[str, str]:
     spelling = result.operand.spelling
     return locale.strxfrm(spelling), spelling
 
@@ -373,27 +327,23 @@ def _format_plain_successes(
         if not successes:
             return ""
         result = successes[0]
-        lines = (
-            (result.operand.spelling,)
-            if isinstance(result, _PlainFileResult)
-            else result.children
-        )
+        lines = result.payload
         return "\n".join(lines) + "\n" if lines else ""
 
     files = sorted(
-        (result for result in successes if isinstance(result, _PlainFileResult)),
+        (result for result in successes if not result.is_directory),
         key=_sort_key,
     )
     directories = sorted(
-        (result for result in successes if isinstance(result, _PlainDirectoryResult)),
+        (result for result in successes if result.is_directory),
         key=_sort_key,
     )
     blocks: list[str] = []
     if files:
-        blocks.append("\n".join(result.operand.spelling for result in files))
+        blocks.append("\n".join(line for result in files for line in result.payload))
     for result in directories:
         header = f"{result.operand.spelling}:"
-        children = "\n".join(result.children)
+        children = "\n".join(result.payload)
         blocks.append(f"{header}\n{children}" if children else header)
     return _join_blocks(blocks)
 
@@ -408,29 +358,28 @@ def _format_long_successes(
         return ""
     if not multiple_operands:
         result = successes[0]
-        rows = (result.row,) if isinstance(result, _LongFileResult) else result.rows
         return render_listing(
-            rows,
+            result.payload,
             human_readable=human_readable,
         )
 
     files = sorted(
-        (result for result in successes if isinstance(result, _LongFileResult)),
+        (result for result in successes if not result.is_directory),
         key=_sort_key,
     )
     directories = sorted(
-        (result for result in successes if isinstance(result, _LongDirectoryResult)),
+        (result for result in successes if result.is_directory),
         key=_sort_key,
     )
     blocks = []
-    file_rows = tuple(result.row for result in files)
+    file_rows = tuple(row for result in files for row in result.payload)
     if file_rows:
         blocks.append(
             render_listing(file_rows, human_readable=human_readable).removesuffix("\n")
         )
     for result in directories:
         rendered = render_listing(
-            result.rows,
+            result.payload,
             human_readable=human_readable,
         ).removesuffix("\n")
         header = f"{result.operand.spelling}:"

@@ -12,7 +12,6 @@ from fsspec_cli import App
 from vosfs import VOSpaceFileSystem
 
 from ._matrix_support import (
-    LongListingGolden,
     _block_network,
     _exercise_cat_profile,
     _exercise_cp_locked_profile,
@@ -529,17 +528,15 @@ def test_native_vosfs_long_listing_profile_is_remote_and_uses_detail(
         "vos",
         source,
         "/docs",
-        LongListingGolden(
-            exact_directory=(
-                "file     8  Jul 17 18:00  guide.md\n"
-                "file  1536  Jul 17 18:00  notes.txt\n"
-                f"link     0  -             shortcut -> vos://{_AUTHORITY}/docs/guide.md\n"
-            ),
-            human_directory=(
-                "file    8B  Jul 17 18:00  guide.md\n"
-                "file  1.5K  Jul 17 18:00  notes.txt\n"
-                f"link    0B  -             shortcut -> vos://{_AUTHORITY}/docs/guide.md\n"
-            ),
+        exact_directory=(
+            "file     8  Jul 17 18:00  guide.md\n"
+            "file  1536  Jul 17 18:00  notes.txt\n"
+            f"link     0  -             shortcut -> vos://{_AUTHORITY}/docs/guide.md\n"
+        ),
+        human_directory=(
+            "file    8B  Jul 17 18:00  guide.md\n"
+            "file  1.5K  Jul 17 18:00  notes.txt\n"
+            f"link    0B  -             shortcut -> vos://{_AUTHORITY}/docs/guide.md\n"
         ),
     )
 

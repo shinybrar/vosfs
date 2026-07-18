@@ -15,7 +15,6 @@ from fsspec_cli import App
 from typer.testing import CliRunner
 
 from ._matrix_support import (
-    LongListingGolden,
     _block_network,
     _exercise_cat_profile,
     _exercise_cp_locked_profile,
@@ -150,15 +149,13 @@ def test_adapted_local_long_listing_profile_is_rich_and_uses_detail(
         "local",
         source,
         path,
-        LongListingGolden(
-            exact_directory=(
-                f"-rw-r--r--  1  {owner}  {group}  8  Jul 17 18:00  guide.md\n"
-                f"-rw-r--r--  1  {owner}  {group}  9  Jul 17 18:00  notes.txt\n"
-            ),
-            human_directory=(
-                f"-rw-r--r--  1  {owner}  {group}  8B  Jul 17 18:00  guide.md\n"
-                f"-rw-r--r--  1  {owner}  {group}  9B  Jul 17 18:00  notes.txt\n"
-            ),
+        exact_directory=(
+            f"-rw-r--r--  1  {owner}  {group}  8  Jul 17 18:00  guide.md\n"
+            f"-rw-r--r--  1  {owner}  {group}  9  Jul 17 18:00  notes.txt\n"
+        ),
+        human_directory=(
+            f"-rw-r--r--  1  {owner}  {group}  8B  Jul 17 18:00  guide.md\n"
+            f"-rw-r--r--  1  {owner}  {group}  9B  Jul 17 18:00  notes.txt\n"
         ),
     )
 
@@ -189,10 +186,8 @@ def test_adapted_memory_long_listing_profile_is_sparse_and_uses_detail(
         "memory",
         source,
         "/docs",
-        LongListingGolden(
-            exact_directory="file  8  guide.md\nfile  9  notes.txt\n",
-            human_directory="file  8B  guide.md\nfile  9B  notes.txt\n",
-        ),
+        exact_directory="file  8  guide.md\nfile  9  notes.txt\n",
+        human_directory="file  8B  guide.md\nfile  9B  notes.txt\n",
     )
 
     assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)

@@ -62,12 +62,6 @@ class FilesystemCall:
     destination_path: str | None = None
 
 
-@dataclass(frozen=True)
-class LongListingGolden:
-    exact_directory: str
-    human_directory: str
-
-
 def _block_network(monkeypatch) -> None:
     def fail_network(*args: object, **kwargs: object) -> None:
         del args, kwargs
@@ -617,7 +611,9 @@ def _exercise_long_listing_profile(
     source_name: str,
     source: _ProbedSource[_FilesystemT],
     path: str,
-    golden: LongListingGolden,
+    *,
+    exact_directory: str,
+    human_directory: str,
 ) -> None:
     app = App({source_name: source})
     directory_operand = f"{source_name}:{path}"
@@ -627,12 +623,12 @@ def _exercise_long_listing_profile(
 
     assert (exact.exit_code, exact.stdout, exact.stderr) == (
         0,
-        golden.exact_directory,
+        exact_directory,
         "",
     )
     assert (human.exit_code, human.stdout, human.stderr) == (
         0,
-        golden.human_directory,
+        human_directory,
         "",
     )
     assert [event.stage for event in source.lifecycle] == [
