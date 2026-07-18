@@ -70,11 +70,9 @@ _INFO_TYPE_BY_NODE_TYPE = {
     "link": "other",
 }
 
-# Concrete wire type required by OpenCADC's schema-validating ``NodeReader``.
-_UPDATE_XSI_TYPE_BY_NODE_TYPE = {
-    "data": "vos:DataNode",
-    "container": "vos:ContainerNode",
-}
+# Concrete wire types accepted by the private property-update primitive.
+_DATA_WIRE_TYPES = frozenset({"DataNode", "StructuredDataNode", "UnstructuredDataNode"})
+_UPDATE_WIRE_TYPES = _DATA_WIRE_TYPES | {"ContainerNode"}
 
 # ElementTree serializes namespaces by prefix from a process-global registry.
 # Registering the VOSpace and XML-Schema-instance prefixes keeps generated
@@ -102,6 +100,9 @@ class Node:
     Attributes:
         node_type: One of ``"data"``, ``"container"``, or ``"link"``.
             Structured and unstructured data nodes are reported as ``"data"``.
+        wire_type: The exact local name from ``xsi:type``, retained so updates
+            cannot silently change a structured or unstructured data node into
+            a base ``DataNode``.
         uri: The node identifier URI carried by the document.
         size: The byte length for a data node, or ``0`` for containers and
             links.
@@ -116,6 +117,7 @@ class Node:
     """
 
     node_type: str
+    wire_type: str
     uri: str
     size: int
     mtime: str | None
@@ -250,7 +252,7 @@ def build_property_update(
     uri: str,
     properties: Mapping[str, str],
     *,
-    node_type: str,
+    wire_type: str,
 ) -> bytes:
     """Build a node POST body that sets mutable, non-administrative properties.
 
@@ -264,24 +266,23 @@ def build_property_update(
     Args:
         uri: The node identifier URI to update.
         properties: A mapping of property URI to new string value.
-        node_type: The parsed type of the existing node.
+        wire_type: The exact parsed ``xsi:type`` local name of the existing
+            node.
 
     Returns:
         A UTF-8 ``node`` document setting the supplied properties.
 
     Raises:
         ValueError: If any property URI names an administrative, server-
-            computed, or type-defining property, or ``node_type`` cannot be
+            computed, or type-defining property, or ``wire_type`` cannot be
             represented by the private update primitive.
     """
     _validate_property_update(properties)
-    try:
-        xsi_type = _UPDATE_XSI_TYPE_BY_NODE_TYPE[node_type]
-    except KeyError:
-        msg = f"property updates are unsupported for node type {node_type!r}"
+    if wire_type not in _UPDATE_WIRE_TYPES:
+        msg = f"property updates are unsupported for node type {wire_type!r}"
         raise ValueError(msg) from None
-    root = _new_node_element(uri, xsi_type=xsi_type)
-    if node_type == "data":
+    root = _new_node_element(uri, xsi_type=f"vos:{wire_type}")
+    if wire_type in _DATA_WIRE_TYPES:
         # OpenCADC's NodeReader requires this schema-optional DataNode field.
         root.set("busy", "false")
     properties_element = ET.SubElement(root, _PROPERTIES_TAG)
@@ -289,7 +290,7 @@ def build_property_update(
         element = ET.SubElement(properties_element, _PROPERTY_TAG)
         element.set("uri", property_uri)
         element.text = value
-    if node_type == "container":
+    if wire_type == "ContainerNode":
         # ContainerNode's schema and OpenCADC reader require the child list.
         ET.SubElement(root, _NODES_TAG)
     return _serialize(root)
@@ -317,7 +318,7 @@ def _node_from_element(element: ET.Element) -> Node:
     if element.tag != _NODE_TAG:
         msg = f"expected a VOSpace node element, got {element.tag!r}"
         raise ValueError(msg)
-    node_type = _node_type_of(element)
+    node_type, wire_type = _node_types_of(element)
     uri = element.get("uri")
     if uri is None:
         msg = "node element is missing a uri attribute"
@@ -327,6 +328,7 @@ def _node_from_element(element: ET.Element) -> Node:
     size = _parse_size(properties) if node_type == "data" else 0
     return Node(
         node_type=node_type,
+        wire_type=wire_type,
         uri=uri,
         size=size,
         mtime=properties.get(MTIME_PROPERTY_URI) or properties.get(DATE_PROPERTY_URI),
@@ -337,8 +339,8 @@ def _node_from_element(element: ET.Element) -> Node:
     )
 
 
-def _node_type_of(element: ET.Element) -> str:
-    """Return the fsspec node type from a node element's ``xsi:type``.
+def _node_types_of(element: ET.Element) -> tuple[str, str]:
+    """Return the fsspec node type and exact wire type from ``xsi:type``.
 
     The ``xsi:type`` value is a namespace-prefixed QName such as
     ``vos:ContainerNode``; the kind is taken from the local name after the
@@ -356,7 +358,7 @@ def _node_type_of(element: ET.Element) -> str:
         element: A VOSpace ``node`` element.
 
     Returns:
-        One of ``"data"``, ``"container"``, or ``"link"``.
+        The coarse fsspec node type and exact ``xsi:type`` local name.
 
     Raises:
         ValueError: If the element carries no ``xsi:type`` or an unknown one.
@@ -367,7 +369,7 @@ def _node_type_of(element: ET.Element) -> str:
         raise ValueError(msg)
     local_name = xsi_type.rsplit(":", 1)[-1]
     try:
-        return _NODE_TYPE_BY_XSI_LOCAL[local_name]
+        return _NODE_TYPE_BY_XSI_LOCAL[local_name], local_name
     except KeyError:
         msg = f"unknown node type {xsi_type!r}"
         raise ValueError(msg) from None

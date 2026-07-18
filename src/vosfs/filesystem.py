@@ -750,13 +750,13 @@ class VOSpaceFileSystem(AsyncFileSystem):
         """POST mutable properties to one node and invalidate cached metadata."""
         path = self._strip_protocol(path)
         nodes._validate_property_update(properties)  # noqa: SLF001 - package-private seam
+        authority = await self._require_authority()
         bindings = await self._get_bindings()
         current_node = self._parse_and_note(await self._get_node_document(path))
-        authority = await self._require_authority()
         document = nodes.build_property_update(
             f"vos://{authority}{path}",
             properties,
-            node_type=current_node.node_type,
+            wire_type=current_node.wire_type,
         )
         url = bindings.require_nodes() + paths.encode_url_path(path)
         response = await self._send_to_service(

@@ -55,6 +55,62 @@ async def test_update_node_posts_property_and_refreshes_metadata(
     await fs.aclose()
 
 
+async def test_update_node_discovers_root_authority_before_target(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_file("/data.bin", b"data")
+    fs = _fs(router, sim)
+
+    await fs._update_node("/data.bin", {"ivo://example.org/props#x": "value"})
+
+    node_requests = [
+        call.request
+        for call in router.calls
+        if str(call.request.url).startswith(NODES_URL)
+    ]
+    assert [(request.method, str(request.url)) for request in node_requests] == [
+        ("GET", NODES_URL),
+        ("GET", f"{NODES_URL}/data.bin"),
+        ("POST", f"{NODES_URL}/data.bin"),
+    ]
+    await fs.aclose()
+
+
+async def test_update_node_rejects_target_authority_mismatch_before_post(
+    router: respx.Router,
+) -> None:
+    sim = (
+        VOSpaceSim()
+        .add_file("/data.bin", b"data")
+        .with_authority("/data.bin", "other.example!vault")
+    )
+    fs = _fs(router, sim)
+
+    with pytest.raises(OSError, match="does not match"):
+        await fs._update_node("/data.bin", {"ivo://example.org/props#x": "value"})
+
+    assert sim.node_update_requests == []
+    await fs.aclose()
+
+
+@pytest.mark.parametrize("wire_type", ["StructuredDataNode", "UnstructuredDataNode"])
+async def test_update_node_preserves_concrete_data_node_type(
+    router: respx.Router,
+    wire_type: str,
+) -> None:
+    sim = VOSpaceSim().add_file("/data.bin", b"data", wire_type=wire_type)
+    fs = _fs(router, sim)
+
+    await fs._update_node("/data.bin", {"ivo://example.org/props#x": "value"})
+
+    request = sim.node_update_requests[-1]
+    document = ElementTree.fromstring(request.content)
+    assert document.get("{http://www.w3.org/2001/XMLSchema-instance}type") == (
+        f"vos:{wire_type}"
+    )
+    await fs.aclose()
+
+
 async def test_update_node_round_trips_xml_metacharacters(
     router: respx.Router,
 ) -> None:

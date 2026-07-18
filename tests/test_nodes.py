@@ -146,6 +146,7 @@ def test_structured_and_unstructured_are_opaque_files(local_name: str) -> None:
     ).encode()
     node = parse_node(document)
     assert node.node_type == "data"
+    assert node.wire_type == local_name
     assert node.size == 7
     assert to_info(node, "/x/f")["type"] == "file"
 
@@ -315,6 +316,7 @@ def test_to_info_for_data_node() -> None:
 def test_to_info_for_minimal_data_node_omits_optional_fields() -> None:
     node = Node(
         node_type="data",
+        wire_type="DataNode",
         uri="vos://x/f",
         size=3,
         mtime=None,
@@ -423,7 +425,7 @@ def test_build_property_update_is_valid_and_sets_properties() -> None:
             CONTENT_TYPE_PROPERTY_URI: "application/x-fits",
             "ivo://cadc.nrc.ca/vospace/custom#experiment": "orion-survey",
         },
-        node_type="data",
+        wire_type="DataNode",
     )
     assert isinstance(document, bytes)
     assert_schema_valid(document)
@@ -444,7 +446,7 @@ def test_build_property_update_is_valid_and_sets_properties() -> None:
 def test_build_property_update_allows_non_core_property_named_type() -> None:
     property_uri = "ivo://example.org/props#type"
     document = build_property_update(
-        "vos://x/f", {property_uri: "catalog"}, node_type="data"
+        "vos://x/f", {property_uri: "catalog"}, wire_type="DataNode"
     )
     tree = etree.fromstring(document)
     values = {
@@ -460,7 +462,7 @@ def test_build_property_update_rejects_case_variant_core_namespace() -> None:
     property_uri = "IVO://IVOA.NET/VOSPACE/CORE#contenttype"
     with pytest.raises(ValueError, match="administrative"):
         build_property_update(
-            "vos://x/f", {property_uri: "text/plain"}, node_type="data"
+            "vos://x/f", {property_uri: "text/plain"}, wire_type="DataNode"
         )
 
 
@@ -468,7 +470,7 @@ def test_build_property_update_rejects_whitespace_disguised_core_uri() -> None:
     property_uri = f" {CONTENT_TYPE_PROPERTY_URI}"
     with pytest.raises(ValueError, match="administrative"):
         build_property_update(
-            "vos://x/f", {property_uri: "text/plain"}, node_type="data"
+            "vos://x/f", {property_uri: "text/plain"}, wire_type="DataNode"
         )
 
 
@@ -498,4 +500,4 @@ def test_build_property_update_rejects_whitespace_disguised_core_uri() -> None:
 )
 def test_build_property_update_rejects_admin_properties(admin_uri: str) -> None:
     with pytest.raises(ValueError, match="administrative"):
-        build_property_update("vos://x/f", {admin_uri: "value"}, node_type="data")
+        build_property_update("vos://x/f", {admin_uri: "value"}, wire_type="DataNode")
