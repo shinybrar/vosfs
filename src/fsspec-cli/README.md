@@ -61,6 +61,7 @@ python app.py fs ls data:/
 | --- | --- |
 | `ls`, `ll` | Names-only `ls`; adaptive long `ls -l` / `-lh`; inherent-long `ll` |
 | `du` | Recursive exact-byte usage; `-s` total only, `-h` human-readable |
+| `find` | Recursive file paths; `--maxdepth N`, `--type f\|d` |
 | `cat` | Concatenate mapped files (and stdin `-`) to stdout |
 | `cp` | Verified same-source, cross-source, and multi-source file copy (no `-R`) |
 | `mv` | Same-source file move, single or multi-file into a directory |
@@ -75,6 +76,11 @@ python app.py fs ls data:/
 hook, it can traverse the complete subtree and read metadata for every file;
 remote sources may therefore make many requests. `-s` changes only the output,
 not the traversal cost.
+
+`find` is recursive unless `--maxdepth N` bounds it. It awaits one backend
+`_find` operation; inherited implementations may still walk directories and
+read metadata internally. `find` does not provide predicates, globbing, or
+`-exec`.
 
 Each command locks an observable compatibility profile. The exhaustive
 per-command semantics, diagnostics, and tested-source evidence live in the

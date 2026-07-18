@@ -64,6 +64,15 @@ class FilesystemCall:
     total: bool | None = None
 
 
+@dataclass(frozen=True)
+class FindCall:
+    path: str
+    maxdepth: int | None
+    withdirs: bool
+    detail: bool
+    kwargs: Mapping[str, object]
+
+
 def _block_network(monkeypatch) -> None:
     def fail_network(*args: object, **kwargs: object) -> None:
         del args, kwargs
@@ -86,6 +95,7 @@ class _ProbedSource(Generic[_FilesystemT]):
         self.lifecycle: list[LifecycleEvent] = []
         self.exit_calls: list[ExitCall] = []
         self.calls: list[FilesystemCall] = []
+        self.find_calls: list[FindCall] = []
         self.info_results: list[tuple[int, object]] = []
         self.ls_results: list[tuple[int, object]] = []
         self.get_file_results: list[tuple[int, str]] = []
@@ -186,6 +196,41 @@ class _ProbedSource(Generic[_FilesystemT]):
                 raise
 
         return du
+
+    def _wrap_find(
+        self,
+        source_id: int,
+        original_find: Callable[..., Awaitable[object]],
+    ) -> Callable[..., Awaitable[object]]:
+        async def find(
+            path: str,
+            maxdepth: int | None = None,
+            withdirs: bool = False,  # noqa: FBT002 - fsspec hook.
+            **kwargs: object,
+        ) -> object:
+            detail = kwargs.pop("detail", False)
+            self.find_calls.append(
+                FindCall(
+                    path,
+                    maxdepth,
+                    withdirs,
+                    detail,
+                    kwargs,
+                )
+            )
+            try:
+                return await original_find(
+                    path,
+                    maxdepth=maxdepth,
+                    withdirs=withdirs,
+                    detail=detail,
+                    **kwargs,
+                )
+            except Exception as error:
+                self.errors.append((source_id, "find", error))
+                raise
+
+        return find
 
     def _wrap_get_file(
         self,
@@ -400,6 +445,11 @@ class _ProbedSource(Generic[_FilesystemT]):
             filesystem,
             "_du",
             self._wrap_du(source_id, filesystem._du),
+        )
+        setattr(  # noqa: B010 - instrument this instance.
+            filesystem,
+            "_find",
+            self._wrap_find(source_id, filesystem._find),
         )
         setattr(  # noqa: B010 - instrument.
             filesystem,
