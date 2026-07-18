@@ -92,18 +92,14 @@ class StagedWriteFile(io.BufferedRandom):
             with contextlib.suppress(OSError):
                 Path(self._path).unlink()
 
-    def abort(self) -> None:
+    def mark_aborted(self) -> None:
         """Prevent a later close from uploading the staged buffer."""
         self._aborted = True
 
     def discard(self) -> None:
         """Discard the buffer without uploading (used on a failed write)."""
-        if self._done:
-            return
-        self._done = True
-        super().close()
-        with contextlib.suppress(OSError):
-            Path(self._path).unlink()
+        self.mark_aborted()
+        self.close()
 
     def __exit__(
         self,
@@ -130,15 +126,25 @@ class StagedTextWriteFile(io.TextIOWrapper):
     def __init__(
         self,
         buffer: Any,  # noqa: ANN401 - fsspec compression wrappers are file-like
-        on_abort: Callable[[], None],
+        staged: StagedWriteFile,
         *,
         encoding: str | None = None,
         errors: str | None = None,
         newline: str | None = None,
     ) -> None:
-        """Wrap ``buffer`` and retain its abort callback for failed exits."""
-        self._on_abort = on_abort
+        """Wrap ``buffer`` and retain its staged file for abort and close."""
+        self._staged = staged
         super().__init__(buffer, encoding=encoding, errors=errors, newline=newline)
+
+    def close(self) -> None:
+        """Close the text stack, then finish the staged buffer's close path."""
+        try:
+            super().close()
+        except BaseException:
+            self._staged.mark_aborted()
+            raise
+        finally:
+            self._staged.close()
 
     def __exit__(
         self,
@@ -148,5 +154,5 @@ class StagedTextWriteFile(io.TextIOWrapper):
     ) -> None:
         """Close normally, but suppress the staged upload when the block raised."""
         if exc_type is not None:
-            self._on_abort()
+            self._staged.mark_aborted()
         super().__exit__(exc_type, exc_val, exc_tb)

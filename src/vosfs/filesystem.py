@@ -574,29 +574,33 @@ class VOSpaceFileSystem(AsyncFileSystem):
                 **kwargs,
             )
 
+        normalized_path = self._strip_protocol(path)
         binary_mode = mode.replace("t", "") + "b"
         text_kwargs = {
             key: kwargs.pop(key)
             for key in ("encoding", "errors", "newline")
             if key in kwargs
         }
-        autocommit = kwargs.pop("autocommit", not self._intrans)
         staged = cast(
             "staging.StagedWriteFile",
-            self._open(
-                path,
+            super().open(
+                normalized_path,
                 mode=binary_mode,
                 block_size=block_size,
-                autocommit=autocommit,
                 cache_options=cache_options,
+                compression=None,
                 **kwargs,
             ),
         )
         buffer: io.BufferedIOBase = staged
         if compression is not None:
-            compression = get_compression(path, compression)
+            compression = get_compression(normalized_path, compression)
             buffer = compr[compression](buffer, mode=mode[0])
-        return staging.StagedTextWriteFile(buffer, staged.abort, **text_kwargs)
+        return staging.StagedTextWriteFile(
+            buffer,
+            staged,
+            **text_kwargs,
+        )
 
     def _open(
         self,

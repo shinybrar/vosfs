@@ -1,6 +1,7 @@
 """Tests for the write contract (section 9)."""
 
 import base64
+import gzip
 import hashlib
 from pathlib import Path
 
@@ -88,6 +89,23 @@ def test_open_w_text(router: respx.Router) -> None:
         call.request.content for call in router.calls if call.request.method == "PUT"
     ]
     assert put_bodies == ["héllo".encode()]
+    fs.close()
+
+
+def test_open_w_text_infers_compression_from_normalized_path(
+    router: respx.Router,
+) -> None:
+    files: dict[str, bytes] = {}
+    mock_transfers(router, files)
+    fs = make_fs(router)
+    with fs.open(
+        "/encoded%2Egz",
+        "w",
+        encoding="utf-8",
+        compression="infer",
+    ) as handle:
+        handle.write("compressed")
+    assert gzip.decompress(files["/encoded.gz"]) == b"compressed"
     fs.close()
 
 
