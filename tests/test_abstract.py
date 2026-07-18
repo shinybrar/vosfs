@@ -8,16 +8,9 @@ filesystem, so state persists in the in-memory simulator.
 
 Every abstract test that exercises a behaviour the v0.3.0 profile cannot express
 is overridden with an explicit ``skip`` whose reason maps to the unsupported
-capability, so the green run doubles as a capability matrix. The skips fall into
-a small set of root causes:
-
-* ``_WRITE_PARENT`` -- a byte write (``pipe_file``/``put_file``) materializes
-  only the target data node; it never creates a missing parent ``ContainerNode``.
-  Files written below a not-yet-created directory are orphaned: unreachable by
-  ``ls``/``find`` and the parent is not an ``isdir``. (``cp_file`` does create
-  the destination parent, so copy trees are supported.)
-* ``_QUESTION_MARK`` -- path normalization treats ``?`` as a URL query delimiter,
-  so glob patterns containing ``?`` cannot be resolved.
+capability, so the green run doubles as a capability matrix. The remaining
+skip root cause is ``_QUESTION_MARK``: path normalization treats ``?`` as a URL
+query delimiter, so glob patterns containing ``?`` cannot be resolved.
 """
 
 from __future__ import annotations
@@ -50,46 +43,10 @@ if TYPE_CHECKING:
 # capability contract; the version label simply tracks the release under test.
 _VERSION = f"vosfs v{version('vosfs')}"
 
-_WRITE_PARENT = (
-    f"unsupported in {_VERSION}: a byte write materializes only the target data "
-    "node and never creates a missing parent ContainerNode, so a file written "
-    "below a not-yet-created directory is orphaned (no isdir, absent from ls/find)"
-)
 _QUESTION_MARK = (
     f"unsupported in {_VERSION}: path normalization treats '?' as a URL query "
     "delimiter, so glob patterns containing '?' cannot be resolved"
 )
-_HASHED_TEARDOWN = (
-    f"unsupported in {_VERSION}: the hashed-names scenario pipes files under "
-    "'source' without creating that container (writes never create parents), so "
-    "the fixture's recursive-rm teardown cannot resolve the 'source' node"
-)
-
-# Exact (path, recursive, maxdepth) glob-edge-case rows whose upload writes files
-# below a directory that is never materialized (no source directory forces a
-# ``makedirs``), leaving them unreachable by ``find``.
-_PUT_GLOB_UNSUPPORTED = {
-    ("file[1-2]", False, None),
-    ("file[1-2]", True, None),
-    ("*", False, None),
-    ("*", True, 1),
-    ("*", True, 2),
-    ("*1", False, None),
-    ("*1", True, 2),
-    ("**", False, None),
-    ("**", True, 1),
-    ("**", True, 2),
-    ("**", False, 2),
-    ("**/*1", False, None),
-    ("**/*1", True, None),
-    ("**/*1", True, 1),
-    ("**/*1", True, 2),
-    ("**/*1", False, 2),
-    ("**/subdir0/nested*", True, 2),
-    ("subdir[1-2]", True, 2),
-    ("subdir[0-1]/*fil[e]*", False, None),
-    ("subdir[0-1]/*fil[e]*", True, None),
-}
 
 
 def _glob_params(reason_for: Callable[..., str | None]) -> list:
@@ -117,9 +74,7 @@ def _copy_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noq
 def _put_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noqa: ARG001
     if "?" in path:
         return _QUESTION_MARK
-    return (
-        _WRITE_PARENT if (path, recursive, maxdepth) in _PUT_GLOB_UNSUPPORTED else None
-    )
+    return None
 
 
 _COPY_GLOB_PARAMS = _glob_params(_copy_glob_reason)
@@ -159,9 +114,6 @@ class TestCopy(VOSpaceFixtures, AbstractCopyTests):
     # copies, are supported: ``_cp_file`` creates the destination file's parent
     # and materializes intermediate ContainerNodes, so these inherited tests run.
 
-    @pytest.mark.skip(reason=_HASHED_TEARDOWN)
-    def test_copy_with_source_and_destination_as_list(self): ...
-
     @pytest.mark.parametrize(GLOB_EDGE_CASES_TESTS["argnames"], _COPY_GLOB_PARAMS)
     def test_copy_glob_edge_cases(  # noqa: PLR0913 - mirrors the abstract signature
         self,
@@ -195,9 +147,6 @@ class TestGet(VOSpaceFixtures, AbstractGetTests):
     # normalizes fsspec's forwarded list of sources (see the list branch on
     # VOSpaceFileSystem._strip_protocol).
 
-    @pytest.mark.skip(reason=_HASHED_TEARDOWN)
-    def test_get_with_source_and_destination_as_list(self): ...
-
     @pytest.mark.parametrize(GLOB_EDGE_CASES_TESTS["argnames"], _GET_GLOB_PARAMS)
     def test_get_glob_edge_cases(  # noqa: PLR0913 - mirrors the abstract signature
         self,
@@ -228,27 +177,6 @@ class TestGet(VOSpaceFixtures, AbstractGetTests):
 
 class TestPut(VOSpaceFixtures, AbstractPutTests):
     """Local-to-remote upload suite."""
-
-    @pytest.mark.skip(reason=_WRITE_PARENT)
-    def test_put_file_to_new_directory(self): ...
-
-    @pytest.mark.skip(reason=_WRITE_PARENT)
-    def test_put_file_to_file_in_new_directory(self): ...
-
-    @pytest.mark.skip(reason=_WRITE_PARENT)
-    def test_put_directory_to_existing_directory(self): ...
-
-    @pytest.mark.skip(reason=_WRITE_PARENT)
-    def test_put_directory_to_new_directory(self): ...
-
-    @pytest.mark.skip(reason=_WRITE_PARENT)
-    def test_put_list_of_files_to_new_directory(self): ...
-
-    @pytest.mark.skip(reason=_WRITE_PARENT)
-    def test_put_glob_to_existing_directory(self): ...
-
-    @pytest.mark.skip(reason=_WRITE_PARENT)
-    def test_put_glob_to_new_directory(self): ...
 
     @pytest.mark.parametrize(GLOB_EDGE_CASES_TESTS["argnames"], _PUT_GLOB_PARAMS)
     def test_put_glob_edge_cases(  # noqa: PLR0913 - mirrors the abstract signature
