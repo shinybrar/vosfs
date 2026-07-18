@@ -3,7 +3,9 @@
 import base64
 import gzip
 import hashlib
+import io
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -124,6 +126,32 @@ def test_open_w_text_no_upload_on_error(router: respx.Router) -> None:
         write_then_fail()
     put_calls = [c for c in router.calls if c.request.method == "PUT"]
     assert put_calls == []
+    fs.close()
+
+
+def test_open_w_text_close_failure_no_upload_or_temp_leak(
+    router: respx.Router,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files: dict[str, bytes] = {}
+    mock_transfers(router, files)
+    fs = make_fs(router)
+    handle = cast("io.TextIOWrapper", fs.open("/never.txt", "w", encoding="utf-8"))
+    staged_path = Path(handle.buffer.name)
+    handle.write("partial")
+
+    def fail_after_buffer_close(writer: io.TextIOWrapper) -> None:
+        writer.buffer.close()
+        msg = "forced flush failure"
+        raise OSError(msg)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(type(handle), "flush", fail_after_buffer_close)
+        with pytest.raises(OSError, match="forced flush failure"):
+            handle.close()
+
+    put_calls = [call for call in router.calls if call.request.method == "PUT"]
+    assert (put_calls, staged_path.exists()) == ([], False)
     fs.close()
 
 

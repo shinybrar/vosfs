@@ -72,34 +72,48 @@ class StagedWriteFile(io.BufferedRandom):
         super().__init__(io.FileIO(self._path, "r+"))
         self._on_commit = on_commit
         self._done = False
-        self._aborted = False
+        self._outer_owns_finish = False
 
     def close(self) -> None:
-        """Commit the buffer with one upload, then remove the temporary file.
+        """Close locally, committing only when no outer wrapper owns the finish.
 
         The temporary file is removed even if the final flush (``super().close``)
         or the upload raises, so a failed commit never leaks a staging file. A
-        flush failure skips the upload, since the buffer is then incomplete.
+        flush failure skips the upload, since the buffer is then incomplete. An
+        outer text wrapper separately selects commit or discard after it closes.
         """
+        if self._done or self.closed:
+            return
+        if self._outer_owns_finish:
+            super().close()
+        else:
+            self._finish(upload=True)
+
+    def _finish(self, *, upload: bool) -> None:
+        """Close, optionally upload, and unlink through one terminal path."""
         if self._done:
             return
         self._done = True
         try:
-            super().close()
-            if not self._aborted:
+            if not self.closed:
+                super().close()
+            if upload:
                 self._on_commit(self._path)
         finally:
             with contextlib.suppress(OSError):
                 Path(self._path).unlink()
 
-    def mark_aborted(self) -> None:
-        """Prevent a later close from uploading the staged buffer."""
-        self._aborted = True
+    def _handoff_to_outer(self) -> None:
+        """Give an outer wrapper ownership of the terminal upload decision."""
+        self._outer_owns_finish = True
+
+    def _commit(self) -> None:
+        """Upload and clean up after an outer wrapper closes successfully."""
+        self._finish(upload=True)
 
     def discard(self) -> None:
         """Discard the buffer without uploading (used on a failed write)."""
-        self.mark_aborted()
-        self.close()
+        self._finish(upload=False)
 
     def __exit__(
         self,
@@ -121,7 +135,7 @@ class StagedWriteFile(io.BufferedRandom):
 
 
 class StagedTextWriteFile(io.TextIOWrapper):
-    """Text wrapper that marks its staged buffer aborted on a failed block."""
+    """Text wrapper that owns its staged buffer's terminal upload decision."""
 
     def __init__(
         self,
@@ -132,19 +146,40 @@ class StagedTextWriteFile(io.TextIOWrapper):
         errors: str | None = None,
         newline: str | None = None,
     ) -> None:
-        """Wrap ``buffer`` and retain its staged file for abort and close."""
+        """Wrap ``buffer`` and take ownership of staged commit or discard."""
         self._staged = staged
+        self._failed = False
+        staged._handoff_to_outer()  # noqa: SLF001 - same-module lifecycle peer
         super().__init__(buffer, encoding=encoding, errors=errors, newline=newline)
 
+    def write(self, text: str) -> int:
+        """Write text, remembering any failure for the terminal close decision."""
+        try:
+            return super().write(text)
+        except BaseException:
+            self._failed = True
+            raise
+
+    def flush(self) -> None:
+        """Flush text, remembering any failure for the terminal close decision."""
+        try:
+            super().flush()
+        except BaseException:
+            self._failed = True
+            raise
+
     def close(self) -> None:
-        """Close the text stack, then finish the staged buffer's close path."""
+        """Commit only after the complete outer text stack closes cleanly."""
         try:
             super().close()
         except BaseException:
-            self._staged.mark_aborted()
+            self._failed = True
+            self._staged.discard()
             raise
-        finally:
-            self._staged.close()
+        if self._failed:
+            self._staged.discard()
+        else:
+            self._staged._commit()  # noqa: SLF001 - same-module lifecycle peer
 
     def __exit__(
         self,
@@ -152,7 +187,7 @@ class StagedTextWriteFile(io.TextIOWrapper):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        """Close normally, but suppress the staged upload when the block raised."""
+        """Close normally, but discard when the context block raised."""
         if exc_type is not None:
-            self._staged.mark_aborted()
+            self._failed = True
         super().__exit__(exc_type, exc_val, exc_tb)

@@ -100,8 +100,9 @@ fs.put("local.csv", "/project/copy.csv")
 ```
 
 `open("rb")` downloads once into a disk-backed temporary file and then provides
-local `read`/`readinto`/`readline`/iteration/`tell`/`seek`. `open("wb")` buffers
-into a temporary file and uploads once when the file closes successfully.
+local `read`/`readinto`/`readline`/iteration/`tell`/`seek`. `open("wb")` and
+`open("w")` disk-stage writes and upload once only after a successful close or
+clean context exit; a failed close or context exit uploads nothing.
 
 ## Scientific Python stack
 
