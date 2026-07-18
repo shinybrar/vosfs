@@ -1,8 +1,9 @@
 """Shared scaffolding for mapped-source command modules.
 
-Every mapped-operand command (``ls``, ``du``, ``find``, ``cat``, ``cp``,
-``mv``, ``mkdir``, ``rmdir``, ``rm``, ``unlink``, ``stat``, ``basename``,
-``dirname``) parses its own raw ``argv`` and renders stable diagnostics. This
+Every mapped-operand command (``ls``, ``du``, ``find``, ``size``, ``test``,
+``head``, ``tail``, ``cat``, ``cp``, ``mv``, ``mkdir``, ``rmdir``, ``rm``,
+``unlink``, and ``stat``) parses its own raw ``argv`` and renders stable
+diagnostics. This
 module is the single home for the pieces they share: raw-argument capture, the
 malformed-help shield, mapped operands, usage errors, binary stdout, and the
 single-operand buffered-text lifecycle.
@@ -30,6 +31,9 @@ if TYPE_CHECKING:
     from ._app import AsyncFilesystemSource
 
 _RAW_ARGUMENTS = "fsspec_cli.raw_arguments"
+# 128 + SIGPIPE (13): lets pipeline consumers distinguish a closed reader from
+# an ordinary command failure when the broken pipe is the sole failure.
+_BROKEN_PIPE_EXIT_CODE = 141
 
 
 class _RawCommand(TyperCommand):
@@ -95,6 +99,14 @@ def _binary_stdout() -> _BinaryWriter:
         message = "stdout has no binary buffer"
         raise OSError(message)
     return buffer
+
+
+def _write_binary(stdout: _BinaryWriter, payload: bytes) -> None:
+    """Write one complete byte payload or reject a short write."""
+    written = stdout.write(payload)
+    if written != len(payload):
+        message = "short write"
+        raise OSError(message)
 
 
 @dataclass(frozen=True)

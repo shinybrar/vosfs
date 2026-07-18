@@ -64,6 +64,7 @@ python app.py fs ls data:/
 | `find` | Recursive file paths; `--maxdepth N`, `--type f\|d` |
 | `size` | Exact bytes for one or more mapped paths; batched by source |
 | `test` | Silent `-e`, `-d`, or `-f` predicate with shell-style status |
+| `head`, `tail` | Exact leading or trailing bytes via `-c N` |
 | `cat` | Concatenate mapped files (and stdin `-`) to stdout |
 | `cp` | Verified same-source, cross-source, and multi-source file copy (no `-R`) |
 | `mv` | Same-source file move, single or multi-file into a directory |
@@ -83,6 +84,11 @@ not the traversal cost.
 `_find` operation; inherited implementations may still walk directories and
 read metadata internally. `find` does not provide predicates, globbing, or
 `-exec`.
+
+`head -c N` and `tail -c N` make bounded `_cat_file` hook requests, but that
+does not promise a ranged physical transfer. Backend implementations may read a
+whole object and slice locally; in particular, `vosfs` does so because OpenCADC
+Cavern does not support HTTP Range.
 
 Each command locks an observable compatibility profile. The exhaustive
 per-command semantics, diagnostics, and tested-source evidence live in the

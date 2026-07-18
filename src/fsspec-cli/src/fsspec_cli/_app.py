@@ -19,6 +19,7 @@ from ._diagnostics import _render_diagnostic_prefix
 from ._dirname import _run_dirname
 from ._du import _DuCommand, _run_du
 from ._find import _FindCommand, _run_find
+from ._head_tail import _HeadCommand, _run_head, _run_tail, _TailCommand
 from ._ls import _run_ls
 from ._mkdir import _run_mkdir
 from ._mv import _run_mv
@@ -65,6 +66,8 @@ _ASYNC_COMMANDS: tuple[tuple[str, str, _AsyncRunner, type[TyperCommand]], ...] =
     ("find", "Find files recursively", _run_find, _FindCommand),
     ("size", "Display exact file sizes", _run_size, _SizeCommand),
     ("test", "Evaluate a file predicate", _run_test, _TestCommand),
+    ("head", "Display leading bytes", _run_head, _HeadCommand),
+    ("tail", "Display trailing bytes", _run_tail, _TailCommand),
     ("cp", "Copy a file (no recursion)", _run_cp, _RawCommand),
     ("mv", "Move or rename files", _run_mv, _RawCommand),
     ("mkdir", "Create directories", _run_mkdir, _RawCommand),
