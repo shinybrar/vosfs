@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, cast, overload
 from urllib.parse import unquote, urlsplit
 
 import httpx
-from fsspec.asyn import AsyncFileSystem, sync
+from fsspec.asyn import AsyncFileSystem, _get_batch_size, sync
 from fsspec.callbacks import DEFAULT_CALLBACK
 from fsspec.compression import compr
 from fsspec.core import get_compression
@@ -62,6 +62,23 @@ _IDENTITY_ENCODING = {"Accept-Encoding": "identity"}
 _READ_CHUNK = 1 << 20
 _DEFAULT_CONTENT_TYPE = "application/octet-stream"
 _GET_CONTAINER_MARKER = "_vosfs_materialize_get_container"
+
+
+def _upload_batch_limit(
+    requested: int | None,
+    configured: int | None,
+    *,
+    nofiles: bool,
+) -> int | None:
+    """Resolve fsspec's effective batch size; ``None`` means unbounded."""
+    effective = requested or configured
+    if effective is None:
+        effective = _get_batch_size(nofiles=nofiles)
+    if effective == -1:
+        return None
+    if effective <= 0:
+        raise ValueError
+    return effective
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -699,13 +716,21 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's upload coordinator with one shared parent-creation scope."""
-        async with _write_coordination.scope(self):
+        max_concurrency = _upload_batch_limit(
+            batch_size,
+            self.batch_size,
+            nofiles=False,
+        )
+        async with _write_coordination.scope(
+            self,
+            max_concurrency=max_concurrency,
+        ):
             return await super()._put(
                 lpath,
                 rpath,
                 recursive=recursive,
                 callback=callback,
-                batch_size=batch_size,
+                batch_size=-1,
                 maxdepth=maxdepth,
                 **kwargs,
             )
@@ -718,11 +743,19 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's pipe coordinator with one shared parent-creation scope."""
-        async with _write_coordination.scope(self):
+        max_concurrency = _upload_batch_limit(
+            batch_size,
+            self.batch_size,
+            nofiles=True,
+        )
+        async with _write_coordination.scope(
+            self,
+            max_concurrency=max_concurrency,
+        ):
             return await super()._pipe(
                 path,
                 value=value,
-                batch_size=batch_size,
+                batch_size=-1,
                 **kwargs,
             )
 
@@ -768,17 +801,21 @@ class VOSpaceFileSystem(AsyncFileSystem):
         """Write ``value`` to ``path`` with one whole PUT (create or overwrite)."""
         path = self._strip_protocol(path)
         state = _write_coordination.current(self)
-        if mode == "create" and await self._exists(path):
-            msg = f"path already exists: {path}"
-            raise FileExistsError(msg)
-        await self._materialize_write_parent(path, state)
-        await self._write(
-            path,
-            value,
-            size=len(value),
-            content_type=kwargs.get("content_type"),
-            expected_digest=hashlib.md5(value, usedforsecurity=False).digest(),
+        transfer_slot = (
+            state.transfer_slot() if state is not None else contextlib.nullcontext()
         )
+        async with transfer_slot:
+            if mode == "create" and await self._exists(path):
+                msg = f"path already exists: {path}"
+                raise FileExistsError(msg)
+            await self._materialize_write_parent(path, state)
+            await self._write(
+                path,
+                value,
+                size=len(value),
+                content_type=kwargs.get("content_type"),
+                expected_digest=hashlib.md5(value, usedforsecurity=False).digest(),
+            )
 
     async def _put_file(
         self,
@@ -791,19 +828,23 @@ class VOSpaceFileSystem(AsyncFileSystem):
         callback: Callback = kwargs.get("callback", DEFAULT_CALLBACK)
         rpath = self._strip_protocol(rpath)
         state = _write_coordination.current(self)
-        if mode == "create" and await self._exists(rpath):
-            msg = f"path already exists: {rpath}"
-            raise FileExistsError(msg)
-        await self._materialize_write_parent(rpath, state)
-        size = Path(lpath).stat().st_size  # noqa: ASYNC240 - local-disk stat, not remote I/O
-        callback.set_size(size)
-        await self._write(
-            rpath,
-            _file_body(lpath, callback),
-            size=size,
-            content_type=kwargs.get("content_type"),
-            expected_digest=_md5_of_file(lpath),
+        transfer_slot = (
+            state.transfer_slot() if state is not None else contextlib.nullcontext()
         )
+        async with transfer_slot:
+            if mode == "create" and await self._exists(rpath):
+                msg = f"path already exists: {rpath}"
+                raise FileExistsError(msg)
+            await self._materialize_write_parent(rpath, state)
+            size = Path(lpath).stat().st_size  # noqa: ASYNC240 - local-disk stat, not remote I/O
+            callback.set_size(size)
+            await self._write(
+                rpath,
+                _file_body(lpath, callback),
+                size=size,
+                content_type=kwargs.get("content_type"),
+                expected_digest=_md5_of_file(lpath),
+            )
 
     def touch(
         self,
