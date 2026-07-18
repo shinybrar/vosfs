@@ -2,17 +2,16 @@
 
 <!-- pyml disable line-length -->
 
-> **Partially superseded** by
-> [`fsspec-cli-shell-experience-spec.md`](fsspec-cli-shell-experience-spec.md):
-> the core-vs-extension classification moved there (the ubiquitous commands are
-> now CORE, not extensions). This document is retained as the verified command
-> **inventory** and as background for the backend-specific extension seam.
+> **Historical inventory.** Every core/extension classification and priority in
+> this document is superseded by the
+> [`fsspec-cli` shell-experience specification](fsspec-cli-shell-experience-spec.md).
+> The current long-listing contract is the separate
+> [long-listing command profile](fsspec-cli-ls-long-command-profile.md). The
+> content below is retained only as historical capability evidence and design
+> background; it is not a current implementation plan.
 
-Status: **Proposal / roadmap.** This is not a locked command compatibility
-profile. It records a way to grow `fsspec-cli` beyond its ubiquitous core and an
-inventory of the storage commands worth adding, each mapped to a **verified**
-fsspec capability. Any command adopted from here gets its own profile and tests
-before it ships.
+Status: **Historical and superseded.** This is not a locked command
+compatibility profile.
 
 Client baseline for the capability claims below: fsspec **2026.6.0**, method
 surface introspected live in this repository (not recalled).

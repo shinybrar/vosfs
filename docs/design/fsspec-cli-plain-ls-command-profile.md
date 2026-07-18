@@ -50,9 +50,10 @@ The supported surface is deliberately smaller than POSIX Issue 8:
 - terminal output uses the same one-entry-per-line form as redirected output.
 
 Unsupported behavior is rejected rather than emulated. In particular, `-a`,
-columns, color, quoting, recursion, and metadata decoration are outside this
-profile. `-l` remains unsupported under its locked
-[strict rejection profile](fsspec-cli-ls-long-rejection-profile.md).
+columns, color, quoting, recursion, and implicit metadata decoration are outside
+this profile. Explicit `-l` is a separate mode governed by the
+[long-listing command profile](fsspec-cli-ls-long-command-profile.md); its
+admission does not change bare `ls`.
 
 ## 2. Mapped filesystem operands
 
@@ -96,9 +97,9 @@ the command MUST validate:
 `--` ends option parsing. `-A` is idempotent when repeated or grouped. Typer's
 framework-owned `--help` short circuit is explicitly exempt from this command
 compatibility profile: its text and successful exit are not plain-`ls`
-behavior. Every other command option, including `-h`, `-a`, and `-l`, is
-unsupported. (`-h` is reserved: it is rejected today so it stays free for a
-future flag rather than being repurposed as a help alias.)
+behavior. Every option outside the separate long-listing profile, including
+`-h` without long mode and `-a`, is unsupported. `-h` is human-readable size
+only when long mode is active and is never a help alias.
 
 The first preflight error in argument order MUST produce one diagnostic and
 exit `2`. No source may be entered, no backend call made, and no stdout output
@@ -304,9 +305,10 @@ branches against Local, Memory, and hermetic `VOSpaceFileSystem` instances.
 
 - [Tested command matrix contract](fsspec-cli-tested-command-matrix.md) owns
   matrix statuses, versions, and hermetic-versus-live evidence rules.
-- [Strict `ls -l` rejection profile](fsspec-cli-ls-long-rejection-profile.md)
-  records why V1 adds no long renderer and keeps whole-invocation preflight
-  rejection.
+- [Long-listing command profile](fsspec-cli-ls-long-command-profile.md) owns the
+  explicit `ls -l` / `-lh` and inherent-long `ll` mode; the
+  [strict rejection profile](fsspec-cli-ls-long-rejection-profile.md) is
+  retained as historical rationale.
 - [Sequence the `fsspec-cli` tracer implementation backlog](https://github.com/shinybrar/vosfs/issues/83)
   owns production package slices, dependencies, CI, and release ordering.
 
@@ -319,6 +321,7 @@ TDD cycles.
 - [POSIX Issue 8 `ls`](https://pubs.opengroup.org/onlinepubs/9799919799/utilities/ls.html)
 - [Portable fsspec capability floor for plain `ls`](../research/fsspec-cli-plain-ls-capability-floor.md)
 - [Honest long-listing viability evidence](../research/fsspec-cli-ls-long-viability.md)
-- [Strict `ls -l` rejection profile](fsspec-cli-ls-long-rejection-profile.md)
+- [Long-listing command profile](fsspec-cli-ls-long-command-profile.md)
+- [Historical strict `ls -l` rejection profile](fsspec-cli-ls-long-rejection-profile.md)
 - [fsspec 2026.6.0 `AbstractFileSystem.ls`](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/spec.py#L326-L365)
 - [fsspec 2026.6.0 `AbstractFileSystem.info`](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/spec.py#L682-L714)

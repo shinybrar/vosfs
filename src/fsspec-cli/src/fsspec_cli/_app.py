@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Coroutine, Mapping
 from contextlib import AbstractAsyncContextManager
+from functools import partial
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 import typer
@@ -49,6 +50,12 @@ _SOURCE_FREE_COMMANDS: tuple[tuple[str, str, _SourceFreeRunner], ...] = (
 # Commands that acquire mapped sources and run on the invocation event loop.
 _ASYNC_COMMANDS: tuple[tuple[str, str, _AsyncRunner, type[TyperCommand]], ...] = (
     ("ls", "List directory contents", _run_ls, _RawCommand),
+    (
+        "ll",
+        "List directory contents in long form",
+        partial(_run_ls, long_by_default=True),
+        _RawCommand,
+    ),
     ("cat", "Concatenate files to standard output", _run_cat, _RawCommand),
     ("cp", "Copy a file (no recursion)", _run_cp, _RawCommand),
     ("mv", "Move or rename files", _run_mv, _RawCommand),

@@ -2,6 +2,7 @@
 
 import inspect
 import re
+import time
 from urllib.parse import quote, unquote
 
 import httpx
@@ -15,6 +16,7 @@ from ._matrix_support import (
     _exercise_cat_profile,
     _exercise_cp_locked_profile,
     _exercise_locked_profile,
+    _exercise_long_listing_profile,
     _exercise_mkdir_p_locked_profile,
     _exercise_rm_force_profile,
     _exercise_rm_locked_profile,
@@ -72,6 +74,36 @@ _DOCS = f"""<vos:node
     </vos:node>
     <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/guide.md">
       <vos:properties/>
+    </vos:node>
+  </vos:nodes>
+</vos:node>
+""".encode()
+_LONG_DOCS = f"""<vos:node
+    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}/docs">
+  <vos:properties/>
+  <vos:nodes>
+    <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/notes.txt">
+      <vos:properties>
+        <vos:property uri="ivo://ivoa.net/vospace/core#length">1536</vos:property>
+        <vos:property uri="ivo://ivoa.net/vospace/core#mtime">2026-07-17T18:00:00Z</vos:property>
+      </vos:properties>
+    </vos:node>
+    <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/.hidden">
+      <vos:properties>
+        <vos:property uri="ivo://ivoa.net/vospace/core#length">7</vos:property>
+      </vos:properties>
+    </vos:node>
+    <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/guide.md">
+      <vos:properties>
+        <vos:property uri="ivo://ivoa.net/vospace/core#length">8</vos:property>
+        <vos:property uri="ivo://ivoa.net/vospace/core#mtime">2026-07-17T18:00:00Z</vos:property>
+      </vos:properties>
+    </vos:node>
+    <vos:node xsi:type="vos:LinkNode" uri="vos://{_AUTHORITY}/docs/shortcut">
+      <vos:properties/>
+      <vos:target>vos://{_AUTHORITY}/docs/guide.md</vos:target>
     </vos:node>
   </vos:nodes>
 </vos:node>
@@ -156,6 +188,10 @@ _RESPONSES: dict[tuple[str, str], httpx.Response] = {
     ("PUT", "/arc/nodes/docs/notes.txt/child"): httpx.Response(404, text="not found"),
     ("PUT", "/arc/nodes/docs/absent/child"): httpx.Response(404, text="not found"),
 }
+_LONG_RESPONSES: dict[tuple[str, str], httpx.Response] = {
+    ("GET", "/arc/capabilities"): httpx.Response(200, content=_CAPABILITIES),
+    ("GET", "/arc/nodes/docs"): httpx.Response(200, content=_LONG_DOCS),
+}
 
 
 @pytest.fixture(autouse=True)
@@ -164,15 +200,19 @@ def _prohibit_unplanned_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _StrictMockTransport(httpx.MockTransport):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        responses: dict[tuple[str, str], httpx.Response] | None = None,
+    ) -> None:
         self.requests: list[tuple[str, str]] = []
         self.closed = False
+        self._responses = _RESPONSES if responses is None else responses
         super().__init__(self._respond)
 
     async def _respond(self, request: httpx.Request) -> httpx.Response:
         call = (request.method, request.url.path)
         self.requests.append(call)
-        response = _RESPONSES.get(call)
+        response = self._responses.get(call)
         if response is None:
             message = f"unplanned mocked request: {call!r}"
             raise AssertionError(message)
@@ -457,6 +497,61 @@ def test_native_vosfs_plain_ls_profile_uses_only_mocked_transport() -> None:
         [
             ("GET", "/arc/capabilities"),
             ("GET", "/arc/nodes/docs/missing"),
+        ],
+    ]
+    assert all(transport.closed for transport in transports)
+
+
+def test_native_vosfs_long_listing_profile_is_remote_and_uses_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "fsspec_cli._listing.time.localtime",
+        time.gmtime,
+    )
+    transports: list[_StrictMockTransport] = []
+
+    def make_filesystem() -> VOSpaceFileSystem:
+        transport = _StrictMockTransport(_LONG_RESPONSES)
+        transports.append(transport)
+        return VOSpaceFileSystem(
+            _BASE_URL,
+            transport=transport,
+            asynchronous=True,
+            skip_instance_cache=True,
+            trust_env=False,
+        )
+
+    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+
+    _exercise_long_listing_profile(
+        "vos",
+        source,
+        "/docs",
+        exact_directory=(
+            "file     8  Jul 17 18:00  guide.md\n"
+            "file  1536  Jul 17 18:00  notes.txt\n"
+            f"link     0  -             shortcut -> vos://{_AUTHORITY}/docs/guide.md\n"
+        ),
+        human_directory=(
+            "file    8B  Jul 17 18:00  guide.md\n"
+            "file  1.5K  Jul 17 18:00  notes.txt\n"
+            f"link    0B  -             shortcut -> vos://{_AUTHORITY}/docs/guide.md\n"
+        ),
+    )
+
+    assert all(isinstance(fs, VOSpaceFileSystem) for fs in source.filesystems)
+    assert all(fs._pool.closed is True for fs in source.filesystems)
+    assert [transport.requests for transport in transports] == [
+        [
+            ("GET", "/arc/capabilities"),
+            ("GET", "/arc/nodes/docs"),
+            ("GET", "/arc/nodes/docs"),
+        ],
+        [
+            ("GET", "/arc/capabilities"),
+            ("GET", "/arc/nodes/docs"),
+            ("GET", "/arc/nodes/docs"),
         ],
     ]
     assert all(transport.closed for transport in transports)

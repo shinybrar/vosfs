@@ -97,9 +97,9 @@ therefore `unverified`, not `fail`.
 ### `unsupported`
 
 The locked command profile deliberately excludes the requested behavior and a
-qualifying negative test proves its complete rejection contract. For `ls -l`,
-that includes the diagnostic, empty stdout, exit status `2`, and zero source
-entry or filesystem work.
+qualifying negative test proves its complete rejection contract. For an
+unsupported option such as `rmdir -p`, that includes the diagnostic, empty
+stdout, exit status `2`, and zero source entry or filesystem work.
 
 An observed `NotImplementedError`, a missing backend field, an absent test, or
 a failing positive test does not automatically make a row `unsupported`.
@@ -209,11 +209,13 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic and live OpenCADC | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110), [L-2026-07-16-29536609626](#l-2026-07-16-29536609626) |
+| [Long listing](fsspec-cli-ls-long-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | — |
+| [Long listing](fsspec-cli-ls-long-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | — |
+| [Long listing](fsspec-cli-ls-long-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | — |
 | [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
 | [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
 | [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
 | [Base `rmdir` `-p` strict rejection](fsspec-cli-base-rmdir-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
-| [`ls -l` strict rejection](fsspec-cli-ls-long-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
 | [`basename string`](fsspec-cli-basename-command-profile.md) | source-free command | `not entered` | `pass` | `pass` | Hermetic | [H-2026-07-17-29564531624](#h-2026-07-17-29564531624) |
 | [`basename string suffix`](fsspec-cli-basename-suffix-command-profile.md) | source-free command | `not entered` | `pass` | `pass` | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [`basename string`](fsspec-cli-basename-command-profile.md) option/operand rejection | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29564531624](#h-2026-07-17-29564531624) |
@@ -283,6 +285,11 @@ Section 9 still requires the release candidate to rerun every required gate.
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.
+
+The former source-free `ls -l` rejection row was removed when the locked
+long-listing profile superseded it. Older evidence records below retain that
+historical observation only; they do not classify the current positive command
+or any source form.
 
 ### H-2026-07-17-29583728890
 
@@ -476,11 +483,13 @@ dependency set is recoverable from the
 [commit-pinned `uv.lock`](https://github.com/shinybrar/vosfs/blob/c7c476f2f073e15e463bda779a619109a4a842b1/uv.lock).
 
 The run exercised adapted async Local and Memory sources through the
-production `App` seam. Its negative `ls -l` case completed during command
-preflight without entering a source. The mocked VOS case exercised the native
-async source form, but that observation is incomplete for the VOS matrix row
-because the required live OpenCADC gate is absent; the row therefore remains
-`unverified` with an evidence cell of `—`.
+production `App` seam. Under the then-current rejection profile, its negative
+`ls -l` case completed during command preflight without entering a source; that
+observation is historical and does not apply to the superseding positive
+profile. The mocked VOS case exercised the native async source form, but that
+observation is incomplete for the VOS matrix row because the required live
+OpenCADC gate is absent; the row therefore remains `unverified` with an evidence
+cell of `—`.
 
 The gate ran from 2026-07-16T18:47:29Z through 2026-07-16T18:49:01Z in
 [GitHub Actions run 29525392759](https://github.com/shinybrar/vosfs/actions/runs/29525392759).

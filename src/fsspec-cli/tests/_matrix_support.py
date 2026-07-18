@@ -607,6 +607,62 @@ def _exercise_locked_profile(
         assert len(set(loop_ids)) == 1
 
 
+def _exercise_long_listing_profile(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    path: str,
+    *,
+    exact_directory: str,
+    human_directory: str,
+) -> None:
+    app = App({source_name: source})
+    directory_operand = f"{source_name}:{path}"
+
+    exact = _invoke_ls(app, ["-l", directory_operand])
+    human = _invoke_ls(app, ["-lh", directory_operand])
+
+    assert (exact.exit_code, exact.stdout, exact.stderr) == (
+        0,
+        exact_directory,
+        "",
+    )
+    assert (human.exit_code, human.stdout, human.stderr) == (
+        0,
+        human_directory,
+        "",
+    )
+    assert [event.stage for event in source.lifecycle] == [
+        "factory",
+        "enter",
+        "exit",
+    ] * 2
+    assert [call.operation for call in source.calls] == [
+        "info",
+        "ls",
+        "info",
+        "ls",
+    ]
+    assert [call.path for call in source.calls] == [
+        path,
+        path,
+        path,
+        path,
+    ]
+    assert [call.detail for call in source.calls] == [
+        None,
+        True,
+        None,
+        True,
+    ]
+    assert all(not call.kwargs for call in source.calls)
+    assert len(source.ls_results) == 2
+    assert all(
+        isinstance(result, list) and all(isinstance(entry, Mapping) for entry in result)
+        for _source_id, result in source.ls_results
+    )
+    assert not source.errors
+
+
 def _exercise_cat_profile(
     source_name: str,
     source: _ProbedSource[_FilesystemT],

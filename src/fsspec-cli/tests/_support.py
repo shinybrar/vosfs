@@ -25,6 +25,16 @@ def _invoke_ls(
     return CliRunner().invoke(App(sources).typer_app, ["ls", *arguments])
 
 
+def _invoke_ll(
+    arguments: list[str],
+    *,
+    sources: dict[str, AsyncFilesystemSource] | None = None,
+) -> Result:
+    if sources is None:
+        sources = {"memory": _source_must_not_run}
+    return CliRunner().invoke(App(sources).typer_app, ["ll", *arguments])
+
+
 def _invoke_mkdir(
     arguments: list[str],
     *,
