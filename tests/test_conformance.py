@@ -67,8 +67,7 @@ def test_recursive_get_materializes_tree_without_container_byte_negotiation(
         .add_file("/tree/root.bin", b"root-bytes")
         .add_file("/tree/nested/leaf.bin", b"leaf-bytes")
     )
-    sim.install(router)
-    fs = make_fs(router)
+    fs = _sync_fs(router, sim)
     target = tmp_path / "download"
     try:
         fs.get("/tree", str(target), recursive=True)
@@ -92,6 +91,26 @@ def test_recursive_get_materializes_tree_without_container_byte_negotiation(
         expected = Counter({"/tree/root.bin": 1, "/tree/nested/leaf.bin": 1})
         assert negotiations == expected
         assert byte_gets == expected
+    finally:
+        fs.close()
+
+
+def test_get_paired_list_materializes_containers(
+    router: respx.Router,
+    tmp_path: Path,
+) -> None:
+    sim = VOSpaceSim().add_container("/empty").add_file("/file.bin", b"paired")
+    fs = _sync_fs(router, sim)
+    local_empty = tmp_path / "empty"
+    local_file = tmp_path / "file.bin"
+    try:
+        fs.get(
+            ["/empty", "/file.bin"],
+            [str(local_empty), str(local_file)],
+        )
+        assert local_empty.is_dir()
+        assert list(local_empty.iterdir()) == []
+        assert local_file.read_bytes() == b"paired"
     finally:
         fs.close()
 

@@ -21,15 +21,12 @@ from __future__ import annotations
 import contextlib
 import os
 import uuid
-from typing import TYPE_CHECKING
+from pathlib import Path  # noqa: TC003 - pytest supplies a runtime Path fixture
 
 import pytest
 from fsspec.asyn import sync
 
 from vosfs import VOSpaceFileSystem
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 pytestmark = pytest.mark.integration
 

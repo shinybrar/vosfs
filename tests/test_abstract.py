@@ -114,12 +114,6 @@ def _copy_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noq
     return None
 
 
-def _get_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noqa: ARG001
-    if "?" in path:
-        return _QUESTION_MARK
-    return None
-
-
 def _put_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noqa: ARG001
     if "?" in path:
         return _QUESTION_MARK
@@ -129,7 +123,8 @@ def _put_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noqa
 
 
 _COPY_GLOB_PARAMS = _glob_params(_copy_glob_reason)
-_GET_GLOB_PARAMS = _glob_params(_get_glob_reason)
+# Copy and get have the same remaining exclusion: #63's question-mark paths.
+_GET_GLOB_PARAMS = _COPY_GLOB_PARAMS
 _PUT_GLOB_PARAMS = _glob_params(_put_glob_reason)
 
 
