@@ -18,6 +18,7 @@ from ._matrix_support import (
     _block_network,
     _exercise_cat_profile,
     _exercise_cp_locked_profile,
+    _exercise_du_profile,
     _exercise_locked_profile,
     _exercise_long_listing_profile,
     _exercise_mkdir_locked_profile,
@@ -188,6 +189,68 @@ def test_adapted_memory_long_listing_profile_is_sparse_and_uses_detail(
         "/docs",
         exact_directory="file  8  guide.md\nfile  9  notes.txt\n",
         human_directory="file  8B  guide.md\nfile  9B  notes.txt\n",
+    )
+
+    assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
+    assert all(isinstance(fs.sync_fs, MemoryFileSystem) for fs in source.filesystems)
+
+
+def test_adapted_local_du_profile_uses_native_temporary_storage(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _populate_local(root)
+    path = _local_command_path(root)
+    source = _ProbedSource(
+        lambda: AsyncFileSystemWrapper(
+            LocalFileSystem(skip_instance_cache=True),
+            asynchronous=True,
+        )
+    )
+
+    _exercise_du_profile(
+        "local",
+        source,
+        path,
+        exact_output=(f"7\t{path}/.hidden\n8\t{path}/guide.md\n9\t{path}/notes.txt\n"),
+        human_output=(
+            f"7B\t{path}/.hidden\n8B\t{path}/guide.md\n9B\t{path}/notes.txt\n"
+        ),
+        total=24,
+        human_total="24B",
+    )
+
+    assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
+    assert all(isinstance(fs.sync_fs, LocalFileSystem) for fs in source.filesystems)
+
+
+def test_adapted_memory_du_profile_has_isolated_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+
+    def make_filesystem() -> AsyncFileSystemWrapper:
+        MemoryFileSystem.store.clear()
+        MemoryFileSystem.pseudo_dirs[:] = [""]
+        MemoryFileSystem.clear_instance_cache()
+        filesystem = MemoryFileSystem()
+        filesystem.makedirs("/docs")
+        for name in ("notes.txt", ".hidden", "guide.md"):
+            filesystem.pipe_file(f"/docs/{name}", name.encode())
+        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
+
+    source = _ProbedSource(make_filesystem)
+
+    _exercise_du_profile(
+        "memory",
+        source,
+        "/docs",
+        exact_output=("7\t/docs/.hidden\n8\t/docs/guide.md\n9\t/docs/notes.txt\n"),
+        human_output=("7B\t/docs/.hidden\n8B\t/docs/guide.md\n9B\t/docs/notes.txt\n"),
+        total=24,
+        human_total="24B",
     )
 
     assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
