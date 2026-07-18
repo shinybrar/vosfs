@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote, urlsplit
+from xml.sax.saxutils import escape, quoteattr
 
 import httpx
 from conftest import (
@@ -154,7 +155,7 @@ class VOSpaceSim:
 
     def _property_elements(self, path: str) -> str:
         return "".join(
-            f'<vos:property uri="{uri}">{value}</vos:property>'
+            f"<vos:property uri={quoteattr(uri)}>{escape(value)}</vos:property>"
             for uri, value in self.properties.get(path, {}).items()
         )
 

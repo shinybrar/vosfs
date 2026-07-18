@@ -52,6 +52,20 @@ async def test_update_node_posts_property_and_refreshes_metadata(
     await fs.aclose()
 
 
+async def test_update_node_round_trips_xml_metacharacters(
+    router: respx.Router,
+) -> None:
+    property_uri = "ivo://example.org/vosfs/custom?left=1&right=2"
+    property_value = 'R&D <science> "quoted"'
+    sim = VOSpaceSim().add_file("/data.bin", b"data")
+    fs = _fs(router, sim)
+
+    await fs._update_node("/data.bin", {property_uri: property_value})
+
+    assert (await fs._info("/data.bin"))["properties"][property_uri] == property_value
+    await fs.aclose()
+
+
 async def test_update_node_maps_service_failure_without_changing_metadata(
     router: respx.Router,
 ) -> None:
