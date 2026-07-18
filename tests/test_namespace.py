@@ -35,7 +35,10 @@ async def test_update_node_posts_property_and_refreshes_metadata(
     assert {name: request.headers[name] for name in XML_HEADERS} == XML_HEADERS
     document = ElementTree.fromstring(request.content)
     assert document.get("uri") == f"vos://{AUTHORITY}/dir/café.bin"
-    assert document.get("{http://www.w3.org/2001/XMLSchema-instance}type") is None
+    assert document.get("{http://www.w3.org/2001/XMLSchema-instance}type") == (
+        "vos:DataNode"
+    )
+    assert document.get("busy") == "false"
     properties = {
         element.get("uri"): element.text
         for element in document.findall(
@@ -63,6 +66,23 @@ async def test_update_node_round_trips_xml_metacharacters(
     await fs._update_node("/data.bin", {property_uri: property_value})
 
     assert (await fs._info("/data.bin"))["properties"][property_uri] == property_value
+    await fs.aclose()
+
+
+async def test_update_node_preserves_container_type(router: respx.Router) -> None:
+    property_uri = "ivo://example.org/vosfs#container-update"
+    sim = VOSpaceSim().add_container("/dir")
+    fs = _fs(router, sim)
+
+    await fs._update_node("/dir", {property_uri: "container"})
+
+    request = sim.node_update_requests[-1]
+    document = ElementTree.fromstring(request.content)
+    assert document.get("{http://www.w3.org/2001/XMLSchema-instance}type") == (
+        "vos:ContainerNode"
+    )
+    assert document.find(f"{{{VOSPACE_NS}}}nodes") is not None
+    assert (await fs._info("/dir"))["properties"][property_uri] == "container"
     await fs.aclose()
 
 

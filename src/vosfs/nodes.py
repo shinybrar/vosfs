@@ -70,6 +70,12 @@ _INFO_TYPE_BY_NODE_TYPE = {
     "link": "other",
 }
 
+# Concrete wire type required by OpenCADC's schema-validating ``NodeReader``.
+_UPDATE_XSI_TYPE_BY_NODE_TYPE = {
+    "data": "vos:DataNode",
+    "container": "vos:ContainerNode",
+}
+
 # ElementTree serializes namespaces by prefix from a process-global registry.
 # Registering the VOSpace and XML-Schema-instance prefixes keeps generated
 # documents readable and, critically, keeps the ``vos:`` prefix used inside
@@ -240,32 +246,52 @@ def build_transfer_document(
     return _serialize(root)
 
 
-def build_property_update(uri: str, properties: Mapping[str, str]) -> bytes:
+def build_property_update(
+    uri: str,
+    properties: Mapping[str, str],
+    *,
+    node_type: str,
+) -> bytes:
     """Build a node POST body that sets mutable, non-administrative properties.
 
-    The document carries no ``xsi:type`` so it asserts no node-type change, and
-    every supplied property URI in the VOSpace core namespace is checked against
-    the profile's full-URI allow-list before serialization. Non-core property
-    URIs remain available for service-defined custom metadata.
+    The document carries the existing node's concrete ``xsi:type`` because the
+    OpenCADC reader requires it for schema validation and rejects a type that
+    differs from the stored node. Every supplied property URI in the VOSpace core
+    namespace is checked against the profile's full-URI allow-list before
+    serialization. Non-core property URIs remain available for service-defined
+    custom metadata.
 
     Args:
         uri: The node identifier URI to update.
         properties: A mapping of property URI to new string value.
+        node_type: The parsed type of the existing node.
 
     Returns:
         A UTF-8 ``node`` document setting the supplied properties.
 
     Raises:
         ValueError: If any property URI names an administrative, server-
-            computed, or type-defining property.
+            computed, or type-defining property, or ``node_type`` cannot be
+            represented by the private update primitive.
     """
     _validate_property_update(properties)
-    root = _new_node_element(uri)
+    try:
+        xsi_type = _UPDATE_XSI_TYPE_BY_NODE_TYPE[node_type]
+    except KeyError:
+        msg = f"property updates are unsupported for node type {node_type!r}"
+        raise ValueError(msg) from None
+    root = _new_node_element(uri, xsi_type=xsi_type)
+    if node_type == "data":
+        # OpenCADC's NodeReader requires this schema-optional DataNode field.
+        root.set("busy", "false")
     properties_element = ET.SubElement(root, _PROPERTIES_TAG)
     for property_uri, value in properties.items():
         element = ET.SubElement(properties_element, _PROPERTY_TAG)
         element.set("uri", property_uri)
         element.text = value
+    if node_type == "container":
+        # ContainerNode's schema and OpenCADC reader require the child list.
+        ET.SubElement(root, _NODES_TAG)
     return _serialize(root)
 
 
