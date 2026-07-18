@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/shinybrar/vosfs/actions/workflows/ci.yml/badge.svg)](https://github.com/shinybrar/vosfs/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+[![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue)](LICENSE)
 
 `fsspec-cli` is a library-only package that turns host-configured async
 [`fsspec`](https://github.com/fsspec/filesystem_spec) filesystems into
@@ -79,4 +79,4 @@ point or module executable.
 ## License
 
 `fsspec-cli` is distributed under the terms of the
-[GNU Affero General Public License v3.0 or later](LICENSE) (AGPL-3.0-or-later).
+[BSD 3-Clause License](LICENSE) (BSD-3-Clause).

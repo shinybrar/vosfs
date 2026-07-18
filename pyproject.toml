@@ -7,7 +7,7 @@ authors = [
     { name = "Shiny Brar  (he/il)", email = "charanjotbrar@gmail.com" }
 ]
 requires-python = ">=3.10"
-license = "AGPL-3.0-or-later"
+license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 keywords = ["fsspec", "vospace", "opencadc", "cavern", "canfar", "filesystem", "astronomy"]
 classifiers = [
