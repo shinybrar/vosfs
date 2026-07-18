@@ -1,7 +1,7 @@
 """``find`` command tests through the public embedded-command seam."""
 
-import asyncio
 import locale
+from collections.abc import Iterator
 from contextlib import AbstractAsyncContextManager
 from types import TracebackType
 from typing import NoReturn
@@ -40,6 +40,14 @@ class _ExplodingInfo(dict[str, object]):
         raise RuntimeError
 
 
+class _MalformedItemsMapping(dict[str, object]):
+    def __init__(self, entries: list[object]) -> None:
+        self.entries = entries
+
+    def items(self) -> Iterator[object]:  # type: ignore[override]
+        return iter(self.entries)
+
+
 class _FindControl(BaseException):
     pass
 
@@ -61,10 +69,9 @@ def _invoke_find(
 class _FindFileSystem(AsyncFileSystem):
     cachable = False
 
-    def __init__(self, source: "_FindSource", source_id: int) -> None:
+    def __init__(self, source: "_FindSource") -> None:
         super().__init__(asynchronous=True)
         self.source = source
-        self.source_id = source_id
 
     async def _find(
         self,
@@ -74,18 +81,8 @@ class _FindFileSystem(AsyncFileSystem):
         **kwargs: object,
     ) -> object:
         detail = kwargs.pop("detail", False)
-        assert not kwargs
-        self.source.events.append(
-            (
-                "find",
-                self.source_id,
-                path,
-                maxdepth,
-                withdirs,
-                detail,
-                id(asyncio.get_running_loop()),
-            )
-        )
+        assert type(detail) is bool
+        self.source.find_calls.append((path, maxdepth, withdirs, detail, kwargs))
         if self.source.error is not None:
             raise self.source.error
         return self.source.result
@@ -94,16 +91,18 @@ class _FindFileSystem(AsyncFileSystem):
 class _FindSource:
     def __init__(
         self,
-        events: list[tuple[object, ...]],
         *,
         result: object = (),
         error: BaseException | None = None,
         exit_error: BaseException | None = None,
     ) -> None:
-        self.events = events
         self.result = result
         self.error = error
         self.exit_error = exit_error
+        self.lifecycle: list[str] = []
+        self.find_calls: list[
+            tuple[str, int | None, bool, bool, dict[str, object]]
+        ] = []
         self.exit_calls: list[
             tuple[
                 type[BaseException] | None,
@@ -111,24 +110,19 @@ class _FindSource:
                 TracebackType | None,
             ]
         ] = []
-        self.call_count = 0
 
     def __call__(self) -> "_FindContext":
-        self.call_count += 1
-        self.events.append(("factory", self.call_count))
-        return _FindContext(self, self.call_count)
+        self.lifecycle.append("factory")
+        return _FindContext(self)
 
 
 class _FindContext(AbstractAsyncContextManager[_FindFileSystem]):
-    def __init__(self, source: _FindSource, source_id: int) -> None:
+    def __init__(self, source: _FindSource) -> None:
         self.source = source
-        self.source_id = source_id
-        self.filesystem = _FindFileSystem(source, source_id)
+        self.filesystem = _FindFileSystem(source)
 
     async def __aenter__(self) -> _FindFileSystem:
-        self.source.events.append(
-            ("enter", self.source_id, id(asyncio.get_running_loop()))
-        )
+        self.source.lifecycle.append("enter")
         return self.filesystem
 
     async def __aexit__(
@@ -138,17 +132,13 @@ class _FindContext(AbstractAsyncContextManager[_FindFileSystem]):
         traceback: TracebackType | None,
     ) -> None:
         self.source.exit_calls.append((exc_type, exc, traceback))
-        self.source.events.append(
-            ("exit", self.source_id, id(asyncio.get_running_loop()))
-        )
+        self.source.lifecycle.append("exit")
         if self.source.exit_error is not None:
             raise self.source.exit_error
 
 
 def test_find_renders_recursive_backend_file_paths_after_one_call() -> None:
-    events: list[tuple[object, ...]] = []
     source = _FindSource(
-        events,
         result=["/docs/sub/b.txt", "/docs/a.txt"],
     )
 
@@ -159,21 +149,16 @@ def test_find_renders_recursive_backend_file_paths_after_one_call() -> None:
         "/docs/a.txt\n/docs/sub/b.txt\n",
         "",
     )
-    assert [(event[0], *event[2:-1]) for event in events] == [
-        ("factory",),
-        ("enter",),
-        ("find", "/docs", None, False, False),
-        ("exit",),
+    assert source.lifecycle == ["factory", "enter", "exit"]
+    assert source.find_calls == [
+        ("/docs", None, False, False, {}),
     ]
 
 
 def test_find_orders_paths_by_locale_then_raw_spelling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = _FindSource(
-        [],
-        result=["/docs/b.txt", "/docs/z.txt", "/docs/a.txt"],
-    )
+    source = _FindSource(result=["/docs/b.txt", "/docs/z.txt", "/docs/a.txt"])
     transformed = {
         "/docs/z.txt": "0",
         "/docs/a.txt": "1",
@@ -194,7 +179,7 @@ def test_find_does_not_misclassify_an_internal_locale_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     internal_error = RuntimeError("locale failure")
-    source = _FindSource([], result=["/docs/a.txt"])
+    source = _FindSource(result=["/docs/a.txt"])
 
     def fail_locale(_path: str) -> str:
         raise internal_error
@@ -268,14 +253,12 @@ def test_find_accepts_locked_interspersed_options_and_call_shapes(
     call: tuple[str, int | None, bool, bool],
     stdout: str,
 ) -> None:
-    events: list[tuple[object, ...]] = []
-    source = _FindSource(events, result=find_result)
+    source = _FindSource(result=find_result)
 
     result = _invoke_find(arguments, sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, stdout, "")
-    find_events = [event for event in events if event[0] == "find"]
-    assert [(event[2], event[3], event[4], event[5]) for event in find_events] == [call]
+    assert source.find_calls == [(*call, {})]
 
 
 @pytest.mark.parametrize(
@@ -310,14 +293,12 @@ def test_find_maxdepth_zero_filters_the_single_backend_call_to_the_root(
     call: tuple[str, int, bool, bool],
     stdout: str,
 ) -> None:
-    events: list[tuple[object, ...]] = []
-    source = _FindSource(events, result=find_result)
+    source = _FindSource(result=find_result)
 
     result = _invoke_find(arguments, sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, stdout, "")
-    find_event = next(event for event in events if event[0] == "find")
-    assert (find_event[2], find_event[3], find_event[4], find_event[5]) == call
+    assert source.find_calls == [(*call, {})]
 
 
 @pytest.mark.parametrize("arguments", [["--help"], ["--type", "d", "--help"]])
@@ -423,7 +404,7 @@ def test_find_rejects_a_depth_too_large_for_the_runtime_deterministically() -> N
 def test_find_rejects_incompatible_file_results_atomically(
     find_result: object,
 ) -> None:
-    source = _FindSource([], result=find_result)
+    source = _FindSource(result=find_result)
 
     result = _invoke_find(["memory:/docs"], sources={"memory": source})
 
@@ -452,7 +433,7 @@ def test_find_rejects_incompatible_file_results_atomically(
 def test_find_rejects_incompatible_directory_results_atomically(
     find_result: object,
 ) -> None:
-    source = _FindSource([], result=find_result)
+    source = _FindSource(result=find_result)
 
     result = _invoke_find(
         ["--type", "d", "memory:/docs"],
@@ -466,11 +447,41 @@ def test_find_rejects_incompatible_directory_results_atomically(
     )
 
 
-def test_find_validates_the_complete_result_before_output() -> None:
+@pytest.mark.parametrize(
+    "malformed_entry",
+    [
+        ("/docs/bad",),
+        ("/docs/bad", {"type": "directory"}, "extra"),
+    ],
+)
+def test_find_rejects_malformed_detailed_items_atomically_and_cleans_up(
+    malformed_entry: object,
+) -> None:
     source = _FindSource(
-        [],
-        result=["/docs/good", "/docs/bad\nname"],
+        result=_MalformedItemsMapping(
+            [
+                ("/docs/good", {"type": "directory"}),
+                malformed_entry,
+            ]
+        ),
     )
+
+    result = _invoke_find(
+        ["--type", "d", "memory:/docs"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "find: memory:/docs: incompatible result\n",
+    )
+    assert source.lifecycle == ["factory", "enter", "exit"]
+    assert source.find_calls == [("/docs", None, True, True, {})]
+
+
+def test_find_validates_the_complete_result_before_output() -> None:
+    source = _FindSource(result=["/docs/good", "/docs/bad\nname"])
 
     result = _invoke_find(["memory:/docs"], sources={"memory": source})
 
@@ -498,7 +509,7 @@ def test_find_reports_backend_failures_and_passes_them_to_cleanup(
     error: Exception,
     diagnostic: str,
 ) -> None:
-    source = _FindSource([], error=error)
+    source = _FindSource(error=error)
 
     result = _invoke_find(["memory:/docs"], sources={"memory": source})
 
@@ -517,7 +528,7 @@ def test_find_cleans_up_after_an_output_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     output_error = OSError("write failed")
-    source = _FindSource([], result=["/docs/a"])
+    source = _FindSource(result=["/docs/a"])
     real_echo = typer.echo
 
     def fail_stdout(
@@ -548,7 +559,7 @@ def test_find_keeps_broken_pipe_silent_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     broken_pipe = BrokenPipeError()
-    source = _FindSource([], result=["/docs/a"])
+    source = _FindSource(result=["/docs/a"])
 
     def break_stdout(*args: object, **kwargs: object) -> None:
         del args, kwargs
@@ -566,7 +577,6 @@ def test_find_keeps_broken_pipe_silent_and_cleans_up(
 
 def test_find_retains_complete_output_when_source_exit_fails() -> None:
     source = _FindSource(
-        [],
         result=["/docs/a"],
         exit_error=OSError("cleanup"),
     )
@@ -583,7 +593,6 @@ def test_find_retains_complete_output_when_source_exit_fails() -> None:
 def test_find_cleans_up_then_propagates_backend_control_flow() -> None:
     control = _FindControl("stop")
     source = _FindSource(
-        [],
         error=control,
         exit_error=OSError("cleanup"),
     )

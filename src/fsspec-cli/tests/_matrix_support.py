@@ -66,13 +66,11 @@ class FilesystemCall:
 
 @dataclass(frozen=True)
 class FindCall:
-    source_id: int
     path: str
     maxdepth: int | None
     withdirs: bool
     detail: bool
     kwargs: Mapping[str, object]
-    loop_id: int
 
 
 def _block_network(monkeypatch) -> None:
@@ -213,13 +211,11 @@ class _ProbedSource(Generic[_FilesystemT]):
             detail = kwargs.pop("detail", False)
             self.find_calls.append(
                 FindCall(
-                    source_id,
                     path,
                     maxdepth,
                     withdirs,
                     detail,
                     kwargs,
-                    id(asyncio.get_running_loop()),
                 )
             )
             try:

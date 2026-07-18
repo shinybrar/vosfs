@@ -124,22 +124,18 @@ def _file_paths(result: object) -> list[str] | None:
 def _directory_paths(result: object) -> list[str] | None:
     if not isinstance(result, Mapping):
         return None
-    try:
-        entries = list(result.items())
-    except Exception:  # noqa: BLE001 - fail closed on hostile mapping iteration.
-        return None
     paths: list[str] = []
-    for path, info in entries:
-        if not _valid_path(path) or not isinstance(info, Mapping):
-            return None
-        try:
+    try:
+        for path, info in result.items():
+            if not _valid_path(path) or not isinstance(info, Mapping):
+                return None
             kind = info.get("type")
-        except Exception:  # noqa: BLE001 - fail closed on hostile mapping access.
-            return None
-        if type(kind) is not str:
-            return None
-        if kind == "directory":
-            paths.append(path)
+            if type(kind) is not str:
+                return None
+            if kind == "directory":
+                paths.append(path)
+    except Exception:  # noqa: BLE001 - fail closed on hostile mapping consumption.
+        return None
     return paths
 
 
