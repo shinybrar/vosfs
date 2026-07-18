@@ -134,7 +134,7 @@ def _exercise_profiles(
         _ReadHookCall("info", path),
         _ReadHookCall("cat_file", path, len(_PAYLOAD) - 3, None),
     ]
-    assert not any(call[1] is not None for call in source.exit_calls)
+    assert source.exit_calls == [(None, None, None), (None, None, None)]
 
 
 @pytest.fixture(autouse=True)

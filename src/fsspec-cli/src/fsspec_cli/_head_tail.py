@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, TypeGuard
+from typing import TYPE_CHECKING, TypeGuard
 
 import typer
 
@@ -24,7 +24,7 @@ from ._diagnostics import _render_diagnostic_value
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Collection
+    from collections.abc import Awaitable, Callable, Collection
 
     from fsspec.asyn import AsyncFileSystem
     from typer._click import Context
@@ -37,14 +37,6 @@ if TYPE_CHECKING:
 class _ByteRangeRequest:
     count: int
     operand: _MappedOperand
-
-
-class _ReadOperation(Protocol):
-    def __call__(
-        self,
-        request: _ByteRangeRequest,
-        filesystem: AsyncFileSystem,
-    ) -> Awaitable[bytes | _Failure]: ...
 
 
 class _HeadCommand(_RawCommand):
@@ -192,7 +184,10 @@ async def _run_byte_range(
     command: str,
     raw_arguments: tuple[str, ...],
     sources: Mapping[str, AsyncFilesystemSource],
-    operation: _ReadOperation,
+    operation: Callable[
+        [_ByteRangeRequest, AsyncFileSystem],
+        Awaitable[bytes | _Failure],
+    ],
 ) -> None:
     request = _preflight(command, raw_arguments, sources)
     invocation = _SourceInvocation(command, sources)

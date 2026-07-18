@@ -8,11 +8,11 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, NoReturn
 
+import fsspec_cli._app as app_module
 import pytest
 from click.utils import strip_ansi
 from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App, AsyncFilesystemSource
-from fsspec_cli._head_tail import _run_head, _run_tail
 from typer.testing import CliRunner, Result
 
 if TYPE_CHECKING:
@@ -196,36 +196,44 @@ def test_tail_reads_size_then_requests_exact_suffix_range(
     ]
 
 
-@pytest.mark.asyncio
-async def test_runner_semantics_do_not_depend_on_the_diagnostic_label(
+def test_runner_semantics_do_not_depend_on_the_diagnostic_label(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    emitted: list[bytes] = []
-
-    class _Stdout:
-        def write(self, payload: bytes) -> int:
-            emitted.append(payload)
-            return len(payload)
-
-        def flush(self) -> None:
-            return None
-
-    monkeypatch.setattr("fsspec_cli._head_tail._binary_stdout", _Stdout)
     head_source = _ReadSource(info_result={"size": 6}, payload=b"ab")
     tail_source = _ReadSource(info_result={"size": 6}, payload=b"ef")
-
-    await _run_head(
-        "tail",
-        ("-c", "2", "memory:/blob"),
-        {"memory": head_source},
+    commands = {entry[0]: entry for entry in app_module._ASYNC_COMMANDS}
+    head = commands["head"]
+    tail = commands["tail"]
+    monkeypatch.setattr(
+        app_module,
+        "_ASYNC_COMMANDS",
+        (
+            ("peek", head[1], head[2], head[3]),
+            ("suffix", tail[1], tail[2], tail[3]),
+        ),
     )
-    await _run_tail(
-        "head",
-        ("-c", "2", "memory:/blob"),
-        {"memory": tail_source},
+    app = App({"head-source": head_source, "tail-source": tail_source})
+    runner = CliRunner()
+
+    head_result = runner.invoke(
+        app.typer_app,
+        ["peek", "-c", "2", "head-source:/blob"],
+    )
+    tail_result = runner.invoke(
+        app.typer_app,
+        ["suffix", "-c", "2", "tail-source:/blob"],
     )
 
-    assert emitted == [b"ab", b"ef"]
+    assert (head_result.exit_code, head_result.stdout_bytes, head_result.stderr) == (
+        0,
+        b"ab",
+        "",
+    )
+    assert (tail_result.exit_code, tail_result.stdout_bytes, tail_result.stderr) == (
+        0,
+        b"ef",
+        "",
+    )
     assert head_source.calls == [_ReadCall("cat_file", "/blob", 0, 2)]
     assert tail_source.calls == [
         _ReadCall("info", "/blob"),
