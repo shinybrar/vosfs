@@ -100,8 +100,11 @@ fs.put("local.csv", "/project/copy.csv")
 ```
 
 `open("rb")` downloads once into a disk-backed temporary file and then provides
-local `read`/`readinto`/`readline`/iteration/`tell`/`seek`. `open("wb")` buffers
-into a temporary file and uploads once when the file closes successfully.
+local `read`/`readinto`/`readline`/iteration/`tell`/`seek`. `open("wb")` and
+`open("w")` disk-stage writes and upload once only after a successful close or
+clean context exit. A write-block exception or local close failure before `PUT`
+uploads nothing. Once `PUT` begins, failure is uncertain and may have truncated
+the destination.
 
 ## Scientific Python stack
 

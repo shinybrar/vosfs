@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
     from types import TracebackType
+    from typing import Any
 
 
 def new_temp_path() -> str:
@@ -71,32 +72,48 @@ class StagedWriteFile(io.BufferedRandom):
         super().__init__(io.FileIO(self._path, "r+"))
         self._on_commit = on_commit
         self._done = False
+        self._outer_owns_finish = False
 
     def close(self) -> None:
-        """Commit the buffer with one upload, then remove the temporary file.
+        """Close locally, committing only when no outer wrapper owns the finish.
 
         The temporary file is removed even if the final flush (``super().close``)
         or the upload raises, so a failed commit never leaks a staging file. A
-        flush failure skips the upload, since the buffer is then incomplete.
+        flush failure skips the upload, since the buffer is then incomplete. An
+        outer text wrapper separately selects commit or discard after it closes.
         """
+        if self._done or self.closed:
+            return
+        if self._outer_owns_finish:
+            super().close()
+        else:
+            self._finish(upload=True)
+
+    def _finish(self, *, upload: bool) -> None:
+        """Close, optionally upload, and unlink through one terminal path."""
         if self._done:
             return
         self._done = True
         try:
-            super().close()
-            self._on_commit(self._path)
+            if not self.closed:
+                super().close()
+            if upload:
+                self._on_commit(self._path)
         finally:
             with contextlib.suppress(OSError):
                 Path(self._path).unlink()
 
+    def _handoff_to_outer(self) -> None:
+        """Give an outer wrapper ownership of the terminal upload decision."""
+        self._outer_owns_finish = True
+
+    def _commit(self) -> None:
+        """Upload and clean up after an outer wrapper closes successfully."""
+        self._finish(upload=True)
+
     def discard(self) -> None:
         """Discard the buffer without uploading (used on a failed write)."""
-        if self._done:
-            return
-        self._done = True
-        super().close()
-        with contextlib.suppress(OSError):
-            Path(self._path).unlink()
+        self._finish(upload=False)
 
     def __exit__(
         self,
@@ -115,3 +132,45 @@ class StagedWriteFile(io.BufferedRandom):
         if not self._done:
             with contextlib.suppress(Exception):
                 self.discard()
+
+
+class StagedTextWriteFile(io.TextIOWrapper):
+    """Text wrapper that owns its staged buffer's terminal upload decision."""
+
+    def __init__(
+        self,
+        buffer: Any,  # noqa: ANN401 - fsspec compression wrappers are file-like
+        staged: StagedWriteFile,
+        *,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> None:
+        """Wrap ``buffer`` and take ownership of staged commit or discard."""
+        self._staged = staged
+        self._discard_on_close = False
+        staged._handoff_to_outer()  # noqa: SLF001 - same-module lifecycle peer
+        super().__init__(buffer, encoding=encoding, errors=errors, newline=newline)
+
+    def close(self) -> None:
+        """Commit only after the complete outer text stack closes cleanly."""
+        try:
+            super().close()
+        except BaseException:
+            self._staged.discard()
+            raise
+        if self._discard_on_close:
+            self._staged.discard()
+        else:
+            self._staged._commit()  # noqa: SLF001 - same-module lifecycle peer
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Close normally, but discard when the context block raised."""
+        if exc_type is not None:
+            self._discard_on_close = True
+        super().__exit__(exc_type, exc_val, exc_tb)

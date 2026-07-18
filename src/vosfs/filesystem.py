@@ -16,17 +16,20 @@ import errno
 import hashlib
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, cast, overload
 from urllib.parse import unquote, urlsplit
 
 import httpx
 from fsspec.asyn import AsyncFileSystem, sync
 from fsspec.callbacks import DEFAULT_CALLBACK
+from fsspec.compression import compr
+from fsspec.core import get_compression
 
 from vosfs import capabilities, config, errors, negotiate, nodes, paths, staging
 from vosfs.transport import ClientPool, build_timeout
 
 if TYPE_CHECKING:
+    import io
     from collections.abc import AsyncIterator, Mapping, Sequence
 
     from fsspec.callbacks import Callback
@@ -550,6 +553,54 @@ class VOSpaceFileSystem(AsyncFileSystem):
             whole = cache[stripped_path]
             results.append(whole[start:end] if isinstance(whole, bytes) else whole)
         return results
+
+    def open(
+        self,
+        path: str,
+        mode: str = "rb",
+        block_size: int | None = None,
+        cache_options: dict[str, Any] | None = None,
+        compression: str | None = None,
+        **kwargs: Any,  # noqa: ANN401 - fsspec public signature
+    ) -> io.IOBase:
+        """Open a staged file, preserving failed-block discard for text writes."""
+        if "b" in mode or not ("w" in mode or "x" in mode):
+            return super().open(
+                path,
+                mode=mode,
+                block_size=block_size,
+                cache_options=cache_options,
+                compression=compression,
+                **kwargs,
+            )
+
+        normalized_path = self._strip_protocol(path)
+        binary_mode = mode.replace("t", "") + "b"
+        text_kwargs = {
+            key: kwargs.pop(key)
+            for key in ("encoding", "errors", "newline")
+            if key in kwargs
+        }
+        staged = cast(
+            "staging.StagedWriteFile",
+            super().open(
+                normalized_path,
+                mode=binary_mode,
+                block_size=block_size,
+                cache_options=cache_options,
+                compression=None,
+                **kwargs,
+            ),
+        )
+        buffer: io.BufferedIOBase = staged
+        if compression is not None:
+            compression = get_compression(normalized_path, compression)
+            buffer = compr[compression](buffer, mode=mode[0])
+        return staging.StagedTextWriteFile(
+            buffer,
+            staged,
+            **text_kwargs,
+        )
 
     def _open(
         self,
