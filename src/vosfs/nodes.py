@@ -35,11 +35,18 @@ VOSPACE_VERSION = "2.1"
 XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
 XML_HEADERS = {"Content-Type": "text/xml; charset=utf-8", "Accept": "text/xml"}
 
-# IVOA VOSpace core property URIs promoted to first-class :class:`Node` fields.
+# VOSpace property URIs promoted to first-class :class:`Node` fields.
+# ``#length``, ``#mtime``, and ``#date`` are IVOA VOSpace 2.1 standard
+# properties. ``#MD5`` and ``#contenttype`` are OpenCADC-profile *extensions*:
+# the IVOA 2.1 standard-property enumeration does not include them, and vosfs
+# exposes them only because the OpenCADC wire emits them.
 LENGTH_PROPERTY_URI = "ivo://ivoa.net/vospace/core#length"
-MD5_PROPERTY_URI = "ivo://ivoa.net/vospace/core#MD5"
+MTIME_PROPERTY_URI = "ivo://ivoa.net/vospace/core#mtime"
 DATE_PROPERTY_URI = "ivo://ivoa.net/vospace/core#date"
-CONTENT_TYPE_PROPERTY_URI = "ivo://ivoa.net/vospace/core#contenttype"
+MD5_PROPERTY_URI = "ivo://ivoa.net/vospace/core#MD5"  # OpenCADC extension
+CONTENT_TYPE_PROPERTY_URI = (
+    "ivo://ivoa.net/vospace/core#contenttype"  # OpenCADC extension
+)
 
 # Directions this profile emits during synchronous byte negotiation.
 _ALLOWED_DIRECTIONS = ("pullFromVoSpace", "pushToVoSpace")
@@ -75,11 +82,17 @@ _ADMIN_PROPERTY_SUFFIXES = frozenset(
         "publicread",
         "permission",
         "quota",
+        "availablespace",
         "length",
         "md5",
         "checksum",
         "creator",
         "type",
+        # IVOA 2.1 server-computed timestamps: immutable, rejected server-side.
+        "mtime",
+        "ctime",
+        "btime",
+        "date",
     },
 )
 
@@ -112,7 +125,8 @@ class Node:
         uri: The node identifier URI carried by the document.
         size: The byte length for a data node, or ``0`` for containers and
             links.
-        mtime: The ``date`` core property, if present, else ``None``.
+        mtime: The IVOA ``mtime`` core property, falling back to the ``date``
+            property, if present, else ``None``.
         md5: The ``MD5`` core property, if present, else ``None``.
         content_type: The ``contenttype`` core property, if present, else
             ``None``.
@@ -309,7 +323,7 @@ def _node_from_element(element: ET.Element) -> Node:
         node_type=node_type,
         uri=uri,
         size=size,
-        mtime=properties.get(DATE_PROPERTY_URI),
+        mtime=properties.get(MTIME_PROPERTY_URI) or properties.get(DATE_PROPERTY_URI),
         md5=properties.get(MD5_PROPERTY_URI),
         content_type=properties.get(CONTENT_TYPE_PROPERTY_URI),
         target=target,

@@ -169,6 +169,15 @@ _KNOWN_FAULTS: tuple[str, ...] = (
     "InvalidArgument",
     "InvalidURI",
     "ServiceBusy",
+    # Remaining IVOA VOSpace 2.1 symbolic faults. These enrich the reported
+    # fault only; HTTP status still drives the exception mapping.
+    "TypeNotSupported",
+    "LinkFound",
+    "ViewNotSupported",
+    "ProtocolNotSupported",
+    "InvalidToken",
+    "InvalidData",
+    "InternalFault",
 )
 
 
