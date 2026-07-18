@@ -1,12 +1,14 @@
 """Tests for the fsspec conformance surface (section 11)."""
 
 import asyncio
+from collections import Counter
+from pathlib import Path
 
 import fsspec
 import httpx
 import pytest
 import respx
-from conftest import BASE_URL, make_fs
+from conftest import BASE_URL, SYNC_URL, make_fs, target_path
 from fsspec.callbacks import Callback
 from vospace_sim import VOSpaceSim
 
@@ -51,6 +53,47 @@ def test_read_block(router: respx.Router) -> None:
     fs = _sync_fs(router, sim)
     assert fs.read_block("/f", 2, 3) == b"234"
     fs.close()
+
+
+def test_recursive_get_materializes_tree_without_container_byte_negotiation(
+    router: respx.Router,
+    tmp_path: Path,
+) -> None:
+    sim = (
+        VOSpaceSim()
+        .add_container("/tree")
+        .add_container("/tree/empty")
+        .add_container("/tree/nested")
+        .add_file("/tree/root.bin", b"root-bytes")
+        .add_file("/tree/nested/leaf.bin", b"leaf-bytes")
+    )
+    sim.install(router)
+    fs = make_fs(router)
+    target = tmp_path / "download"
+    try:
+        fs.get("/tree", str(target), recursive=True)
+
+        assert target.is_dir()
+        assert (target / "empty").is_dir()
+        assert list((target / "empty").iterdir()) == []
+        assert (target / "root.bin").read_bytes() == b"root-bytes"
+        assert (target / "nested" / "leaf.bin").read_bytes() == b"leaf-bytes"
+
+        negotiations = Counter(
+            target_path(call.request.content)
+            for call in router.calls
+            if call.request.method == "POST" and str(call.request.url) == SYNC_URL
+        )
+        byte_gets = Counter(
+            call.request.url.params["p"]
+            for call in router.calls
+            if call.request.method == "GET" and call.request.url.path.endswith("/files")
+        )
+        expected = Counter({"/tree/root.bin": 1, "/tree/nested/leaf.bin": 1})
+        assert negotiations == expected
+        assert byte_gets == expected
+    finally:
+        fs.close()
 
 
 # --- facades --------------------------------------------------------------------

@@ -15,15 +15,18 @@ import datetime
 import errno
 import hashlib
 import os
+from glob import has_magic
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast, overload
 from urllib.parse import unquote, urlsplit
 
 import httpx
-from fsspec.asyn import AsyncFileSystem, sync
+from fsspec.asyn import AsyncFileSystem, _run_coros_in_chunks, sync
 from fsspec.callbacks import DEFAULT_CALLBACK
 from fsspec.compression import compr
 from fsspec.core import get_compression
+from fsspec.implementations.local import LocalFileSystem, make_path_posix, trailing_sep
+from fsspec.utils import other_paths
 
 from vosfs import capabilities, config, errors, negotiate, nodes, paths, staging
 from vosfs.transport import ClientPool, build_timeout
@@ -486,6 +489,84 @@ class VOSpaceFileSystem(AsyncFileSystem):
             return b"".join([chunk async for chunk in response.aiter_raw(_READ_CHUNK)])
         finally:
             await response.aclose()
+
+    async def _get(
+        self,
+        rpath: str | list[str],
+        lpath: str | list[str],
+        recursive: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
+        callback: Callback = DEFAULT_CALLBACK,
+        maxdepth: int | None = None,
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> list[Any] | None:
+        """Download files and materialize matched containers locally."""
+        if isinstance(lpath, list) and isinstance(rpath, list):
+            return await super()._get(
+                rpath,
+                lpath,
+                recursive=recursive,
+                callback=callback,
+                maxdepth=maxdepth,
+                **kwargs,
+            )
+
+        source_is_str = isinstance(rpath, str)
+        source_has_magic = source_is_str and has_magic(rpath)
+        source_not_trailing_sep = source_is_str and not trailing_sep(rpath)
+        rpath = self._strip_protocol(rpath)
+        rpaths = await self._expand_path(
+            rpath,
+            recursive=recursive,
+            maxdepth=maxdepth,
+        )
+        if source_is_str and (not recursive or maxdepth is not None):
+            rpaths = [
+                path
+                for path in rpaths
+                if not (trailing_sep(path) or await self._isdir(path))
+            ]
+            if not rpaths:
+                return None
+
+        lpath = make_path_posix(lpath)
+        source_is_file = len(rpaths) == 1
+        dest_is_dir = trailing_sep(lpath) or LocalFileSystem().isdir(lpath)
+        exists = source_is_str and (
+            (source_has_magic and source_is_file)
+            or (not source_has_magic and dest_is_dir and source_not_trailing_sep)
+        )
+        lpaths = other_paths(
+            rpaths,
+            lpath,
+            exists=exists,
+            flatten=not source_is_str,
+        )
+
+        files: list[tuple[str, str]] = []
+        for remote, local in zip(rpaths, lpaths, strict=True):
+            if await self._isdir(remote):
+                Path(local).mkdir(  # noqa: ASYNC240 - local coordinator setup
+                    parents=True,
+                    exist_ok=True,
+                )
+            else:
+                Path(local).parent.mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
+                files.append((remote, local))
+
+        batch_size = kwargs.pop("batch_size", self.batch_size)
+        callback.set_size(len(files))
+        coros = []
+        for remote, local in files:
+            get_file = callback.branch_coro(self._get_file)
+            coros.append(get_file(remote, local, **kwargs))
+        return await _run_coros_in_chunks(
+            coros,
+            batch_size=batch_size,
+            callback=callback,
+        )
 
     async def _get_file(
         self,
