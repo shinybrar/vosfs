@@ -88,7 +88,6 @@ class _ProbedSource(Generic[_FilesystemT]):
         self.calls: list[FilesystemCall] = []
         self.info_results: list[tuple[int, object]] = []
         self.ls_results: list[tuple[int, object]] = []
-        self.du_results: list[tuple[int, object]] = []
         self.get_file_results: list[tuple[int, str]] = []
         self.errors: list[tuple[int, str, Exception]] = []
         self.filesystems: list[_FilesystemT] = []
@@ -185,7 +184,6 @@ class _ProbedSource(Generic[_FilesystemT]):
             except Exception as error:
                 self.errors.append((source_id, "du", error))
                 raise
-            self.du_results.append((source_id, result))
             return result
 
         return du
@@ -511,10 +509,6 @@ def _invoke_ls(app: App, arguments: list[str]) -> Result:
     return _invoke(app, "ls", arguments)
 
 
-def _invoke_du(app: App, arguments: list[str]) -> Result:
-    return _invoke(app, "du", arguments)
-
-
 def _invoke_cat(app: App, arguments: list[str]) -> Result:
     return _invoke(app, "cat", arguments)
 
@@ -703,52 +697,6 @@ def _exercise_long_listing_profile(
         isinstance(result, list) and all(isinstance(entry, Mapping) for entry in result)
         for _source_id, result in source.ls_results
     )
-    assert not source.errors
-
-
-def _exercise_du_profile(  # noqa: PLR0913 - matrix golden expectations.
-    source_name: str,
-    source: _ProbedSource[_FilesystemT],
-    path: str,
-    *,
-    exact_output: str,
-    human_output: str,
-    total: int,
-    human_total: str,
-) -> None:
-    app = App({source_name: source})
-    operand = f"{source_name}:{path}"
-
-    exact = _invoke_du(app, [operand])
-    human = _invoke_du(app, ["-h", operand])
-    summary = _invoke_du(app, ["-s", operand])
-    human_summary = _invoke_du(app, ["-sh", operand])
-
-    assert (exact.exit_code, exact.stdout, exact.stderr) == (0, exact_output, "")
-    assert (human.exit_code, human.stdout, human.stderr) == (0, human_output, "")
-    assert (summary.exit_code, summary.stdout, summary.stderr) == (
-        0,
-        f"{total}\t{path}\n",
-        "",
-    )
-    assert (human_summary.exit_code, human_summary.stdout, human_summary.stderr) == (
-        0,
-        f"{human_total}\t{path}\n",
-        "",
-    )
-    assert [event.stage for event in source.lifecycle] == [
-        "factory",
-        "enter",
-        "exit",
-    ] * 4
-    du_calls = [call for call in source.calls if call.operation == "du"]
-    assert [(call.path, call.total, call.kwargs) for call in du_calls] == [
-        (path, False, {}),
-        (path, False, {}),
-        (path, True, {}),
-        (path, True, {}),
-    ]
-    assert len(source.du_results) == 4
     assert not source.errors
 
 

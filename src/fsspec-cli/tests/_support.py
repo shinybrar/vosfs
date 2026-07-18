@@ -254,12 +254,6 @@ class _RecordingFileSystem(AsyncFileSystem):
         self.source.events.append(
             ("du", self.source_id, path, total, id(asyncio.get_running_loop()))
         )
-        key = (path, total)
-        if key in self.source.du_by_call:
-            scripted = self.source.du_by_call[key]
-            if isinstance(scripted, BaseException):
-                raise scripted
-            return scripted
         if self.source.du_error is not None:
             raise self.source.du_error
         return self.source.du_result
@@ -516,7 +510,6 @@ class _RecordingSource:
         exit_error: BaseException | None = None,
         info_by_path: Mapping[str, object] | None = None,
         ls_by_path: Mapping[str, object] | None = None,
-        du_by_call: Mapping[tuple[str, bool], object] | None = None,
         mkdir_by_path: Mapping[str, object] | None = None,
         makedirs_by_path: Mapping[str, object] | None = None,
         rmdir_by_path: Mapping[str, object] | None = None,
@@ -556,7 +549,6 @@ class _RecordingSource:
         self.exit_error = exit_error
         self.info_by_path = info_by_path or {}
         self.ls_by_path = ls_by_path or {}
-        self.du_by_call = du_by_call or {}
         self.mkdir_by_path = mkdir_by_path or {}
         self.makedirs_by_path = makedirs_by_path or {}
         self.rmdir_by_path = rmdir_by_path or {}

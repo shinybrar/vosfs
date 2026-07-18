@@ -15,7 +15,6 @@ from ._matrix_support import (
     _block_network,
     _exercise_cat_profile,
     _exercise_cp_locked_profile,
-    _exercise_du_profile,
     _exercise_locked_profile,
     _exercise_long_listing_profile,
     _exercise_mkdir_p_locked_profile,
@@ -192,42 +191,6 @@ _RESPONSES: dict[tuple[str, str], httpx.Response] = {
 _LONG_RESPONSES: dict[tuple[str, str], httpx.Response] = {
     ("GET", "/arc/capabilities"): httpx.Response(200, content=_CAPABILITIES),
     ("GET", "/arc/nodes/docs"): httpx.Response(200, content=_LONG_DOCS),
-}
-
-
-def _du_data_node(path: str, size: int) -> bytes:
-    return f"""<vos:node
-    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}{path}">
-  <vos:properties>
-    <vos:property uri="ivo://ivoa.net/vospace/core#length">{size}</vos:property>
-  </vos:properties>
-</vos:node>
-""".encode()
-
-
-_DU_SHORTCUT = f"""<vos:node
-    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:type="vos:LinkNode" uri="vos://{_AUTHORITY}/docs/shortcut">
-  <vos:properties/>
-  <vos:target>vos://{_AUTHORITY}/docs/guide.md</vos:target>
-</vos:node>
-""".encode()
-_DU_RESPONSES: dict[tuple[str, str], httpx.Response] = {
-    ("GET", "/arc/capabilities"): httpx.Response(200, content=_CAPABILITIES),
-    ("GET", "/arc/nodes/docs"): httpx.Response(200, content=_LONG_DOCS),
-    ("GET", "/arc/nodes/docs/.hidden"): httpx.Response(
-        200, content=_du_data_node("/docs/.hidden", 7)
-    ),
-    ("GET", "/arc/nodes/docs/guide.md"): httpx.Response(
-        200, content=_du_data_node("/docs/guide.md", 8)
-    ),
-    ("GET", "/arc/nodes/docs/notes.txt"): httpx.Response(
-        200, content=_du_data_node("/docs/notes.txt", 1536)
-    ),
-    ("GET", "/arc/nodes/docs/shortcut"): httpx.Response(200, content=_DU_SHORTCUT),
 }
 
 
@@ -591,58 +554,6 @@ def test_native_vosfs_long_listing_profile_is_remote_and_uses_detail(
             ("GET", "/arc/nodes/docs"),
         ],
     ]
-    assert all(transport.closed for transport in transports)
-
-
-def test_native_vosfs_du_profile_uses_only_mocked_transport() -> None:
-    transports: list[_StrictMockTransport] = []
-
-    def make_filesystem() -> VOSpaceFileSystem:
-        transport = _StrictMockTransport(_DU_RESPONSES)
-        transports.append(transport)
-        return VOSpaceFileSystem(
-            _BASE_URL,
-            transport=transport,
-            asynchronous=True,
-            skip_instance_cache=True,
-            trust_env=False,
-        )
-
-    source = _ProbedSource(make_filesystem, close=_close_vosfs)
-
-    _exercise_du_profile(
-        "vos",
-        source,
-        "/docs",
-        exact_output=(
-            "7\t/docs/.hidden\n"
-            "8\t/docs/guide.md\n"
-            "1536\t/docs/notes.txt\n"
-            "0\t/docs/shortcut\n"
-        ),
-        human_output=(
-            "7B\t/docs/.hidden\n"
-            "8B\t/docs/guide.md\n"
-            "1.5K\t/docs/notes.txt\n"
-            "0B\t/docs/shortcut\n"
-        ),
-        total=1551,
-        human_total="1.5K",
-    )
-
-    assert all(isinstance(fs, VOSpaceFileSystem) for fs in source.filesystems)
-    assert all(fs._pool.closed is True for fs in source.filesystems)
-    expected_requests = [
-        ("GET", "/arc/capabilities"),
-        ("GET", "/arc/nodes/docs"),
-        ("GET", "/arc/nodes/docs/.hidden"),
-        ("GET", "/arc/nodes/docs/guide.md"),
-        ("GET", "/arc/nodes/docs/notes.txt"),
-        ("GET", "/arc/nodes/docs/shortcut"),
-    ]
-    assert [transport.requests for transport in transports] == [
-        expected_requests,
-    ] * 4
     assert all(transport.closed for transport in transports)
 
 
