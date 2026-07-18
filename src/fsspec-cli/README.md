@@ -62,6 +62,8 @@ python app.py fs ls data:/
 | `ls`, `ll` | Names-only `ls`; adaptive long `ls -l` / `-lh`; inherent-long `ll` |
 | `du` | Recursive exact-byte usage; `-s` total only, `-h` human-readable |
 | `find` | Recursive file paths; `--maxdepth N`, `--type f\|d` |
+| `size` | Exact bytes for one or more mapped paths; batched by source |
+| `test` | Silent `-e`, `-d`, or `-f` predicate with shell-style status |
 | `cat` | Concatenate mapped files (and stdin `-`) to stdout |
 | `cp` | Verified same-source, cross-source, and multi-source file copy (no `-R`) |
 | `mv` | Same-source file move, single or multi-file into a directory |

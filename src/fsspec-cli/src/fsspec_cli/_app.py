@@ -24,7 +24,9 @@ from ._mkdir import _run_mkdir
 from ._mv import _run_mv
 from ._rm import _run_rm
 from ._rmdir import _run_rmdir
+from ._size import _run_size, _SizeCommand
 from ._stat import _run_stat, _StatCommand
+from ._test import _run_test, _TestCommand
 from ._unlink import _run_unlink
 
 if TYPE_CHECKING:
@@ -61,6 +63,8 @@ _ASYNC_COMMANDS: tuple[tuple[str, str, _AsyncRunner, type[TyperCommand]], ...] =
     ("cat", "Concatenate files to standard output", _run_cat, _RawCommand),
     ("du", "Estimate file space usage", _run_du, _DuCommand),
     ("find", "Find files recursively", _run_find, _FindCommand),
+    ("size", "Display exact file sizes", _run_size, _SizeCommand),
+    ("test", "Evaluate a file predicate", _run_test, _TestCommand),
     ("cp", "Copy a file (no recursion)", _run_cp, _RawCommand),
     ("mv", "Move or rename files", _run_mv, _RawCommand),
     ("mkdir", "Create directories", _run_mkdir, _RawCommand),
