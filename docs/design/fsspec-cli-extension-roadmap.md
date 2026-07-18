@@ -2,6 +2,12 @@
 
 <!-- pyml disable line-length -->
 
+> **Partially superseded** by
+> [`fsspec-cli-shell-experience-spec.md`](fsspec-cli-shell-experience-spec.md):
+> the core-vs-extension classification moved there (the ubiquitous commands are
+> now CORE, not extensions). This document is retained as the verified command
+> **inventory** and as background for the backend-specific extension seam.
+
 Status: **Proposal / roadmap.** This is not a locked command compatibility
 profile. It records a way to grow `fsspec-cli` beyond its ubiquitous core and an
 inventory of the storage commands worth adding, each mapped to a **verified**

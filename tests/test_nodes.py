@@ -17,6 +17,7 @@ from vosfs.nodes import (
     DATE_PROPERTY_URI,
     LENGTH_PROPERTY_URI,
     MD5_PROPERTY_URI,
+    MTIME_PROPERTY_URI,
     VOSPACE_NS,
     VOSPACE_VERSION,
     XML_HEADERS,
@@ -94,6 +95,30 @@ def test_parse_data_node() -> None:
     custom = node.properties["ivo://cadc.nrc.ca/vospace/custom#experiment"]
     assert custom == "orion-survey"
     assert node.properties["ivo://ivoa.net/vospace/core#quota"] == "53687091200"
+
+
+def test_mtime_prefers_ivoa_mtime_over_date() -> None:
+    def prop(uri: str, value: str) -> str:
+        return f'<vos:property uri="{uri}">{value}</vos:property>'
+
+    document = (
+        f'<vos:node xmlns:vos="{VOSPACE_NS}" '
+        'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        'xsi:type="vos:DataNode" uri="vos://cadc.nrc.ca!vault/a" version="2.1">'
+        "<vos:properties>"
+        + prop(MTIME_PROPERTY_URI, "2025-01-02T03:04:05.000")
+        + prop(DATE_PROPERTY_URI, "1999-01-01T00:00:00.000")
+        + prop(LENGTH_PROPERTY_URI, "10")
+        + "</vos:properties></vos:node>"
+    ).encode()
+    node = parse_node(document)
+    assert node.mtime == "2025-01-02T03:04:05.000"
+
+
+def test_mtime_falls_back_to_date_when_ivoa_mtime_absent() -> None:
+    # The bundled container fixture carries only #date, exercising the fallback.
+    node = parse_node(read_fixture("container_listing.xml"))
+    assert node.mtime == "2024-05-01T00:00:00.000"
 
 
 def test_parse_link_node() -> None:
@@ -430,6 +455,8 @@ def test_build_property_update_is_valid_and_sets_properties() -> None:
         "ivo://ivoa.net/vospace/core#permission",
         "ivo://ivoa.net/vospace/core#checksum",
         "ivo://ivoa.net/vospace/core#type",
+        MTIME_PROPERTY_URI,  # IVOA server-computed timestamp
+        DATE_PROPERTY_URI,  # IVOA server-computed timestamp
         "ivo://ivoa.net/vospace/core#OWNER",  # case-insensitive
         "urn:example/owner",  # slash-delimited suffix, no fragment
     ],

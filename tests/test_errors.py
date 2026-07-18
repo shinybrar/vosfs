@@ -299,6 +299,8 @@ def test_parse_retry_after_ignores_dates_negatives_and_none() -> None:
 def test_extract_fault_matches_known_tokens_only() -> None:
     assert errors.extract_fault("the QuotaExceeded ceiling was hit") == "QuotaExceeded"
     assert errors.extract_fault("NodeLocked by another writer") == "NodeLocked"
+    assert errors.extract_fault("a LinkFound during traversal") == "LinkFound"
+    assert errors.extract_fault("TypeNotSupported for this node") == "TypeNotSupported"
     assert errors.extract_fault("an ordinary message") is None
 
 

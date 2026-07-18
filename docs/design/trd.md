@@ -652,6 +652,7 @@ additional requirements:
 - [HTTPX transport contract](../research/vosfs-v030-httpx-contract.md)
 - [integration-test plan](../research/vosfs-v030-integration-test-plan.md)
 - [initial cross-project gap analysis](../research/vosfs-contract-gap-analysis.md)
+- [IVOA VOSpace 2.1 fidelity evaluation](../research/vosfs-ivoa-2.1-evaluation.md)
 - [OpenCADC synchronous transfer wiring](https://github.com/opencadc/vos/blob/cf976ce8141dd3341631b7f3e07aa38443d42f58/cavern/src/main/webapp/WEB-INF/web.xml#L147-L175)
 - [OpenCADC push/pull integration test](https://github.com/opencadc/vos/blob/cf976ce8141dd3341631b7f3e07aa38443d42f58/cadc-test-vos/src/main/java/org/opencadc/conformance/vos/TransferTest.java#L147-L274)
 - [`vostools` upload path](https://github.com/opencadc/vostools/blob/e54b472581d67b4c1db533cab95e955d2e9a7c5a/vos/vos/vos.py#L1904-L1919)
