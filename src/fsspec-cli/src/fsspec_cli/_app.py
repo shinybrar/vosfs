@@ -28,6 +28,7 @@ from ._rmdir import _run_rmdir
 from ._size import _run_size, _SizeCommand
 from ._stat import _run_stat, _StatCommand
 from ._test import _run_test, _TestCommand
+from ._tree import _run_tree, _TreeCommand
 from ._unlink import _run_unlink
 
 if TYPE_CHECKING:
@@ -68,6 +69,7 @@ _ASYNC_COMMANDS: tuple[tuple[str, str, _AsyncRunner, type[TyperCommand]], ...] =
     ("test", "Evaluate a file predicate", _run_test, _TestCommand),
     ("head", "Display leading bytes", _run_head, _HeadCommand),
     ("tail", "Display trailing bytes", _run_tail, _TailCommand),
+    ("tree", "Display a recursive directory tree", _run_tree, _TreeCommand),
     ("cp", "Copy a file (no recursion)", _run_cp, _RawCommand),
     ("mv", "Move or rename files", _run_mv, _RawCommand),
     ("mkdir", "Create directories", _run_mkdir, _RawCommand),

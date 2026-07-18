@@ -65,6 +65,7 @@ python app.py fs ls data:/
 | `size` | Exact bytes for one or more mapped paths; batched by source |
 | `test` | Silent `-e`, `-d`, or `-f` predicate with shell-style status |
 | `head`, `tail` | Exact leading or trailing bytes via `-c N` |
+| `tree` | Unicode recursive tree; optional `--maxdepth N` |
 | `cat` | Concatenate mapped files (and stdin `-`) to stdout |
 | `cp` | Verified same-source, cross-source, and multi-source file copy (no `-R`) |
 | `mv` | Same-source file move, single or multi-file into a directory |
@@ -84,6 +85,11 @@ not the traversal cost.
 `_find` operation; inherited implementations may still walk directories and
 read metadata internally. `find` does not provide predicates, globbing, or
 `-exec`.
+
+`tree` renders one buffered Unicode hierarchy from a backend `_walk`. It is
+recursive unless `--maxdepth N` bounds it; remote sources may perform one
+listing request for every reached directory. One top-level `_walk` invocation
+does not mean one remote request.
 
 `head -c N` and `tail -c N` make bounded `_cat_file` hook requests, but that
 does not promise a ranged physical transfer. Backend implementations may read a
