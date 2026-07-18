@@ -76,8 +76,8 @@ float (Local), a `datetime` (Memory `created`), or an ISO-8601 string
 (vosfs `mtime`, S3 `LastModified`). The adapter coerces all of these to epoch
 seconds; an unparseable or absent time yields `None`. Precedence:
 `mtime` → `LastModified`/`last_modified`; `created` is **not** substituted for
-`mtime` (labeled differently in a shell). Timezone-less `vosfs` ISO strings are
-interpreted as UTC by convention.
+`mtime` (labeled differently in a shell). Timezone-less ISO strings and naive
+`datetime` values are interpreted as UTC by convention, independent of backend.
 
 ### 2.2 Adaptive columns
 

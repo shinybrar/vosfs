@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
 
 import pytest
@@ -55,8 +55,18 @@ def test_to_listing_normalizes_a_local_rich_row_and_backend_extra() -> None:
             datetime(2026, 7, 17, 18, tzinfo=timezone.utc),
             1_784_311_200.0,
         ),
+        (
+            "LastModified",
+            datetime(
+                2026,
+                7,
+                17,
+                20,
+                tzinfo=timezone(timedelta(hours=2)),
+            ),
+            1_784_311_200.0,
+        ),
         ("last_modified", "2026-07-17T18:00:00Z", 1_784_311_200.0),
-        ("mtime", "2024-01-02T03:04:05.000", 1_704_164_645.0),
     ],
 )
 def test_to_listing_normalizes_epoch_datetime_and_iso_times(
@@ -67,6 +77,18 @@ def test_to_listing_normalizes_epoch_datetime_and_iso_times(
     row = to_listing({"name": "/x", "type": "file", field: value})
 
     assert row.mtime == expected
+
+
+def test_to_listing_interprets_equivalent_naive_times_as_utc() -> None:
+    naive_datetime = datetime(2024, 1, 2, 3, 4, 5)  # noqa: DTZ001
+    naive_iso = "2024-01-02T03:04:05.000"
+
+    normalized = [
+        to_listing({"name": "/x", "type": "file", "mtime": value}).mtime
+        for value in (naive_datetime, naive_iso)
+    ]
+
+    assert normalized == [1_704_164_645.0, 1_704_164_645.0]
 
 
 def test_to_listing_uses_presence_based_time_precedence() -> None:

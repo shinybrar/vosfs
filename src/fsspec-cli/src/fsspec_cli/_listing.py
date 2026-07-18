@@ -96,7 +96,7 @@ def _supported_time(normalized: float) -> float | None:
 
 def _datetime_time(value: datetime) -> float | None:
     if value.tzinfo is None or value.utcoffset() is None:
-        return None
+        value = value.replace(tzinfo=timezone.utc)
     try:
         return _supported_time(value.timestamp())
     except (OverflowError, OSError, ValueError):
@@ -126,9 +126,6 @@ def _normalize_time(value: object) -> float | None:
         parsed = datetime.fromisoformat(spelling)
     except ValueError:
         return None
-    if parsed.tzinfo is None:
-        # VOSpace mtime strings omit an offset; the profile defines them as UTC.
-        parsed = parsed.replace(tzinfo=timezone.utc)
     return _datetime_time(parsed)
 
 
