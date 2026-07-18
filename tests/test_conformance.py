@@ -104,10 +104,7 @@ def test_get_paired_list_materializes_containers(
     local_empty = tmp_path / "empty"
     local_file = tmp_path / "file.bin"
     try:
-        fs.get(
-            ["/empty", "/file.bin"],
-            [str(local_empty), str(local_file)],
-        )
+        fs.get(["/empty", "/file.bin"], [str(local_empty), str(local_file)])
         assert local_empty.is_dir()
         assert list(local_empty.iterdir()) == []
         assert local_file.read_bytes() == b"paired"

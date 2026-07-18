@@ -519,10 +519,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         if kwargs.pop(_GET_CONTAINER_MARKER, False):
             info = await self._info(rpath)
             if info["type"] == "directory":
-                Path(lpath).mkdir(  # noqa: ASYNC240 - inherited local coordinator
-                    parents=True,
-                    exist_ok=True,
-                )
+                Path(lpath).mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
                 return
         callback: Callback = kwargs.get("callback", DEFAULT_CALLBACK)
         response = await self._open_read_stream(rpath)
