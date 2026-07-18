@@ -22,7 +22,7 @@ from ._cp import (
     _stage_remote,
     _validate_mapped_operand,
 )
-from ._ls import _render_diagnostic_value
+from ._diagnostics import _render_diagnostic_value
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:

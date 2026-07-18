@@ -13,10 +13,10 @@ import typer
 from ._command import (
     _binary_stdout,
     _MappedOperand,
+    _render_output_failure,
     _usage_error,
 )
 from ._diagnostics import _render_diagnostic_value
-from ._ls import _render_output_failure
 from ._rmdir import _remove_empty_directory, _RmdirFailure
 from ._rmdir import _render_failure as _render_rmdir_failure
 from ._sources import _SourceInvocation

@@ -17,9 +17,8 @@ from typing import TYPE_CHECKING, Literal
 
 import typer
 
-from ._command import _MappedOperand, _usage_error
+from ._command import _MappedOperand, _render_backend_failure, _usage_error
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
-from ._ls import _render_backend_failure
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:

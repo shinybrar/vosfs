@@ -23,10 +23,11 @@ from ._command import (
     _binary_stdout,
     _MappedOperand,
     _RawCommand,
+    _render_backend_failure,
+    _render_output_failure,
     _usage_error,
 )
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
-from ._ls import _render_backend_failure, _render_output_failure
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:

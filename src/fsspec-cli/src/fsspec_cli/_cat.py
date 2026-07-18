@@ -16,15 +16,13 @@ import typer
 from ._command import (
     _binary_stdout,
     _BinaryWriter,
+    _Failure,
     _MappedOperand,
+    _render_failure,
+    _render_output_failure,
     _usage_error,
 )
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
-from ._ls import (
-    _Failure,
-    _render_failure,
-    _render_output_failure,
-)
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:

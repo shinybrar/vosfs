@@ -10,8 +10,14 @@ from typing import TYPE_CHECKING
 
 import typer
 
-from ._command import _MappedOperand, _usage_error
-from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
+from ._command import (
+    _Failure,
+    _MappedOperand,
+    _render_failure,
+    _render_output_failure,
+    _usage_error,
+)
+from ._diagnostics import _render_diagnostic_value
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
@@ -26,12 +32,6 @@ if TYPE_CHECKING:
 class _LsRequest:
     include_almost_all: bool
     operands: tuple[_MappedOperand, ...]
-
-
-@dataclass(frozen=True)
-class _Failure:
-    operand: _MappedOperand
-    backend_error: Exception | None = None
 
 
 @dataclass(frozen=True)
@@ -276,51 +276,3 @@ def _directory_lines(
     else:
         selected = (name for name in basenames if not name.startswith("."))
     return tuple(sorted(selected, key=lambda name: (locale.strxfrm(name), name)))
-
-
-def _render_operand_diagnostic(
-    command: str,
-    operand: _MappedOperand,
-    category: str,
-) -> None:
-    prefix = _render_diagnostic_prefix(command)
-    rendered_operand = _render_diagnostic_value(operand.spelling)
-    typer.echo(f"{prefix} {rendered_operand}: {category}", err=True, color=True)
-
-
-def _render_failure(command: str, failure: _Failure) -> None:
-    if failure.backend_error is None:
-        _render_operand_diagnostic(command, failure.operand, "incompatible result")
-    else:
-        _render_backend_failure(command, failure.operand, failure.backend_error)
-
-
-def _render_backend_failure(
-    command: str,
-    operand: _MappedOperand,
-    error: Exception,
-) -> None:
-    if isinstance(error, FileNotFoundError):
-        category = "not found"
-    elif isinstance(error, PermissionError):
-        category = "permission denied"
-    elif isinstance(error, NotADirectoryError):
-        category = "not a directory"
-    elif isinstance(error, NotImplementedError):
-        category = "unsupported operation"
-    else:
-        rendered_class = _render_diagnostic_value(type(error).__name__)
-        rendered_message = _render_diagnostic_value(str(error))
-        category = f"backend failure ({rendered_class}): {rendered_message}"
-    _render_operand_diagnostic(command, operand, category)
-
-
-def _render_output_failure(command: str, error: Exception) -> None:
-    prefix = _render_diagnostic_prefix(command)
-    rendered_class = _render_diagnostic_value(type(error).__name__)
-    rendered_message = _render_diagnostic_value(str(error))
-    typer.echo(
-        f"{prefix} output: output failure ({rendered_class}): {rendered_message}",
-        err=True,
-        color=True,
-    )
