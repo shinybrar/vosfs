@@ -8,6 +8,7 @@ from typing import NoReturn
 
 import pytest
 import typer
+from click.utils import strip_ansi
 from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App, AsyncFilesystemSource
 from typer.testing import CliRunner, Result
@@ -307,7 +308,7 @@ def test_find_maxdepth_zero_filters_the_single_backend_call_to_the_root(
 def test_find_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
     result = _invoke_find(arguments)
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
+    assert (result.exit_code, strip_ansi(result.stdout), result.stderr) == (
         0,
         _EXACT_FIND_HELP,
         "",
