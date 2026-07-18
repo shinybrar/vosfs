@@ -31,20 +31,6 @@ _INFO_FIELDS = frozenset(
     }
 )
 _MTIME_FIELDS = ("mtime", "LastModified", "last_modified")
-_MONTHS = (
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-)
 _SIZE_UNITS = ("K", "M", "G", "T", "P", "E", "Z", "Y")
 _SIZE_BASE = 1024
 _SINGLE_DECIMAL_LIMIT = 100
@@ -65,7 +51,7 @@ class ListingRow:
     owner: str | int | None
     group: str | int | None
     link_target: str | None
-    extra: Mapping[str, str]
+    extra: Mapping[str, object]
 
 
 def _basename(name: str) -> str:
@@ -117,11 +103,19 @@ def _datetime_time(value: datetime) -> float | None:
         return None
 
 
+def _numeric_time(value: float) -> float | None:
+    try:
+        normalized = float(value)
+    except OverflowError:
+        return None
+    return _supported_time(normalized)
+
+
 def _normalize_time(value: object) -> float | None:
     if type(value) is int:
-        return _supported_time(float(value))
+        return _numeric_time(value)
     if type(value) is float:
-        return _supported_time(value)
+        return _numeric_time(value)
     if isinstance(value, datetime):
         return _datetime_time(value)
     if type(value) is not str:
@@ -132,6 +126,9 @@ def _normalize_time(value: object) -> float | None:
         parsed = datetime.fromisoformat(spelling)
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        # VOSpace mtime strings omit an offset; the profile defines them as UTC.
+        parsed = parsed.replace(tzinfo=timezone.utc)
     return _datetime_time(parsed)
 
 
@@ -150,9 +147,9 @@ def _link_target(info: Mapping[str, object]) -> str | None:
     return None
 
 
-def _extra(info: Mapping[str, object]) -> Mapping[str, str]:
+def _extra(info: Mapping[str, object]) -> Mapping[str, object]:
     values = {
-        key: value if type(value) is str else str(value)
+        key: value
         for key, value in info.items()
         if type(key) is str and key not in _INFO_FIELDS
     }
@@ -197,29 +194,44 @@ def format_size(size: int | None, *, human_readable: bool = False) -> str:
     while unit_index < len(_SIZE_UNITS) - 1 and size >= unit_size * _SIZE_BASE:
         unit_index += 1
         unit_size *= _SIZE_BASE
-    tenths = (size * 10 + unit_size // 2) // unit_size
-    if tenths == _SIZE_BASE * 10 and unit_index < len(_SIZE_UNITS) - 1:
+    while True:
+        tenths = (size * 10 + unit_size // 2) // unit_size
+        if tenths < _SINGLE_DECIMAL_LIMIT:
+            whole, decimal = divmod(tenths, 10)
+            rendered = str(whole) if decimal == 0 else f"{whole}.{decimal}"
+            return f"{rendered}{_SIZE_UNITS[unit_index]}"
+
+        rounded = (size + unit_size // 2) // unit_size
+        if rounded < _SIZE_BASE or unit_index == len(_SIZE_UNITS) - 1:
+            return f"{rounded}{_SIZE_UNITS[unit_index]}"
         unit_index += 1
         unit_size *= _SIZE_BASE
-        tenths = (size * 10 + unit_size // 2) // unit_size
-    if tenths >= _SINGLE_DECIMAL_LIMIT:
-        rounded = (size + unit_size // 2) // unit_size
-        return f"{rounded}{_SIZE_UNITS[unit_index]}"
-    whole, decimal = divmod(tenths, 10)
-    rendered = str(whole) if decimal == 0 else f"{whole}.{decimal}"
-    return f"{rendered}{_SIZE_UNITS[unit_index]}"
 
 
 def _format_mtime(value: float | None) -> str:
     if value is None:
         return "-"
-    local = time.localtime(value)
-    month = _MONTHS[local.tm_mon - 1]
-    return f"{month} {local.tm_mday:2d} {local.tm_hour:02d}:{local.tm_min:02d}"
+    return time.strftime("%b %e %H:%M", time.localtime(value))
+
+
+def _mode_matches_kind(row: ListingRow) -> bool:
+    if row.mode is None:
+        return False
+    if row.kind == "file":
+        return stat.S_ISREG(row.mode)
+    if row.kind == "dir":
+        return stat.S_ISDIR(row.mode)
+    if row.kind == "link":
+        return stat.S_ISLNK(row.mode)
+    return not any(
+        predicate(row.mode) for predicate in (stat.S_ISREG, stat.S_ISDIR, stat.S_ISLNK)
+    )
 
 
 def _type_indicator(row: ListingRow) -> str:
-    return stat.filemode(row.mode) if row.mode is not None else row.kind
+    if row.mode is None or not _mode_matches_kind(row):
+        return row.kind
+    return stat.filemode(row.mode)
 
 
 def _display_name(row: ListingRow) -> str:
@@ -237,7 +249,7 @@ def render_listing(
     if not rows:
         return ""
 
-    values: list[tuple[bool, list[str]]] = [
+    rendered_columns: list[tuple[bool, list[str]]] = [
         (False, [_type_indicator(row) for row in rows])
     ]
     optional_columns = (
@@ -253,7 +265,7 @@ def render_listing(
     )
     for right_aligned, field, render in optional_columns:
         if any(getattr(row, field) is not None for row in rows):
-            values.append(
+            rendered_columns.append(
                 (
                     right_aligned,
                     [
@@ -262,15 +274,15 @@ def render_listing(
                     ],
                 )
             )
-    values.append((False, [_display_name(row) for row in rows]))
+    rendered_columns.append((False, [_display_name(row) for row in rows]))
 
-    widths = [max(len(cell) for cell in column) for _, column in values]
+    widths = [max(len(cell) for cell in column) for _, column in rendered_columns]
     lines = []
     for index in range(len(rows)):
         cells = []
-        for column_index, (right_aligned, column) in enumerate(values):
+        for column_index, (right_aligned, column) in enumerate(rendered_columns):
             cell = column[index]
-            if column_index == len(values) - 1:
+            if column_index == len(rendered_columns) - 1:
                 cells.append(cell)
             elif right_aligned:
                 cells.append(cell.rjust(widths[column_index]))

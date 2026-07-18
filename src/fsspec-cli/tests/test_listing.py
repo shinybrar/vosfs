@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from datetime import datetime, timezone
 from types import MappingProxyType
 
@@ -11,6 +10,7 @@ from fsspec_cli._listing import ListingRow, format_size, render_listing, to_list
 
 
 def test_to_listing_normalizes_a_local_rich_row_and_backend_extra() -> None:
+    properties = {"ivo://ivoa.net/vospace/core#description": "science product"}
     info = MappingProxyType(
         {
             "name": "/docs/report.txt",
@@ -23,6 +23,7 @@ def test_to_listing_normalizes_a_local_rich_row_and_backend_extra() -> None:
             "gid": 20,
             "ETag": "abc123",
             "version": 7,
+            "properties": properties,
         }
     )
 
@@ -38,8 +39,11 @@ def test_to_listing_normalizes_a_local_rich_row_and_backend_extra() -> None:
         owner=1000,
         group=20,
         link_target=None,
-        extra={"ETag": "abc123", "version": "7"},
+        extra={"ETag": "abc123", "version": 7, "properties": properties},
     )
+    assert row.extra["properties"] is properties
+    with pytest.raises(TypeError):
+        row.extra["new"] = "value"
 
 
 @pytest.mark.parametrize(
@@ -52,6 +56,7 @@ def test_to_listing_normalizes_a_local_rich_row_and_backend_extra() -> None:
             1_784_311_200.0,
         ),
         ("last_modified", "2026-07-17T18:00:00Z", 1_784_311_200.0),
+        ("mtime", "2024-01-02T03:04:05.000", 1_704_164_645.0),
     ],
 )
 def test_to_listing_normalizes_epoch_datetime_and_iso_times(
@@ -84,7 +89,14 @@ def test_to_listing_never_substitutes_created_for_mtime() -> None:
     row = to_listing({"name": "/x", "type": "file", "created": created})
 
     assert row.mtime is None
-    assert row.extra == {"created": str(created)}
+    assert row.extra == {"created": created}
+    assert row.extra["created"] is created
+
+
+def test_to_listing_degrades_a_huge_integer_epoch_to_unknown() -> None:
+    row = to_listing({"name": "/x", "type": "file", "mtime": 10**1000})
+
+    assert row.mtime is None
 
 
 def test_to_listing_keeps_absent_or_invalid_optional_fields_unknown() -> None:
@@ -160,6 +172,8 @@ def test_to_listing_requires_a_reported_string_name() -> None:
         (69 * 1024 // 2, "35K"),
         (6 * 1024**2 // 5, "1.2M"),
         (1024**2 - 1, "1M"),
+        (1024**2 - 512, "1M"),
+        (1024**3 - 512 * 1024, "1G"),
     ],
 )
 def test_format_size_uses_1024_base(size: int, rendered: str) -> None:
@@ -186,7 +200,7 @@ def test_render_listing_uses_union_columns_and_neutral_per_row_gaps(
 ) -> None:
     monkeypatch.setattr(
         "fsspec_cli._listing.time.localtime",
-        lambda _value: time_tuple(2026, 7, 17, 22, 6),
+        lambda _value: datetime(2026, 7, 17, 22, 6, tzinfo=timezone.utc).timetuple(),
     )
     rows = [
         to_listing(
@@ -216,15 +230,29 @@ def test_render_listing_uses_union_columns_and_neutral_per_row_gaps(
     )
 
 
+@pytest.mark.parametrize(
+    ("mode", "indicator"),
+    [
+        (0o100777, "link"),
+        (0o120777, "lrwxrwxrwx"),
+    ],
+)
+def test_render_listing_uses_kind_when_link_and_mode_type_disagree(
+    mode: int,
+    indicator: str,
+) -> None:
+    row = to_listing(
+        {
+            "name": "/shortcut",
+            "type": "file",
+            "islink": True,
+            "mode": mode,
+            "target": "/target",
+        }
+    )
+
+    assert render_listing([row]) == f"{indicator}  shortcut -> /target\n"
+
+
 def test_render_listing_empty_rows_is_empty() -> None:
     assert render_listing([]) == ""
-
-
-def time_tuple(
-    year: int,
-    month: int,
-    day: int,
-    hour: int,
-    minute: int,
-) -> time.struct_time:
-    return time.struct_time((year, month, day, hour, minute, 0, 0, 0, 0))

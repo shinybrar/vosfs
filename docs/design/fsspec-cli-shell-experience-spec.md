@@ -53,7 +53,7 @@ class ListingRow:
     owner: str | int | None   # uid or resolved name
     group: str | int | None
     link_target: str | None
-    extra: Mapping[str, str]  # backend-specific keys, verbatim (for `info`)
+    extra: Mapping[str, object]  # backend-specific values, verbatim (for `info`)
 ```
 
 ### 2.1 Field mapping (grounded in the prototype)
@@ -76,7 +76,8 @@ float (Local), a `datetime` (Memory `created`), or an ISO-8601 string
 (vosfs `mtime`, S3 `LastModified`). The adapter coerces all of these to epoch
 seconds; an unparseable or absent time yields `None`. Precedence:
 `mtime` → `LastModified`/`last_modified`; `created` is **not** substituted for
-`mtime` (labeled differently in a shell).
+`mtime` (labeled differently in a shell). Timezone-less `vosfs` ISO strings are
+interpreted as UTC by convention.
 
 ### 2.2 Adaptive columns
 
