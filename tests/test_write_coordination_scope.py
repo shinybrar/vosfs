@@ -134,12 +134,10 @@ async def test_scope_owner_and_descendants_share_state_without_owner_deadlock() 
         owner_state = _write_coordination.current(owner)
         assert owner_state is not None
         owner_task = asyncio.current_task()
-        operation = _write_coordination._CURRENT.get()
         assert owner_task is not None
-        assert operation is not None
-        owner_was_registered = owner_task in operation.tasks
+        owner_was_registered = owner_task in owner_state.tasks
         # Keep the failing implementation from deadlocking its own test cleanup.
-        operation.tasks.discard(owner_task)
+        owner_state.tasks.discard(owner_task)
         descendant_task = asyncio.create_task(descendant())
         await descendant_joined.wait()
 

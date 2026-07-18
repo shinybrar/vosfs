@@ -88,18 +88,11 @@ async def _finish_uninterruptibly(
 
 async def _drain(state: _WriteParentState) -> None:
     """Cancel and await every joined descendant, including late joiners."""
-    cleanup_task = asyncio.current_task()
     observed = -1
     while observed != len(state.tasks):
         observed = len(state.tasks)
         await asyncio.sleep(0)
-        pending = [
-            task
-            for task in state.tasks
-            if task is not cleanup_task
-            and task is not state.owner_task
-            and not task.done()
-        ]
+        pending = [task for task in state.tasks if not task.done()]
         for task in pending:
             task.cancel()
         if pending:
