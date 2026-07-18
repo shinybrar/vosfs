@@ -324,6 +324,14 @@ def _node_type_of(element: ET.Element) -> str:
     ``vos:ContainerNode``; the kind is taken from the local name after the
     final colon.
 
+    The QName prefix is trusted rather than namespace-resolved: stdlib
+    :mod:`xml.etree.ElementTree` discards the prefix-to-namespace bindings after
+    parsing and does not resolve prefixes inside attribute *values*, so a
+    hypothetical ``other:ContainerNode`` bound to a non-VOSpace namespace would
+    classify by its local name. This leniency is acceptable for the trusted
+    OpenCADC profile, which only ever emits the ``vos:`` prefix bound to
+    :data:`VOSPACE_NS`; resolving it would require a non-stdlib parser.
+
     Args:
         element: A VOSpace ``node`` element.
 
