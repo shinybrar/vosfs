@@ -84,7 +84,28 @@ def test_open_w_text(router: respx.Router) -> None:
     fs = make_fs(router)
     with fs.open("/t.txt", "w", encoding="utf-8") as handle:
         handle.write("héllo")
-    assert files["/t.txt"] == "héllo".encode()
+    put_bodies = [
+        call.request.content for call in router.calls if call.request.method == "PUT"
+    ]
+    assert put_bodies == ["héllo".encode()]
+    fs.close()
+
+
+def test_open_w_text_no_upload_on_error(router: respx.Router) -> None:
+    files: dict[str, bytes] = {}
+    mock_transfers(router, files)
+    fs = make_fs(router)
+
+    def write_then_fail() -> None:
+        with fs.open("/never.txt", "w", encoding="utf-8") as handle:
+            handle.write("partial")
+            msg = "boom"
+            raise RuntimeError(msg)
+
+    with pytest.raises(RuntimeError):
+        write_then_fail()
+    put_calls = [c for c in router.calls if c.request.method == "PUT"]
+    assert put_calls == []
     fs.close()
 
 

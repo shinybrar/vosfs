@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
     from types import TracebackType
+    from typing import Any
 
 
 def new_temp_path() -> str:
@@ -71,6 +72,7 @@ class StagedWriteFile(io.BufferedRandom):
         super().__init__(io.FileIO(self._path, "r+"))
         self._on_commit = on_commit
         self._done = False
+        self._aborted = False
 
     def close(self) -> None:
         """Commit the buffer with one upload, then remove the temporary file.
@@ -84,10 +86,15 @@ class StagedWriteFile(io.BufferedRandom):
         self._done = True
         try:
             super().close()
-            self._on_commit(self._path)
+            if not self._aborted:
+                self._on_commit(self._path)
         finally:
             with contextlib.suppress(OSError):
                 Path(self._path).unlink()
+
+    def abort(self) -> None:
+        """Prevent a later close from uploading the staged buffer."""
+        self._aborted = True
 
     def discard(self) -> None:
         """Discard the buffer without uploading (used on a failed write)."""
@@ -115,3 +122,31 @@ class StagedWriteFile(io.BufferedRandom):
         if not self._done:
             with contextlib.suppress(Exception):
                 self.discard()
+
+
+class StagedTextWriteFile(io.TextIOWrapper):
+    """Text wrapper that marks its staged buffer aborted on a failed block."""
+
+    def __init__(
+        self,
+        buffer: Any,  # noqa: ANN401 - fsspec compression wrappers are file-like
+        on_abort: Callable[[], None],
+        *,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> None:
+        """Wrap ``buffer`` and retain its abort callback for failed exits."""
+        self._on_abort = on_abort
+        super().__init__(buffer, encoding=encoding, errors=errors, newline=newline)
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Close normally, but suppress the staged upload when the block raised."""
+        if exc_type is not None:
+            self._on_abort()
+        super().__exit__(exc_type, exc_val, exc_tb)
