@@ -180,11 +180,10 @@ class _ProbedSource(Generic[_FilesystemT]):
                 )
             )
             try:
-                result = await original_du(path, total=total, **kwargs)
+                return await original_du(path, total=total, **kwargs)
             except Exception as error:
                 self.errors.append((source_id, "du", error))
                 raise
-            return result
 
         return du
 
