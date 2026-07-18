@@ -46,8 +46,8 @@ regular-file or non-link identity.
 
 ## 2. Mapped filesystem operands
 
-Operand grammar matches the plain-`ls` profile. Exactly two operands are
-required. Configured source names, not Python object identity or protocol
+Operand grammar matches the plain-`ls` profile. Exactly two operands select
+this profile. Configured source names, not Python object identity or protocol
 strings, define same-source behavior.
 
 ### 2.1 Option and operand preflight
@@ -56,7 +56,7 @@ Before any source factory call, context entry, backend call, temporary
 creation, or stdout byte, the command MUST validate:
 
 1. option syntax;
-2. the presence of exactly two operands;
+2. the presence of at least two operands;
 3. every operand's grammar;
 4. every mapped filesystem name.
 
@@ -66,10 +66,13 @@ explicitly exempt. Every other command option is unsupported.
 | Condition | Diagnostic |
 | --- | --- |
 | Fewer than two operands | `cp: missing mapped filesystem operand` |
-| More than two operands | `cp: extra operand` |
 | Unsupported option token | `cp: <option token>: unsupported option` |
 | Malformed operand | `cp: <operand>: invalid mapped filesystem operand` |
 | Unknown mapped name | `cp: <operand>: unknown filesystem (known: <name>, ...)` |
+
+Three or more operands are not a usage error; they select the
+[verified multi-source `cp` profile](fsspec-cli-multi-source-cp-command-profile.md),
+which requires an existing destination directory.
 
 `cp -R` is source-free unsupported under the locked
 [recursive-copy rejection profile](fsspec-cli-recursive-cp-rejection-profile.md).

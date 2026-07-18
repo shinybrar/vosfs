@@ -192,11 +192,11 @@ truthful.
 
 Every diagnostic is terminated by one newline. For diagnostics only, each
 inserted option token, operand, exception class, and exception message is
-rendered by replacing, in order, `\\` with `\\\\`, NUL with `\\0`, carriage
-return with `\\r`, and newline with `\\n`; every other character is unchanged.
-Literal command text and stable categories (`incompatible result`,
-`unsupported option`, …) are not transformed. This is the only diagnostic
-escaping algorithm. No traceback is written.
+rendered by first replacing `\` with `\\`, then escaping every control character
+(any code point below U+0020, or U+007F DELETE) as a lowercase `\xNN` hex
+sequence; every other character is unchanged. Literal command text and stable
+categories (`incompatible result`, `unsupported option`, …) are not transformed.
+This is the only diagnostic escaping algorithm. No traceback is written.
 
 Successful invocations that render every operand exit `0`. Partial success exits
 `1`. No stdout on pure rejection paths.
@@ -258,8 +258,12 @@ Issue #146 ships equivalent wording with the production command.
 
 ```text
 Usage: stat [--] name:/path...
-Reduced BSD/macOS-shaped file status over fsspec _info (not POSIX).
+Display file status
 ```
+
+The one-line help is intentionally short; the reduced, non-POSIX BSD/macOS
+metadata shape and its boundaries are specified by this profile, not by the
+`--help` summary.
 
 **Changelog draft (Release Please / conventional commit body, not a hand edit):**
 

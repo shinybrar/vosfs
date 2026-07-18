@@ -101,10 +101,11 @@ operand. The command MUST NOT quote, escape, or color the result.
 ## 5. Diagnostic rendering and exit status
 
 Every diagnostic is terminated by one newline. For diagnostics only, each
-inserted option token or operand is rendered by replacing, in order, `\` with
-`\\`, NUL with `\0`, carriage return with `\r`, and newline with `\n`; every
-other character is unchanged. Literal command text and stable categories are
-not transformed. This is the only diagnostic escaping algorithm.
+inserted option token or operand is rendered by first replacing `\` with `\\`,
+then escaping every control character (any code point below U+0020, or U+007F
+DELETE) as a lowercase `\xNN` hex sequence; every other character is unchanged.
+Literal command text and stable categories are not transformed. This is the
+only diagnostic escaping algorithm.
 
 | Status | Meaning |
 | ---: | --- |
