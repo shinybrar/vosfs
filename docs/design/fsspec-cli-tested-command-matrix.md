@@ -218,6 +218,12 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Recursive `find`](fsspec-cli-find-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | — |
 | [Recursive `find`](fsspec-cli-find-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | — |
 | [Recursive `find`](fsspec-cli-find-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | — |
+| [Exact `size`](fsspec-cli-size-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | — |
+| [Exact `size`](fsspec-cli-size-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | — |
+| [Exact `size`](fsspec-cli-size-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | — |
+| [`test` predicate](fsspec-cli-test-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | — |
+| [`test` predicate](fsspec-cli-test-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | — |
+| [`test` predicate](fsspec-cli-test-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | — |
 | [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
 | [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
 | [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
