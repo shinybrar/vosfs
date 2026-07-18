@@ -99,6 +99,17 @@ fs.get("/project/data.csv", "local.csv")
 fs.put("local.csv", "/project/copy.csv")
 ```
 
+Download a complete remote tree with the same public method:
+
+```python
+fs.get("/project/results", "local-results", recursive=True)
+```
+
+Recursive `get` is client-derived. `vosfs` traverses the remote
+`ContainerNode` tree client-side, materializes every container as a local
+directory (including empty containers), and downloads each `DataNode` through
+the normal whole-object read path.
+
 `open("rb")` downloads once into a disk-backed temporary file and then provides
 local `read`/`readinto`/`readline`/iteration/`tell`/`seek`. `open("wb")` and
 `open("w")` disk-stage writes and upload once only after a successful close or
