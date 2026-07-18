@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, BinaryIO
 import typer
 
 from ._command import (
+    _BROKEN_PIPE_EXIT_CODE,
     _binary_stdout,
     _BinaryWriter,
     _Failure,
@@ -21,6 +22,7 @@ from ._command import (
     _render_failure,
     _render_output_failure,
     _usage_error,
+    _write_binary,
 )
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._sources import _SourceInvocation
@@ -33,9 +35,6 @@ if TYPE_CHECKING:
     from ._app import AsyncFilesystemSource
 
 _OUTPUT_CHUNK = 1 << 16
-# 128 + SIGPIPE (13): lets pipeline consumers tell "reader went away" from a
-# real error when the sole failure is a broken pipe on stdout.
-_BROKEN_PIPE_EXIT_CODE = 141
 
 
 @dataclass(frozen=True)
@@ -90,13 +89,6 @@ def _binary_stdin() -> BinaryIO:
         message = "stdin has no binary buffer"
         raise OSError(message)
     return buffer
-
-
-def _write_stdout(stdout: _BinaryWriter, chunk: bytes) -> None:
-    written = stdout.write(chunk)
-    if written != len(chunk):
-        message = "short write"
-        raise OSError(message)
 
 
 def _render_staging_failure(
@@ -288,7 +280,7 @@ def _emit_handle(handle: BinaryIO, *, read_is_output: bool) -> _ForwardResult:
             except Exception as error:  # noqa: BLE001 - stdout boundary.
                 return _ForwardResult(output_error=error, wrote_output=emitted)
         try:
-            _write_stdout(stdout, chunk)
+            _write_binary(stdout, chunk)
         except Exception as error:  # noqa: BLE001 - stdout boundary.
             return _ForwardResult(output_error=error, wrote_output=emitted)
         emitted = True

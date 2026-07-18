@@ -114,8 +114,8 @@ the normalization layer where metadata is involved. Backend-*specific* commands
 | `ls -l` / `-lh`, `ll` | `ls -l`, `ls -lh`, `ll` | `_ls(detail=True)` | Long listing via §2; adaptive columns; 1 call per dir. `ll` is a convenience alias for `ls -l` (`ll -h` for human). Core bare `ls` (names only) is unchanged. |
 | `du` / `-s` / `-h` | `du`, `du -sh` | `_du` | Exact bytes; `-s` total only; `-h` human. |
 | `find` | `find` (no `-exec`) | `_find` | Recursive file list; `--maxdepth`, `--type f/d`. |
-| `head -c N` | `head -c` | `_cat_file(0, N)` | Ranged read; `-n` lines = read+split (bytes fetched). |
-| `tail -c N` | `tail -c` | `_info` + `_cat_file(size-N)` | 2 calls; no whole-object transfer. |
+| `head -c N` | `head -c` | `_cat_file(0, N)` | One bounded CLI hook request. Physical transfer efficiency is backend-dependent; `-n` lines may follow later. |
+| `tail -c N` | `tail -c` | `_info` + `_cat_file(size-N)` | Two CLI hook requests; the read request is bounded. The CLI never asks for an unbounded read; physical transfer efficiency is backend-dependent. |
 | `size` | `wc -c`, `stat -c%s` | `_size` / `_sizes` | Exact size; batched for many operands. |
 | `test` | `test -e/-d/-f` | `_exists`/`_isdir`/`_isfile` | Exit-code predicate; no stdout. |
 | `tree` | `tree` | `_walk` (reimplement) | Depth-limited; fsspec `tree()` is a sync string, so render from `_walk`. |
