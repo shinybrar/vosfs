@@ -6,19 +6,17 @@ import locale
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING
 
 import typer
-from typer.core import TyperCommand
 
-from ._diagnostics import _render_diagnostic_value
-from ._ls import (
-    _RAW_ARGUMENTS,
+from ._command import (
+    _binary_stdout,
     _MappedOperand,
     _render_output_failure,
-    _shield_help_values,
     _usage_error,
 )
+from ._diagnostics import _render_diagnostic_value
 from ._rmdir import _remove_empty_directory, _RmdirFailure
 from ._rmdir import _render_failure as _render_rmdir_failure
 from ._sources import _SourceInvocation
@@ -28,15 +26,8 @@ if TYPE_CHECKING:
     from collections.abc import Collection
 
     from fsspec.asyn import AsyncFileSystem
-    from typer._click import Context
 
     from ._app import AsyncFilesystemSource
-
-
-class _BinaryWriter(Protocol):
-    def write(self, data: bytes) -> int: ...
-
-    def flush(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -45,16 +36,6 @@ class _RmRequest:
     directory: bool
     verbose: bool
     operands: tuple[_MappedOperand, ...]
-
-
-class _RmCommand(TyperCommand):
-    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
-        ctx.meta[_RAW_ARGUMENTS] = tuple(args)
-        return super().parse_args(ctx, _shield_help_values(args))
-
-
-def _raw_arguments(ctx: typer.Context) -> tuple[str, ...]:
-    return cast("tuple[str, ...]", ctx.meta[_RAW_ARGUMENTS])
 
 
 def _is_rejected_path(path: str) -> bool:
@@ -146,14 +127,6 @@ def _preflight(  # noqa: C901, PLR0912 - locked option and operand diagnostics.
         verbose=verbose,
         operands=tuple(operands),
     )
-
-
-def _binary_stdout() -> _BinaryWriter:
-    buffer = getattr(sys.stdout, "buffer", None)
-    if buffer is None:
-        message = "stdout has no binary buffer"
-        raise OSError(message)
-    return buffer
 
 
 def _write_verbose_line(spelling: str) -> None:

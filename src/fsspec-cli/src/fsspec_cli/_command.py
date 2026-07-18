@@ -1,0 +1,143 @@
+"""Shared scaffolding for mapped-source command modules.
+
+Every mapped-operand command (``ls``, ``cat``, ``cp``, ``mv``, ``mkdir``,
+``rmdir``, ``rm``, ``unlink``, ``stat``, ``basename``, ``dirname``) parses its
+own raw ``argv`` and renders stable diagnostics. This module is the single home
+for the pieces they all share: raw-argument capture, the malformed-help shield,
+the mapped-operand record, usage-error reporting, and binary stdout access.
+"""
+
+from __future__ import annotations
+
+import sys
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, NoReturn, Protocol, cast
+
+import typer
+from typer.core import TyperCommand
+
+from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
+
+if TYPE_CHECKING:
+    from typer._click import Context
+
+_RAW_ARGUMENTS = "fsspec_cli.raw_arguments"
+
+
+class _RawCommand(TyperCommand):
+    """A Typer command that captures raw ``argv`` before framework parsing.
+
+    Command preflight needs the exact tokens the user supplied, so the raw
+    arguments are stashed on ``ctx.meta`` and malformed ``--help=`` tokens are
+    shielded from Click's eager help option.
+    """
+
+    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
+        ctx.meta[_RAW_ARGUMENTS] = tuple(args)
+        return super().parse_args(ctx, _shield_help_values(args))
+
+
+def _shield_help_values(arguments: list[str]) -> list[str]:
+    """Keep malformed help tokens available to command preflight."""
+    shielded = []
+    options_active = True
+    for argument in arguments:
+        if argument == "--":
+            options_active = False
+        if options_active and argument.startswith("--help="):
+            shielded.append("--fsspec-cli-unsupported-help-value")
+        else:
+            shielded.append(argument)
+    return shielded
+
+
+def _raw_arguments(ctx: typer.Context) -> tuple[str, ...]:
+    """Return the raw ``argv`` captured by :class:`_RawCommand`."""
+    return cast("tuple[str, ...]", ctx.meta[_RAW_ARGUMENTS])
+
+
+def _usage_error(command: str, diagnostic: str) -> NoReturn:
+    """Emit one stable usage diagnostic on stderr and exit ``2``."""
+    prefix = _render_diagnostic_prefix(command)
+    typer.echo(f"{prefix} {diagnostic}", err=True, color=True)
+    raise typer.Exit(2)
+
+
+@dataclass(frozen=True)
+class _MappedOperand:
+    """A parsed ``name:/path`` operand selecting one mapped source."""
+
+    spelling: str
+    name: str
+    path: str
+
+
+class _BinaryWriter(Protocol):
+    """The write/flush surface of a binary stdout stream."""
+
+    def write(self, data: bytes) -> int: ...
+
+    def flush(self) -> None: ...
+
+
+def _binary_stdout() -> _BinaryWriter:
+    """Return the process binary stdout buffer, or raise if unavailable."""
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        message = "stdout has no binary buffer"
+        raise OSError(message)
+    return buffer
+
+
+@dataclass(frozen=True)
+class _Failure:
+    operand: _MappedOperand
+    backend_error: Exception | None = None
+
+
+def _render_operand_diagnostic(
+    command: str,
+    operand: _MappedOperand,
+    category: str,
+) -> None:
+    prefix = _render_diagnostic_prefix(command)
+    rendered_operand = _render_diagnostic_value(operand.spelling)
+    typer.echo(f"{prefix} {rendered_operand}: {category}", err=True, color=True)
+
+
+def _render_failure(command: str, failure: _Failure) -> None:
+    if failure.backend_error is None:
+        _render_operand_diagnostic(command, failure.operand, "incompatible result")
+    else:
+        _render_backend_failure(command, failure.operand, failure.backend_error)
+
+
+def _render_backend_failure(
+    command: str,
+    operand: _MappedOperand,
+    error: Exception,
+) -> None:
+    if isinstance(error, FileNotFoundError):
+        category = "not found"
+    elif isinstance(error, PermissionError):
+        category = "permission denied"
+    elif isinstance(error, NotADirectoryError):
+        category = "not a directory"
+    elif isinstance(error, NotImplementedError):
+        category = "unsupported operation"
+    else:
+        rendered_class = _render_diagnostic_value(type(error).__name__)
+        rendered_message = _render_diagnostic_value(str(error))
+        category = f"backend failure ({rendered_class}): {rendered_message}"
+    _render_operand_diagnostic(command, operand, category)
+
+
+def _render_output_failure(command: str, error: Exception) -> None:
+    prefix = _render_diagnostic_prefix(command)
+    rendered_class = _render_diagnostic_value(type(error).__name__)
+    rendered_message = _render_diagnostic_value(str(error))
+    typer.echo(
+        f"{prefix} output: output failure ({rendered_class}): {rendered_message}",
+        err=True,
+        color=True,
+    )

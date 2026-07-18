@@ -6,26 +6,18 @@ import locale
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 import typer
-from typer.core import TyperCommand
 
+from ._command import _MappedOperand, _render_backend_failure, _usage_error
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
-from ._ls import (
-    _RAW_ARGUMENTS,
-    _MappedOperand,
-    _render_backend_failure,
-    _shield_help_values,
-    _usage_error,
-)
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
     from collections.abc import Collection
 
     from fsspec.asyn import AsyncFileSystem
-    from typer._click import Context
 
     from ._app import AsyncFilesystemSource
 
@@ -41,16 +33,6 @@ class _UnlinkFailure:
     backend_error: Exception | None = None
     incompatible: Literal["directory", "result"] | None = None
     uncertain: bool = False
-
-
-class _UnlinkCommand(TyperCommand):
-    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
-        ctx.meta[_RAW_ARGUMENTS] = tuple(args)
-        return super().parse_args(ctx, _shield_help_values(args))
-
-
-def _raw_arguments(ctx: typer.Context) -> tuple[str, ...]:
-    return cast("tuple[str, ...]", ctx.meta[_RAW_ARGUMENTS])
 
 
 def _is_rejected_path(path: str) -> bool:

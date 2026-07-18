@@ -15,20 +15,19 @@ import sys
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import typer
-from typer.core import TyperCommand
 
-from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
-from ._ls import (
-    _RAW_ARGUMENTS,
+from ._command import (
+    _binary_stdout,
     _MappedOperand,
+    _RawCommand,
     _render_backend_failure,
     _render_output_failure,
-    _shield_help_values,
     _usage_error,
 )
+from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
@@ -64,12 +63,6 @@ _MONTHS = (
 )
 
 
-class _BinaryWriter(Protocol):
-    def write(self, data: bytes) -> int: ...
-
-    def flush(self) -> None: ...
-
-
 @dataclass(frozen=True)
 class _StatRequest:
     operands: tuple[_MappedOperand, ...]
@@ -88,18 +81,10 @@ class _StatSuccess:
     line: bytes
 
 
-class _StatCommand(TyperCommand):
-    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
-        ctx.meta[_RAW_ARGUMENTS] = tuple(args)
-        return super().parse_args(ctx, _shield_help_values(args))
-
+class _StatCommand(_RawCommand):
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         del ctx
         formatter.write_usage("stat", "[--] name:/path...")
-
-
-def _raw_arguments(ctx: typer.Context) -> tuple[str, ...]:
-    return cast("tuple[str, ...]", ctx.meta[_RAW_ARGUMENTS])
 
 
 def _preflight(
@@ -240,14 +225,6 @@ def _render_line(operand: _MappedOperand, info: Mapping[str, object]) -> bytes:
         f'{size} "{_format_mtime(mtime)}" {operand.path}\n'
     )
     return line.encode()
-
-
-def _binary_stdout() -> _BinaryWriter:
-    buffer = getattr(sys.stdout, "buffer", None)
-    if buffer is None:
-        message = "stdout has no binary buffer"
-        raise OSError(message)
-    return buffer
 
 
 def _write_line(line: bytes) -> None:

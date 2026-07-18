@@ -6,42 +6,32 @@ import locale
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NoReturn, cast
+from typing import TYPE_CHECKING
 
 import typer
-from typer.core import TyperCommand
 
-from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
+from ._command import (
+    _Failure,
+    _MappedOperand,
+    _render_failure,
+    _render_output_failure,
+    _usage_error,
+)
+from ._diagnostics import _render_diagnostic_value
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
     from collections.abc import Collection
 
     from fsspec.asyn import AsyncFileSystem
-    from typer._click import Context
 
     from ._app import AsyncFilesystemSource
-
-_RAW_ARGUMENTS = "fsspec_cli.raw_arguments"
-
-
-@dataclass(frozen=True)
-class _MappedOperand:
-    spelling: str
-    name: str
-    path: str
 
 
 @dataclass(frozen=True)
 class _LsRequest:
     include_almost_all: bool
     operands: tuple[_MappedOperand, ...]
-
-
-@dataclass(frozen=True)
-class _Failure:
-    operand: _MappedOperand
-    backend_error: Exception | None = None
 
 
 @dataclass(frozen=True)
@@ -53,36 +43,6 @@ class _FileResult:
 class _DirectoryResult:
     operand: _MappedOperand
     children: tuple[str, ...]
-
-
-class _LsCommand(TyperCommand):
-    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
-        ctx.meta[_RAW_ARGUMENTS] = tuple(args)
-        return super().parse_args(ctx, _shield_help_values(args))
-
-
-def _shield_help_values(arguments: list[str]) -> list[str]:
-    """Keep malformed help tokens available to command preflight."""
-    shielded = []
-    options_active = True
-    for argument in arguments:
-        if argument == "--":
-            options_active = False
-        if options_active and argument.startswith("--help="):
-            shielded.append("--fsspec-cli-unsupported-help-value")
-        else:
-            shielded.append(argument)
-    return shielded
-
-
-def _raw_arguments(ctx: typer.Context) -> tuple[str, ...]:
-    return cast("tuple[str, ...]", ctx.meta[_RAW_ARGUMENTS])
-
-
-def _usage_error(command: str, diagnostic: str) -> NoReturn:
-    prefix = _render_diagnostic_prefix(command)
-    typer.echo(f"{prefix} {diagnostic}", err=True, color=True)
-    raise typer.Exit(2)
 
 
 def _preflight(
@@ -316,51 +276,3 @@ def _directory_lines(
     else:
         selected = (name for name in basenames if not name.startswith("."))
     return tuple(sorted(selected, key=lambda name: (locale.strxfrm(name), name)))
-
-
-def _render_operand_diagnostic(
-    command: str,
-    operand: _MappedOperand,
-    category: str,
-) -> None:
-    prefix = _render_diagnostic_prefix(command)
-    rendered_operand = _render_diagnostic_value(operand.spelling)
-    typer.echo(f"{prefix} {rendered_operand}: {category}", err=True, color=True)
-
-
-def _render_failure(command: str, failure: _Failure) -> None:
-    if failure.backend_error is None:
-        _render_operand_diagnostic(command, failure.operand, "incompatible result")
-    else:
-        _render_backend_failure(command, failure.operand, failure.backend_error)
-
-
-def _render_backend_failure(
-    command: str,
-    operand: _MappedOperand,
-    error: Exception,
-) -> None:
-    if isinstance(error, FileNotFoundError):
-        category = "not found"
-    elif isinstance(error, PermissionError):
-        category = "permission denied"
-    elif isinstance(error, NotADirectoryError):
-        category = "not a directory"
-    elif isinstance(error, NotImplementedError):
-        category = "unsupported operation"
-    else:
-        rendered_class = _render_diagnostic_value(type(error).__name__)
-        rendered_message = _render_diagnostic_value(str(error))
-        category = f"backend failure ({rendered_class}): {rendered_message}"
-    _render_operand_diagnostic(command, operand, category)
-
-
-def _render_output_failure(command: str, error: Exception) -> None:
-    prefix = _render_diagnostic_prefix(command)
-    rendered_class = _render_diagnostic_value(type(error).__name__)
-    rendered_message = _render_diagnostic_value(str(error))
-    typer.echo(
-        f"{prefix} output: output failure ({rendered_class}): {rendered_message}",
-        err=True,
-        color=True,
-    )
