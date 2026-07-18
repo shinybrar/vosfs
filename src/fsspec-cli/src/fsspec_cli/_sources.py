@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from contextlib import AbstractAsyncContextManager
 from types import TracebackType
 from typing import TYPE_CHECKING, TypeAlias
@@ -172,3 +173,21 @@ class _SourceInvocation:
             if render_control is not None:
                 raise render_control
         return bool(exit_failures)
+
+    async def close_with_command_error(self, command_error: Exception | None) -> bool:
+        """Close after the command, letting a captured command error take precedence.
+
+        The command error is captured, not raised, so it never flows through
+        ``__aexit__``. Fold it into the exit ``exc_info`` only when no live
+        exception is propagating, or the live one is an ordinary ``Exception``.
+        """
+        active_exc_info: _ExcInfo = sys.exc_info()
+        if command_error is not None and (
+            active_exc_info[1] is None or isinstance(active_exc_info[1], Exception)
+        ):
+            active_exc_info = (
+                type(command_error),
+                command_error,
+                command_error.__traceback__,
+            )
+        return await self.close(active_exc_info)

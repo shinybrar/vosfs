@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import locale
-import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -13,6 +11,7 @@ import typer
 from ._command import (
     _binary_stdout,
     _MappedOperand,
+    _parse_mapped_operand,
     _render_output_failure,
     _usage_error,
 )
@@ -46,7 +45,7 @@ def _is_rejected_path(path: str) -> bool:
     return final in {".", ".."}
 
 
-def _preflight(  # noqa: C901, PLR0912 - locked option and operand diagnostics.
+def _preflight(  # noqa: C901 - locked option and operand diagnostics.
     command: str,
     raw_arguments: tuple[str, ...],
     known_names: Collection[str],
@@ -84,36 +83,12 @@ def _preflight(  # noqa: C901, PLR0912 - locked option and operand diagnostics.
             rendered = _render_diagnostic_value(argument)
             _usage_error(command, f"{rendered}: unsupported option")
 
-        name, separator, path = argument.partition(":")
-        if (
-            not name
-            or not separator
-            or not path.startswith("/")
-            or "\0" in argument
-            or "\n" in argument
-        ):
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: invalid mapped filesystem operand")
-
-        if name not in known_names:
-            known = sorted(
-                known_names,
-                key=lambda candidate: (locale.strxfrm(candidate), candidate),
-            )
-            rendered_operand = _render_diagnostic_value(argument)
-            rendered_names = ", ".join(
-                _render_diagnostic_value(candidate) for candidate in known
-            )
-            _usage_error(
-                command,
-                f"{rendered_operand}: unknown filesystem (known: {rendered_names})",
-            )
-
-        if _is_rejected_path(path):
+        operand = _parse_mapped_operand(command, argument, known_names)
+        if _is_rejected_path(operand.path):
             rendered = _render_diagnostic_value(argument)
             _usage_error(command, f"{rendered}: rejected path")
 
-        operands.append(_MappedOperand(spelling=argument, name=name, path=path))
+        operands.append(operand)
         seen_operand = True
         if options_active:
             options_active = False
@@ -225,7 +200,6 @@ async def _run_rm(
                     _render_rm_failure(command, failure)
             succeeded = not failures and output_error is None
     finally:
-        active_exc_info = sys.exc_info()
         backend_error = next(
             (
                 failure.backend_error
@@ -235,14 +209,6 @@ async def _run_rm(
             None,
         )
         command_error = backend_error if backend_error is not None else output_error
-        if command_error is not None and (
-            active_exc_info[1] is None or isinstance(active_exc_info[1], Exception)
-        ):
-            active_exc_info = (
-                type(command_error),
-                command_error,
-                command_error.__traceback__,
-            )
-        cleanup_failed = await invocation.close(active_exc_info)
+        cleanup_failed = await invocation.close_with_command_error(command_error)
     if not succeeded or cleanup_failed:
         raise typer.Exit(1)
