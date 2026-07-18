@@ -11,7 +11,6 @@ from __future__ import annotations
 import locale
 import math
 import stat as stat_module
-import sys
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -305,7 +304,6 @@ async def _run_stat(
             )
             succeeded = not failures and output_error is None
     finally:
-        active_exc_info = sys.exc_info()
         backend_error = next(
             (
                 failure.backend_error
@@ -315,14 +313,6 @@ async def _run_stat(
             None,
         )
         command_error = backend_error if backend_error is not None else output_error
-        if command_error is not None and (
-            active_exc_info[1] is None or isinstance(active_exc_info[1], Exception)
-        ):
-            active_exc_info = (
-                type(command_error),
-                command_error,
-                command_error.__traceback__,
-            )
-        cleanup_failed = await invocation.close(active_exc_info)
+        cleanup_failed = await invocation.close_with_command_error(command_error)
     if not succeeded or cleanup_failed:
         raise typer.Exit(1)

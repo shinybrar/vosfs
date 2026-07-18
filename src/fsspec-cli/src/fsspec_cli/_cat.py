@@ -481,17 +481,9 @@ async def _run_cat(
             operand = ownership.temporary_operands[temporary]
             _render_staging_failure(command, operand, error)
             progress.staging_cleanup_error = error
-        active_exc_info = sys.exc_info()
-        command_error = progress.command_error()
-        if command_error is not None and (
-            active_exc_info[1] is None or isinstance(active_exc_info[1], Exception)
-        ):
-            active_exc_info = (
-                type(command_error),
-                command_error,
-                command_error.__traceback__,
-            )
-        cleanup_failed = await invocation.close(active_exc_info)
+        cleanup_failed = await invocation.close_with_command_error(
+            progress.command_error()
+        )
     if not succeeded or cleanup_failed:
         if (
             not cleanup_failed

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import inspect
-import sys
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
@@ -174,16 +173,7 @@ async def _run_mv(
                 _render_failure(command, failure)
             succeeded = failure is None
     finally:
-        active_exc_info = sys.exc_info()
-        if (
-            failure is not None
-            and failure.backend_error is not None
-            and (
-                active_exc_info[1] is None or isinstance(active_exc_info[1], Exception)
-            )
-        ):
-            error = failure.backend_error
-            active_exc_info = (type(error), error, error.__traceback__)
-        cleanup_failed = await invocation.close(active_exc_info)
+        command_error = failure.backend_error if failure is not None else None
+        cleanup_failed = await invocation.close_with_command_error(command_error)
     if not succeeded or cleanup_failed:
         raise typer.Exit(1)

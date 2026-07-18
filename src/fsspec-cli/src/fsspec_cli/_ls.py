@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import locale
-import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -132,7 +131,6 @@ async def _run_ls(
                     _render_output_failure(command, error)
             succeeded = not failures and output_error is None
     finally:
-        active_exc_info = sys.exc_info()
         backend_error = next(
             (
                 failure.backend_error
@@ -142,15 +140,7 @@ async def _run_ls(
             None,
         )
         command_error = backend_error if backend_error is not None else output_error
-        if command_error is not None and (
-            active_exc_info[1] is None or isinstance(active_exc_info[1], Exception)
-        ):
-            active_exc_info = (
-                type(command_error),
-                command_error,
-                command_error.__traceback__,
-            )
-        cleanup_failed = await invocation.close(active_exc_info)
+        cleanup_failed = await invocation.close_with_command_error(command_error)
     if not succeeded or cleanup_failed:
         raise typer.Exit(1)
 

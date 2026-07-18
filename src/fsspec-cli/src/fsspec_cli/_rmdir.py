@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import errno
 import locale
-import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -229,8 +228,7 @@ async def _run_rmdir(
                 _render_failure(command, failure)
             succeeded = not failures
     finally:
-        active_exc_info = sys.exc_info()
-        backend_error = next(
+        command_error = next(
             (
                 failure.backend_error
                 for failure in failures
@@ -238,15 +236,6 @@ async def _run_rmdir(
             ),
             None,
         )
-        command_error = backend_error
-        if command_error is not None and (
-            active_exc_info[1] is None or isinstance(active_exc_info[1], Exception)
-        ):
-            active_exc_info = (
-                type(command_error),
-                command_error,
-                command_error.__traceback__,
-            )
-        cleanup_failed = await invocation.close(active_exc_info)
+        cleanup_failed = await invocation.close_with_command_error(command_error)
     if not succeeded or cleanup_failed:
         raise typer.Exit(1)
