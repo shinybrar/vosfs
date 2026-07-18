@@ -737,8 +737,11 @@ temporary file for <code>open</code>), and writes issue one whole <code>PUT</cod
 </span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">fs</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="s2">&quot;local.csv&quot;</span><span class="p">,</span> <span class="s2">&quot;/project/copy.csv&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <p><code>open("rb")</code> downloads once into a disk-backed temporary file and then provides
-local <code>read</code>/<code>readinto</code>/<code>readline</code>/iteration/<code>tell</code>/<code>seek</code>. <code>open("wb")</code> buffers
-into a temporary file and uploads once when the file closes successfully.</p>
+local <code>read</code>/<code>readinto</code>/<code>readline</code>/iteration/<code>tell</code>/<code>seek</code>. <code>open("wb")</code> and
+<code>open("w")</code> disk-stage writes and upload once only after a successful close or
+clean context exit. A write-block exception or local close failure before <code>PUT</code>
+uploads nothing. Once <code>PUT</code> begins, failure is uncertain and may have truncated
+the destination.</p>
 <h2 id="scientific-python-stack">Scientific Python stack<a class="headerlink" href="#scientific-python-stack" title="Permanent link">&para;</a></h2>
 <p>Because <code>vosfs</code> registers the <code>vos</code> protocol, any fsspec-aware tool can read and
 write <code>vos://</code> URLs directly. Pass the endpoint (and at most one credential) as
