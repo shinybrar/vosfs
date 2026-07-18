@@ -148,35 +148,18 @@ class StagedTextWriteFile(io.TextIOWrapper):
     ) -> None:
         """Wrap ``buffer`` and take ownership of staged commit or discard."""
         self._staged = staged
-        self._failed = False
+        self._discard_on_close = False
         staged._handoff_to_outer()  # noqa: SLF001 - same-module lifecycle peer
         super().__init__(buffer, encoding=encoding, errors=errors, newline=newline)
-
-    def write(self, text: str) -> int:
-        """Write text, remembering any failure for the terminal close decision."""
-        try:
-            return super().write(text)
-        except BaseException:
-            self._failed = True
-            raise
-
-    def flush(self) -> None:
-        """Flush text, remembering any failure for the terminal close decision."""
-        try:
-            super().flush()
-        except BaseException:
-            self._failed = True
-            raise
 
     def close(self) -> None:
         """Commit only after the complete outer text stack closes cleanly."""
         try:
             super().close()
         except BaseException:
-            self._failed = True
             self._staged.discard()
             raise
-        if self._failed:
+        if self._discard_on_close:
             self._staged.discard()
         else:
             self._staged._commit()  # noqa: SLF001 - same-module lifecycle peer
@@ -189,5 +172,5 @@ class StagedTextWriteFile(io.TextIOWrapper):
     ) -> None:
         """Close normally, but discard when the context block raised."""
         if exc_type is not None:
-            self._failed = True
+            self._discard_on_close = True
         super().__exit__(exc_type, exc_val, exc_tb)

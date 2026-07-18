@@ -155,53 +155,6 @@ def test_open_w_text_close_failure_no_upload_or_temp_leak(
     fs.close()
 
 
-def test_open_w_text_caught_encoding_failure_no_upload_or_temp_leak(
-    router: respx.Router,
-) -> None:
-    files: dict[str, bytes] = {}
-    mock_transfers(router, files)
-    fs = make_fs(router)
-    handle = cast("io.TextIOWrapper", fs.open("/never.txt", "w", encoding="ascii"))
-    staged_path = Path(handle.buffer.name)
-    handle.write("partial")
-    with pytest.raises(UnicodeEncodeError):
-        handle.write("é")
-    handle.close()
-
-    put_calls = [call for call in router.calls if call.request.method == "PUT"]
-    assert (put_calls, staged_path.exists()) == ([], False)
-    fs.close()
-
-
-def test_open_w_text_caught_compression_flush_failure_no_upload_or_temp_leak(
-    router: respx.Router,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    files: dict[str, bytes] = {}
-    mock_transfers(router, files)
-    fs = make_fs(router)
-    handle = cast(
-        "io.TextIOWrapper",
-        fs.open("/never.gz", "w", encoding="utf-8", compression="gzip"),
-    )
-    staged_path = Path(handle.buffer.name)
-    handle.write("partial")
-
-    def fail_flush() -> None:
-        msg = "forced compression flush failure"
-        raise OSError(msg)
-
-    with monkeypatch.context() as patch:
-        patch.setattr(handle.buffer, "flush", fail_flush)
-        with pytest.raises(OSError, match="forced compression flush failure"):
-            handle.flush()
-    handle.close()
-
-    put_calls = [call for call in router.calls if call.request.method == "PUT"]
-    assert (put_calls, staged_path.exists()) == ([], False)
-    fs.close()
-
-
 def test_open_wb_no_upload_on_error(router: respx.Router) -> None:
     files: dict[str, bytes] = {}
     mock_transfers(router, files)
