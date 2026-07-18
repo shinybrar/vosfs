@@ -17,6 +17,8 @@ _EXACT_BASENAME_HELP = (
     "                                                                                \n"
     " Usage: root basename [OPTIONS]                                                 \n"
     "                                                                                \n"
+    " Strip directory and suffix from a path                                         \n"
+    "                                                                                \n"
     "╭─ Options ────────────────────────────────────────────────────────────────────╮\n"
     "│ --help          Show this message and exit.                                  │\n"
     "╰──────────────────────────────────────────────────────────────────────────────╯\n"
@@ -98,7 +100,7 @@ def test_basename_rejects_nul_in_the_operand() -> None:
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert result.stderr == "basename: bad\\0name: invalid operand\n"
+    assert result.stderr == "basename: bad\\x00name: invalid operand\n"
 
 
 def test_basename_rejects_a_missing_operand() -> None:
@@ -219,7 +221,7 @@ def test_basename_rejects_nul_in_the_suffix_operand() -> None:
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert result.stderr == "basename: bad\\0suffix: invalid operand\n"
+    assert result.stderr == "basename: bad\\x00suffix: invalid operand\n"
 
 
 @pytest.mark.parametrize(
@@ -280,7 +282,7 @@ def test_basename_renders_all_diagnostic_control_characters_in_order() -> None:
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert result.stderr == "basename: bad\\\\\\0\\r\\n: invalid operand\n"
+    assert result.stderr == "basename: bad\\\\\\x00\\x0d\\x0a: invalid operand\n"
 
 
 @pytest.mark.parametrize(

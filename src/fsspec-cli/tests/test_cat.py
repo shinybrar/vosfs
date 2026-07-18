@@ -215,7 +215,7 @@ def test_cat_reports_temporary_creation_failure(monkeypatch) -> None:
     assert result.exit_code == 1
     assert result.stdout_bytes == b""
     assert result.stderr == (
-        "cat: memory:/blob: staging failure (OSError): disk\\\\\\0\\r\\nfull\n"
+        "cat: memory:/blob: staging failure (OSError): disk\\\\\\x00\\x0d\\x0afull\n"
     )
     assert "secret" not in result.stderr
     assert [event[0] for event in source.events] == ["factory", "enter", "info", "exit"]
@@ -263,11 +263,15 @@ def test_cat_keeps_broken_pipe_silent_but_reports_exit_failure(
         exit_error=OSError("cleanup"),
     )
 
-    def break_stdout(chunk: bytes) -> None:
-        del chunk
-        raise broken_pipe
+    class _BrokenStdout:
+        def write(self, chunk: bytes) -> int:
+            del chunk
+            raise broken_pipe
 
-    monkeypatch.setattr("fsspec_cli._cat._write_stdout", break_stdout)
+        def flush(self) -> None:
+            return None
+
+    monkeypatch.setattr("fsspec_cli._cat._binary_stdout", _BrokenStdout)
     result = _invoke_cat(["memory:/blob"], sources={"memory": source})
 
     assert result.exit_code == 1
@@ -340,7 +344,7 @@ def test_cat_stops_acquisition_after_a_source_factory_failure() -> None:
     assert result.exit_code == 1
     assert result.stdout_bytes == b""
     assert result.stderr == (
-        "cat: broken: source factory failure (ValueError): factory\\\\\\0\\r\\n\n"
+        "cat: broken: source factory failure (ValueError): factory\\\\\\x00\\x0d\\x0a\n"
     )
     assert [event[0] for event in events] == ["factory", "enter", "exit"]
     exception_type, exception, traceback = first.exit_calls[0]
@@ -401,7 +405,7 @@ def test_cat_stops_after_source_entry_failure_without_exiting_failed_entry() -> 
     assert result.exit_code == 1
     assert result.stdout_bytes == b""
     assert result.stderr == (
-        "cat: broken: source entry failure (LookupError): entry\\\\\\0\\r\\n\n"
+        "cat: broken: source entry failure (LookupError): entry\\\\\\x00\\x0d\\x0a\n"
     )
     assert [event[0] for event in events] == [
         "factory",
@@ -661,7 +665,9 @@ def test_cat_continues_after_temporary_close_failure(monkeypatch) -> None:
     )
 
 
-def test_cat_continues_after_delayed_temporary_read_failure(monkeypatch) -> None:
+def test_cat_stops_after_delayed_temporary_read_failure_emitting_partial(
+    monkeypatch,
+) -> None:
     source = _RecordingSource(
         [],
         get_file_by_path={"/bad": b"partial-secret", "/ok": b"OK"},
@@ -699,12 +705,16 @@ def test_cat_continues_after_delayed_temporary_read_failure(monkeypatch) -> None
     )
 
     assert result.exit_code == 1
-    assert result.stdout_bytes == b"OK"
+    # Streaming forwards bytes as they are read: a staging read error after
+    # output is an output failure that stops later operands.
+    assert result.stdout_bytes == b"partial"
     assert result.stderr == (
-        "cat: memory:/bad: staging failure (OSError): late-read-denied\n"
+        "cat: output: output failure (OSError): late-read-denied\n"
     )
-    assert "partial" not in result.stdout_bytes.decode("latin1")
-    assert "secret" not in result.stderr
+    assert "secret" not in result.stdout_bytes.decode("latin1")
+    assert not any(
+        event[0] == "get_file" and event[2] == "/ok" for event in source.events
+    )
 
 
 def test_cat_stops_when_single_handle_read_fails_after_first_output(
@@ -718,24 +728,15 @@ def test_cat_stops_when_single_handle_read_fails_after_first_output(
 
     class _PostOutputFailHandle:
         def __init__(self) -> None:
-            self._phase = "validate"
             self._reads = 0
 
         def read(self, size: int = -1) -> bytes:
             del size
             self._reads += 1
-            if self._phase == "validate":
-                return b"validated" if self._reads == 1 else b""
             if self._reads == 1:
                 return b"accepted"
             message = "post-output-read-denied"
             raise OSError(message)
-
-        def seek(self, offset: int) -> int:
-            assert offset == 0
-            self._phase = "emit"
-            self._reads = 0
-            return 0
 
         def close(self) -> None:
             return None
@@ -1105,7 +1106,7 @@ def test_cat_stdin_untouched_when_later_source_factory_fails(
     assert result.stdout_bytes == b""
     assert result.stderr == (
         f"cat: {broken_name}: source factory failure (ValueError): "
-        "factory\\\\\\0\\r\\n\n"
+        "factory\\\\\\x00\\x0d\\x0a\n"
     )
     assert [event[0] for event in events] == ["factory", "enter", "exit"]
     exception_type, exception, traceback = first.exit_calls[0]
@@ -1166,7 +1167,8 @@ def test_cat_stdin_untouched_when_later_source_entry_fails(
     assert result.exit_code == 1
     assert result.stdout_bytes == b""
     assert result.stderr == (
-        f"cat: {broken_name}: source entry failure (LookupError): entry\\\\\\0\\r\\n\n"
+        f"cat: {broken_name}: source entry failure (LookupError): "
+        "entry\\\\\\x00\\x0d\\x0a\n"
     )
     assert [event[0] for event in events] == [
         "factory",

@@ -38,6 +38,8 @@ def test_app_rejects_an_empty_source_mapping() -> None:
         ("bad:name", ValueError),
         ("bad\0name", ValueError),
         ("bad\nname", ValueError),
+        ("-", ValueError),
+        ("-source", ValueError),
     ],
 )
 def test_app_rejects_invalid_source_names(name, error_type) -> None:
@@ -122,8 +124,8 @@ def test_ls_accepts_repeated_grouped_and_interspersed_uppercase_a(
         (["/bare"], "/bare"),
         ([":/path"], ":/path"),
         (["-"], "-"),
-        (["memory:/bad\0path"], "memory:/bad\\0path"),
-        (["memory:/bad\npath"], "memory:/bad\\npath"),
+        (["memory:/bad\0path"], "memory:/bad\\x00path"),
+        (["memory:/bad\npath"], "memory:/bad\\x0apath"),
         (["--", "-l"], "-l"),
         (["--", "-A"], "-A"),
         (["--", "--"], "--"),
@@ -178,7 +180,7 @@ def test_ls_escapes_each_known_name_in_an_unknown_name_diagnostic() -> None:
     assert result.exit_code == 2
     assert result.stdout == ""
     assert result.stderr == (
-        "ls: other:/docs: unknown filesystem (known: known\\\\name\\r)\n"
+        "ls: other:/docs: unknown filesystem (known: known\\\\name\\x0d)\n"
     )
 
 
@@ -269,7 +271,7 @@ def test_ls_renders_all_diagnostic_control_characters_in_order() -> None:
     assert result.exit_code == 2
     assert result.stdout == ""
     assert result.stderr == (
-        "ls: memory:/bad\\\\\\0\\r\\n: invalid mapped filesystem operand\n"
+        "ls: memory:/bad\\\\\\x00\\x0d\\x0a: invalid mapped filesystem operand\n"
     )
 
 

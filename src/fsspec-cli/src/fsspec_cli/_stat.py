@@ -1,11 +1,15 @@
-"""Raw Typer parsing and async execution for reduced BSD/macOS ``stat``."""
+"""Raw Typer parsing and async execution for reduced BSD/macOS ``stat``.
+
+Owner and group names resolve through the local ``pwd``/``grp`` account
+databases on a best-effort basis: they describe the local namespace, not the
+remote source's, and fall back to the numeric id when a name is unknown or when
+the host lacks these POSIX-only modules.
+"""
 
 from __future__ import annotations
 
-import grp
 import locale
 import math
-import pwd
 import stat as stat_module
 import sys
 import time
@@ -35,6 +39,14 @@ if TYPE_CHECKING:
     from typer._click.formatting import HelpFormatter
 
     from ._app import AsyncFilesystemSource
+
+try:
+    import grp
+    import pwd
+
+    _HAS_ACCOUNT_DB = True
+except ImportError:  # pragma: no cover - POSIX-only account databases.
+    _HAS_ACCOUNT_DB = False
 
 _MONTHS = (
     "Jan",
@@ -140,6 +152,9 @@ def _preflight(
 
 
 def _owner_name(uid: int) -> str:
+    """Resolve ``uid`` to a local ``pwd`` account name, numeric when unavailable."""
+    if not _HAS_ACCOUNT_DB:
+        return str(uid)
     try:
         return pwd.getpwuid(uid).pw_name
     except (KeyError, OverflowError, OSError):
@@ -147,6 +162,9 @@ def _owner_name(uid: int) -> str:
 
 
 def _group_name(gid: int) -> str:
+    """Resolve ``gid`` to a local ``grp`` account name, numeric when unavailable."""
+    if not _HAS_ACCOUNT_DB:
+        return str(gid)
     try:
         return grp.getgrgid(gid).gr_name
     except (KeyError, OverflowError, OSError):

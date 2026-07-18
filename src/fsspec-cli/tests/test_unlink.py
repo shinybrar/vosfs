@@ -151,8 +151,8 @@ def test_unlink_rejects_root_and_final_dot_paths_before_source_entry(
         (["memory:relative"], "memory:relative"),
         (["/bare"], "/bare"),
         ([":/path"], ":/path"),
-        (["memory:/bad\0path"], "memory:/bad\\0path"),
-        (["memory:/bad\npath"], "memory:/bad\\npath"),
+        (["memory:/bad\0path"], "memory:/bad\\x00path"),
+        (["memory:/bad\npath"], "memory:/bad\\x0apath"),
     ],
 )
 def test_unlink_rejects_malformed_mapped_filesystem_operands(

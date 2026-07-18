@@ -48,59 +48,48 @@ AsyncFilesystemSource: TypeAlias = Callable[
     [], AbstractAsyncContextManager[AbstractFileSystem]
 ]
 _BASENAME_COMMAND = "basename"
+_BASENAME_HELP = "Strip directory and suffix from a path"
 _DIRNAME_COMMAND = "dirname"
+_DIRNAME_HELP = "Strip the last component from a path"
 _LS_COMMAND = "ls"
+_LS_HELP = "List directory contents"
 _CAT_COMMAND = "cat"
+_CAT_HELP = "Concatenate files to standard output"
 _CP_COMMAND = "cp"
-_CP_HELP = (
-    "Copy one same-source and cross-source mapped file with byte verification. "
-    "Recursive (-R) copy is unsupported. "
-    "A passing result proves target resolution, replacement, bytes, diagnostics, "
-    "cleanup, and partial-state reporting only — not POSIX mode, ownership, "
-    "link identity, or timestamps."
-)
+_CP_HELP = "Copy a file (no recursion)"
 _MV_COMMAND = "mv"
-_MV_HELP = (
-    "Move one or more same-source mapped files with result verification. "
-    "Multiple sources require an existing destination directory and process in "
-    "argv order without rollback. A passing result proves target resolution, "
-    "replacement, destination bytes, source absence, diagnostics, cleanup, and "
-    "partial-state reporting only — not atomic rename, identity preservation, or "
-    "generic metadata preservation. Directory sources "
-    "are rejected before target resolution or mutation. Cross-source moves are "
-    "unsupported."
-)
+_MV_HELP = "Move or rename files"
 _MKDIR_COMMAND = "mkdir"
-_MKDIR_HELP = (
-    "Create directories with optional parent creation (-p). A passing result "
-    "claims only source-default creation semantics, not POSIX mode or umask "
-    "behavior."
-)
+_MKDIR_HELP = "Create directories"
 _RMDIR_COMMAND = "rmdir"
+_RMDIR_HELP = "Remove empty directories"
 _RM_COMMAND = "rm"
+_RM_HELP = "Remove files"
 _UNLINK_COMMAND = "unlink"
+_UNLINK_HELP = "Remove a single file"
 _STAT_COMMAND = "stat"
-_RM_HELP = (
-    "Remove source-reported files. rm -d also removes empty directories. rm -f "
-    "ignores files already missing before removal, including with zero operands. "
-    "rm -v prints each confirmed removal. Recursion and interactive permission "
-    "prompts are unavailable."
-)
-_STAT_HELP = "Reduced BSD/macOS-shaped file status over fsspec _info (not POSIX)."
-_SOURCE_FREE_CONTEXT = {
+_STAT_HELP = "Display file status"
+_COMMAND_CONTEXT = {
     "allow_extra_args": True,
     "ignore_unknown_options": True,
 }
+_SOURCE_FREE_CONTEXT = _COMMAND_CONTEXT
 
 
-def _register_source_free_command(
+def _register_source_free_command(  # noqa: PLR0913 - one argument per registration facet.
     app: typer.Typer,
     name: str,
     command_cls: type[TyperCommand],
     runner: Callable[[str, tuple[str, ...]], None],
     raw_arguments: Callable[[typer.Context], tuple[str, ...]],
+    help_text: str,
 ) -> None:
-    @app.command(name, cls=command_cls, context_settings=_SOURCE_FREE_CONTEXT)
+    @app.command(
+        name,
+        cls=command_cls,
+        help=help_text,
+        context_settings=_SOURCE_FREE_CONTEXT,
+    )
     def handler(ctx: typer.Context) -> None:
         runner(name, raw_arguments(ctx))
 
@@ -114,6 +103,9 @@ def _validate_source_name(name: object) -> None:
             "async filesystem source names must be non-empty and contain no colon, "
             "NUL, or newline"
         )
+        raise ValueError(msg)
+    if name.startswith("-"):
+        msg = "async filesystem source names must not start with '-'"
         raise ValueError(msg)
 
 
@@ -159,6 +151,7 @@ class App:
             _BasenameCommand,
             _run_basename,
             _basename_raw_arguments,
+            _BASENAME_HELP,
         )
         _register_source_free_command(
             self.typer_app,
@@ -166,15 +159,14 @@ class App:
             _DirnameCommand,
             _run_dirname,
             _dirname_raw_arguments,
+            _DIRNAME_HELP,
         )
 
         @self.typer_app.command(
             _LS_COMMAND,
             cls=_LsCommand,
-            context_settings={
-                "allow_extra_args": True,
-                "ignore_unknown_options": True,
-            },
+            help=_LS_HELP,
+            context_settings=_COMMAND_CONTEXT,
         )
         def ls(ctx: typer.Context) -> None:
             raw_arguments = _raw_arguments(ctx)
@@ -184,10 +176,8 @@ class App:
         @self.typer_app.command(
             _CAT_COMMAND,
             cls=_CatCommand,
-            context_settings={
-                "allow_extra_args": True,
-                "ignore_unknown_options": True,
-            },
+            help=_CAT_HELP,
+            context_settings=_COMMAND_CONTEXT,
         )
         def cat(ctx: typer.Context) -> None:
             raw_arguments = _raw_arguments(ctx)
@@ -198,10 +188,7 @@ class App:
             _CP_COMMAND,
             cls=_CpCommand,
             help=_CP_HELP,
-            context_settings={
-                "allow_extra_args": True,
-                "ignore_unknown_options": True,
-            },
+            context_settings=_COMMAND_CONTEXT,
         )
         def cp(ctx: typer.Context) -> None:
             raw_arguments = _cp_raw_arguments(ctx)
@@ -212,10 +199,7 @@ class App:
             _MV_COMMAND,
             cls=_MvCommand,
             help=_MV_HELP,
-            context_settings={
-                "allow_extra_args": True,
-                "ignore_unknown_options": True,
-            },
+            context_settings=_COMMAND_CONTEXT,
         )
         def mv(ctx: typer.Context) -> None:
             raw_arguments = _mv_raw_arguments(ctx)
@@ -226,10 +210,7 @@ class App:
             _MKDIR_COMMAND,
             cls=_MkdirCommand,
             help=_MKDIR_HELP,
-            context_settings={
-                "allow_extra_args": True,
-                "ignore_unknown_options": True,
-            },
+            context_settings=_COMMAND_CONTEXT,
         )
         def mkdir(ctx: typer.Context) -> None:
             raw_arguments = _raw_arguments(ctx)
@@ -239,10 +220,8 @@ class App:
         @self.typer_app.command(
             _RMDIR_COMMAND,
             cls=_RmdirCommand,
-            context_settings={
-                "allow_extra_args": True,
-                "ignore_unknown_options": True,
-            },
+            help=_RMDIR_HELP,
+            context_settings=_COMMAND_CONTEXT,
         )
         def rmdir(ctx: typer.Context) -> None:
             raw_arguments = _rmdir_raw_arguments(ctx)
@@ -253,10 +232,7 @@ class App:
             _RM_COMMAND,
             cls=_RmCommand,
             help=_RM_HELP,
-            context_settings={
-                "allow_extra_args": True,
-                "ignore_unknown_options": True,
-            },
+            context_settings=_COMMAND_CONTEXT,
         )
         def rm(ctx: typer.Context) -> None:
             raw_arguments = _rm_raw_arguments(ctx)
@@ -266,10 +242,8 @@ class App:
         @self.typer_app.command(
             _UNLINK_COMMAND,
             cls=_UnlinkCommand,
-            context_settings={
-                "allow_extra_args": True,
-                "ignore_unknown_options": True,
-            },
+            help=_UNLINK_HELP,
+            context_settings=_COMMAND_CONTEXT,
         )
         def unlink(ctx: typer.Context) -> None:
             raw_arguments = _unlink_raw_arguments(ctx)
@@ -280,10 +254,7 @@ class App:
             _STAT_COMMAND,
             cls=_StatCommand,
             help=_STAT_HELP,
-            context_settings={
-                "allow_extra_args": True,
-                "ignore_unknown_options": True,
-            },
+            context_settings=_COMMAND_CONTEXT,
         )
         def stat(ctx: typer.Context) -> None:
             raw_arguments = _stat_raw_arguments(ctx)

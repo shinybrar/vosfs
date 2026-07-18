@@ -81,9 +81,7 @@ def test_stat_help_matches_locked_usage_and_draft() -> None:
     assert result.exit_code == 0
     plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
     assert "Usage: stat [--] name:/path..." in plain_help
-    assert "Reduced BSD/macOS-shaped file status over fsspec _info (not POSIX)." in (
-        plain_help
-    )
+    assert "Display file status" in plain_help
     assert "root stat [OPTIONS]" not in plain_help
 
 
@@ -271,7 +269,7 @@ def test_stat_escapes_backend_message_control_characters() -> None:
     assert result.exit_code == 1
     assert result.stdout == ""
     assert result.stderr == (
-        "stat: memory:/stat-x: backend failure (OSError): bad\\\\\\0\\r\\npath\n"
+        "stat: memory:/stat-x: backend failure (OSError): bad\\\\\\x00\\x0d\\x0apath\n"
     )
 
 
@@ -470,7 +468,7 @@ def test_stat_preflight_diagnostic_escapes_concrete_command_label(capsys) -> Non
 
     assert caught.value.exit_code == 2
     assert capsys.readouterr().err == (
-        "future\\\\command\\0\\r\\n: bad: invalid mapped filesystem operand\n"
+        "future\\\\command\\x00\\x0d\\x0a: bad: invalid mapped filesystem operand\n"
     )
 
 

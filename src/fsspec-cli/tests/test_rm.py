@@ -599,8 +599,8 @@ def test_rm_rejects_whole_argv_destructive_guards_before_any_factory(
         (["/bare"], "/bare"),
         ([":/path"], ":/path"),
         (["-"], "-"),
-        (["memory:/bad\0path"], "memory:/bad\\0path"),
-        (["memory:/bad\npath"], "memory:/bad\\npath"),
+        (["memory:/bad\0path"], "memory:/bad\\x00path"),
+        (["memory:/bad\npath"], "memory:/bad\\x0apath"),
         (["--", "-f"], "-f"),
         (["--", "--"], "--"),
     ],
@@ -893,7 +893,7 @@ def test_rm_help_describes_directory_profile() -> None:
 
     assert result.exit_code == 0
     plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
-    assert "rm -d also removes empty directories" in " ".join(plain_help.split())
+    assert "Remove files" in " ".join(plain_help.split())
     assert result.stderr == ""
 
 
@@ -902,9 +902,7 @@ def test_rm_help_describes_force_profile() -> None:
 
     assert result.exit_code == 0
     plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
-    assert "rm -f ignores files already missing before removal" in " ".join(
-        plain_help.split()
-    )
+    assert "Remove files" in " ".join(plain_help.split())
     assert result.stderr == ""
 
 
@@ -913,7 +911,7 @@ def test_rm_help_describes_verbose_profile() -> None:
 
     assert result.exit_code == 0
     plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
-    assert "rm -v prints each confirmed removal" in " ".join(plain_help.split())
+    assert "Remove files" in " ".join(plain_help.split())
     assert result.stderr == ""
 
 
@@ -1265,8 +1263,8 @@ def test_rm_d_reports_cleanup_failure() -> None:
         (["-d", "/bare"], "/bare"),
         (["-d", ":/path"], ":/path"),
         (["-d", "-"], "-"),
-        (["-d", "memory:/bad\0path"], "memory:/bad\\0path"),
-        (["-d", "memory:/bad\npath"], "memory:/bad\\npath"),
+        (["-d", "memory:/bad\0path"], "memory:/bad\\x00path"),
+        (["-d", "memory:/bad\npath"], "memory:/bad\\x0apath"),
         (["-d", "--", "-f"], "-f"),
         (["-d", "--", "--"], "--"),
     ],

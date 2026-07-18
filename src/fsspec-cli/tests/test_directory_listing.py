@@ -257,7 +257,7 @@ def test_ls_preserves_a_collation_failure_without_a_backend_diagnostic(
         (RuntimeError, "backend failure (RuntimeError): "),
         (
             lambda: RuntimeError("backend\\\0\r\n"),
-            "backend failure (RuntimeError): backend\\\\\\0\\r\\n",
+            "backend failure (RuntimeError): backend\\\\\\x00\\x0d\\x0a",
         ),
     ],
 )

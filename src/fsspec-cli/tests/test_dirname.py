@@ -18,6 +18,8 @@ _EXACT_DIRNAME_HELP = (
     "                                                                                \n"
     " Usage: root dirname [OPTIONS]                                                  \n"
     "                                                                                \n"
+    " Strip the last component from a path                                           \n"
+    "                                                                                \n"
     "╭─ Options ────────────────────────────────────────────────────────────────────╮\n"
     "│ --help          Show this message and exit.                                  │\n"
     "╰──────────────────────────────────────────────────────────────────────────────╯\n"
@@ -104,7 +106,7 @@ def test_dirname_rejects_nul_in_the_operand() -> None:
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert result.stderr == "dirname: bad\\0name: invalid operand\n"
+    assert result.stderr == "dirname: bad\\x00name: invalid operand\n"
 
 
 def test_dirname_rejects_a_missing_operand() -> None:
@@ -223,7 +225,7 @@ def test_dirname_renders_all_diagnostic_control_characters_in_order() -> None:
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert result.stderr == "dirname: bad\\\\\\0\\r\\n: invalid operand\n"
+    assert result.stderr == "dirname: bad\\\\\\x00\\x0d\\x0a: invalid operand\n"
 
 
 @pytest.mark.parametrize(
