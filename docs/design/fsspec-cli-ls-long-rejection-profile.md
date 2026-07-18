@@ -2,7 +2,14 @@
 
 <!-- pyml disable line-length -->
 
-Status: **Locked strict rejection**
+> **Superseded** by
+> [`fsspec-cli-shell-experience-spec.md`](fsspec-cli-shell-experience-spec.md).
+> `fsspec-cli` no longer targets strict POSIX; `ls -l`/`-lh` (and the `ll` alias)
+> are now supported best-effort via the info-normalization layer — rendering
+> what a backend supplies and omitting the rest, never fabricating. This
+> document is retained as the historical rationale for the earlier rejection.
+
+Status: **Superseded (was: locked strict rejection)**
 
 Question: [Define `ls -l` profiles and incompatibility behavior](https://github.com/shinybrar/vosfs/issues/82)
 
