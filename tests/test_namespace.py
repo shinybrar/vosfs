@@ -183,6 +183,19 @@ async def test_mkdir_creates_container(router: respx.Router) -> None:
     await fs.aclose()
 
 
+async def test_delete_then_recreate_discards_stale_node_authority(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_container("/dir").with_authority("/dir", "old.example!vault")
+    fs = _fs(router, sim)
+
+    await fs._delete_node("/dir")
+    await fs._create_container("/dir")
+
+    assert (await fs._info("/dir"))["uri"] == f"vos://{AUTHORITY}/dir"
+    await fs.aclose()
+
+
 async def test_makedirs_creates_ancestors_top_down(router: respx.Router) -> None:
     sim = VOSpaceSim()
     fs = _fs(router, sim)

@@ -44,19 +44,18 @@ class VOSpaceSim:
 
     def __init__(self) -> None:
         """Start with an empty root container."""
-        self.nodes: dict[str, str] = {"/": "container"}
-        self.wire_types: dict[str, str] = {"/": "ContainerNode"}
+        self.nodes: dict[str, str] = {}
+        self.wire_types: dict[str, str] = {}
         self.authorities: dict[str, str] = {}
         self.blobs: dict[str, bytes] = {}
-        self.properties: dict[str, dict[str, str]] = {"/": {}}
+        self.properties: dict[str, dict[str, str]] = {}
         self.node_update_requests: list[httpx.Request] = []
         self.node_update_status = 200
+        self._transition_node("/", wire_type="ContainerNode")
 
     def add_container(self, path: str) -> VOSpaceSim:
         """Seed a container node and return self for chaining."""
-        self.nodes[path] = "container"
-        self.wire_types[path] = "ContainerNode"
-        self.properties.setdefault(path, {})
+        self._transition_node(path, wire_type="ContainerNode")
         return self
 
     def add_file(
@@ -67,16 +66,47 @@ class VOSpaceSim:
         wire_type: str = "DataNode",
     ) -> VOSpaceSim:
         """Seed a data node with content and return self for chaining."""
-        self.nodes[path] = "data"
-        self.wire_types[path] = wire_type
-        self.blobs[path] = content
-        self.properties.setdefault(path, {})
+        self._transition_node(
+            path,
+            wire_type=wire_type,
+            content=content,
+        )
         return self
 
     def with_authority(self, path: str, authority: str) -> VOSpaceSim:
         """Override one node URI authority and return self for chaining."""
         self.authorities[path] = authority
         return self
+
+    def _transition_node(
+        self,
+        path: str,
+        *,
+        wire_type: str | None,
+        content: bytes | None = None,
+        preserve_identity: bool = False,
+    ) -> None:
+        """Create, replace, or delete a node across every per-path state map."""
+        if wire_type is None:
+            self.nodes.pop(path, None)
+            self.wire_types.pop(path, None)
+            self.authorities.pop(path, None)
+            self.blobs.pop(path, None)
+            self.properties.pop(path, None)
+            return
+        properties = self.properties.get(path) if preserve_identity else None
+        authority = self.authorities.get(path) if preserve_identity else None
+        self.nodes[path] = "container" if content is None else "data"
+        self.wire_types[path] = wire_type
+        if authority is None:
+            self.authorities.pop(path, None)
+        else:
+            self.authorities[path] = authority
+        if content is None:
+            self.blobs.pop(path, None)
+        else:
+            self.blobs[path] = content
+        self.properties[path] = dict(properties or {})
 
     def install(self, router: respx.Router) -> None:
         """Register every simulator route on ``router``."""
@@ -99,19 +129,14 @@ class VOSpaceSim:
         if request.method == "GET":
             return self._node_get(path)
         if request.method == "PUT":
-            self.nodes[path] = "container"
-            self.wire_types[path] = "ContainerNode"
-            self.properties[path] = {}
+            self._transition_node(path, wire_type="ContainerNode")
             return httpx.Response(201)
         if request.method == "POST":
             return self._node_post(path, request)
         if request.method == "DELETE":
             if path not in self.nodes:
                 return httpx.Response(404)
-            del self.nodes[path]
-            self.wire_types.pop(path, None)
-            self.blobs.pop(path, None)
-            self.properties.pop(path, None)
+            self._transition_node(path, wire_type=None)
             return httpx.Response(200)
         return httpx.Response(405)  # pragma: no cover - unused verbs
 
@@ -198,10 +223,12 @@ class VOSpaceSim:
     def _byte_op(self, request: httpx.Request) -> httpx.Response:
         path = request.url.params["p"]
         if request.method == "PUT":
-            self.nodes[path] = "data"
-            self.wire_types[path] = "DataNode"
-            self.blobs[path] = request.content
-            self.properties.setdefault(path, {})
+            self._transition_node(
+                path,
+                wire_type="DataNode",
+                content=request.content,
+                preserve_identity=True,
+            )
             return httpx.Response(201)
         content = self.blobs.get(path)
         if content is None:
