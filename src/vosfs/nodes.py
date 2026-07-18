@@ -70,10 +70,6 @@ _INFO_TYPE_BY_NODE_TYPE = {
     "link": "other",
 }
 
-# Concrete wire types accepted by the private property-update primitive.
-_DATA_WIRE_TYPES = frozenset({"DataNode", "StructuredDataNode", "UnstructuredDataNode"})
-_UPDATE_WIRE_TYPES = _DATA_WIRE_TYPES | {"ContainerNode"}
-
 # ElementTree serializes namespaces by prefix from a process-global registry.
 # Registering the VOSpace and XML-Schema-instance prefixes keeps generated
 # documents readable and, critically, keeps the ``vos:`` prefix used inside
@@ -278,11 +274,12 @@ def build_property_update(
             represented by the private update primitive.
     """
     _validate_property_update(properties)
-    if wire_type not in _UPDATE_WIRE_TYPES:
+    node_type = _NODE_TYPE_BY_XSI_LOCAL.get(wire_type)
+    if node_type not in {"data", "container"}:
         msg = f"property updates are unsupported for node type {wire_type!r}"
-        raise ValueError(msg) from None
+        raise ValueError(msg)
     root = _new_node_element(uri, xsi_type=f"vos:{wire_type}")
-    if wire_type in _DATA_WIRE_TYPES:
+    if node_type == "data":
         # OpenCADC's NodeReader requires this schema-optional DataNode field.
         root.set("busy", "false")
     properties_element = ET.SubElement(root, _PROPERTIES_TAG)
@@ -290,7 +287,7 @@ def build_property_update(
         element = ET.SubElement(properties_element, _PROPERTY_TAG)
         element.set("uri", property_uri)
         element.text = value
-    if wire_type == "ContainerNode":
+    if node_type == "container":
         # ContainerNode's schema and OpenCADC reader require the child list.
         ET.SubElement(root, _NODES_TAG)
     return _serialize(root)

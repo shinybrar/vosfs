@@ -458,6 +458,16 @@ def test_build_property_update_allows_non_core_property_named_type() -> None:
     assert values == {property_uri: "catalog"}
 
 
+@pytest.mark.parametrize("wire_type", ["LinkNode", "MysteryNode"])
+def test_build_property_update_rejects_unsupported_node_types(wire_type: str) -> None:
+    with pytest.raises(ValueError, match="unsupported"):
+        build_property_update(
+            "vos://x/node",
+            {"ivo://example.org/props#label": "value"},
+            wire_type=wire_type,
+        )
+
+
 def test_build_property_update_rejects_case_variant_core_namespace() -> None:
     property_uri = "IVO://IVOA.NET/VOSPACE/CORE#contenttype"
     with pytest.raises(ValueError, match="administrative"):
