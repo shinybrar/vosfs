@@ -66,7 +66,7 @@ def _preflight(
         if options_active and argument == "--":
             options_active = False
             continue
-        if options_active and argument.startswith("-") and argument != "-":
+        if options_active and argument.startswith("-"):
             options = _short_options(argument)
             if options is None:
                 rendered = _render_diagnostic_value(argument)

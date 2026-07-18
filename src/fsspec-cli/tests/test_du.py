@@ -1,11 +1,11 @@
 """``du`` command tests through the public embedded-command seam."""
 
-import re
 from types import MappingProxyType
 from typing import NoReturn
 
 import pytest
 import typer
+from click.utils import strip_ansi
 
 from ._support import _invoke_du, _RecordingSource
 
@@ -92,7 +92,7 @@ def test_du_accepts_grouped_repeated_and_interspersed_options(
 def test_du_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
     result = _invoke_du(arguments)
 
-    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
+    plain_help = strip_ansi(result.stdout)
     assert result.exit_code == 0
     assert "Usage: du [-sh] [--] name:/path" in plain_help
     assert "Estimate file space usage" in plain_help
@@ -103,6 +103,7 @@ def test_du_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
     ("arguments", "diagnostic"),
     [
         ([], "du: missing mapped filesystem operand\n"),
+        (["-"], "du: -: unsupported option\n"),
         (["-x", "memory:/docs"], "du: -x: unsupported option\n"),
         (["-sx", "memory:/docs"], "du: -sx: unsupported option\n"),
         (["--summary", "memory:/docs"], "du: --summary: unsupported option\n"),
