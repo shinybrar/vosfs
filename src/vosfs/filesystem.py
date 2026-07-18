@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
-import contextvars
 import datetime
 import errno
 import hashlib
@@ -26,7 +25,16 @@ from fsspec.callbacks import DEFAULT_CALLBACK
 from fsspec.compression import compr
 from fsspec.core import get_compression
 
-from vosfs import capabilities, config, errors, negotiate, nodes, paths, staging
+from vosfs import (
+    _coordination,
+    capabilities,
+    config,
+    errors,
+    negotiate,
+    nodes,
+    paths,
+    staging,
+)
 from vosfs.transport import ClientPool, build_timeout
 
 if TYPE_CHECKING:
@@ -58,21 +66,10 @@ _GET_CONTAINER_MARKER = "_vosfs_materialize_get_container"
 class _WriteParentState:
     """Operation-scoped coordination for remote upload containers."""
 
-    def __init__(self, owner: VOSpaceFileSystem) -> None:
-        self.owner = owner
-        self.active = True
+    def __init__(self) -> None:
         self.lock = asyncio.Lock()
         self.materialized: set[str] = set()
         self.failure: Exception | None = None
-        self.tasks: set[asyncio.Task[Any]] = set()
-
-
-_WRITE_PARENT_STATE: contextvars.ContextVar[_WriteParentState | None] = (
-    contextvars.ContextVar(
-        "vosfs_write_parent_state",
-        default=None,
-    )
-)
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -710,9 +707,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's upload coordinator with one shared parent-creation scope."""
-        state = _WriteParentState(self)
-        token = _WRITE_PARENT_STATE.set(state)
-        try:
+        async with _coordination.scope(self, _WriteParentState()):
             return await super()._put(
                 lpath,
                 rpath,
@@ -722,11 +717,6 @@ class VOSpaceFileSystem(AsyncFileSystem):
                 maxdepth=maxdepth,
                 **kwargs,
             )
-        finally:
-            try:
-                await self._expire_write_state(state)
-            finally:
-                _WRITE_PARENT_STATE.reset(token)
 
     async def _pipe(
         self,
@@ -736,48 +726,13 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's pipe coordinator with one shared parent-creation scope."""
-        state = _WriteParentState(self)
-        token = _WRITE_PARENT_STATE.set(state)
-        try:
+        async with _coordination.scope(self, _WriteParentState()):
             return await super()._pipe(
                 path,
                 value=value,
                 batch_size=batch_size,
                 **kwargs,
             )
-        finally:
-            try:
-                await self._expire_write_state(state)
-            finally:
-                _WRITE_PARENT_STATE.reset(token)
-
-    async def _expire_write_state(self, state: _WriteParentState) -> None:
-        """Expire a coordinated write and quiesce every child task it spawned."""
-        state.active = False
-        current = asyncio.current_task()
-        observed = -1
-        while observed != len(state.tasks):
-            observed = len(state.tasks)
-            await asyncio.sleep(0)
-            pending = [
-                task for task in state.tasks if task is not current and not task.done()
-            ]
-            for task in pending:
-                task.cancel()
-            if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
-
-    def _coordinated_write_state(self) -> _WriteParentState | None:
-        """Return this filesystem's active write state and register its child."""
-        state = _WRITE_PARENT_STATE.get()
-        if state is None or state.owner is not self:
-            return None
-        task = asyncio.current_task()
-        if task is not None:
-            state.tasks.add(task)
-        if not state.active:
-            raise asyncio.CancelledError
-        return state
 
     async def _write(
         self,
@@ -820,7 +775,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
     ) -> None:
         """Write ``value`` to ``path`` with one whole PUT (create or overwrite)."""
         path = self._strip_protocol(path)
-        state = self._coordinated_write_state()
+        state = _coordination.current(self, _WriteParentState)
         if mode == "create" and await self._exists(path):
             msg = f"path already exists: {path}"
             raise FileExistsError(msg)
@@ -843,7 +798,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         """Stream one local file through one negotiated whole PUT."""
         callback: Callback = kwargs.get("callback", DEFAULT_CALLBACK)
         rpath = self._strip_protocol(rpath)
-        state = self._coordinated_write_state()
+        state = _coordination.current(self, _WriteParentState)
         if mode == "create" and await self._exists(rpath):
             msg = f"path already exists: {rpath}"
             raise FileExistsError(msg)
@@ -934,7 +889,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
     async def _makedirs(self, path: str, exist_ok: bool = False) -> None:  # noqa: FBT001, FBT002
         """Create ``path`` and every missing ancestor, top-down."""
         path = self._strip_protocol(path)
-        state = self._coordinated_write_state()
+        state = _coordination.current(self, _WriteParentState)
         if not exist_ok and await self._exists(path):
             msg = f"path already exists: {path}"
             raise FileExistsError(msg)

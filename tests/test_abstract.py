@@ -71,9 +71,7 @@ def _copy_glob_reason(path, recursive, maxdepth, expected) -> str | None:  # noq
     return None
 
 
-_COPY_GLOB_PARAMS = _glob_params(_copy_glob_reason)
-# Copy and get have the same remaining exclusion: #63's question-mark paths.
-_GET_GLOB_PARAMS = _COPY_GLOB_PARAMS
+_QUESTION_MARK_GLOB_PARAMS = _glob_params(_copy_glob_reason)
 
 
 class VOSpaceFixtures(AbstractFixtures):
@@ -107,7 +105,9 @@ class TestCopy(VOSpaceFixtures, AbstractCopyTests):
     # copies, are supported: ``_cp_file`` creates the destination file's parent
     # and materializes intermediate ContainerNodes, so these inherited tests run.
 
-    @pytest.mark.parametrize(GLOB_EDGE_CASES_TESTS["argnames"], _COPY_GLOB_PARAMS)
+    @pytest.mark.parametrize(
+        GLOB_EDGE_CASES_TESTS["argnames"], _QUESTION_MARK_GLOB_PARAMS
+    )
     def test_copy_glob_edge_cases(  # noqa: PLR0913 - mirrors the abstract signature
         self,
         path,
@@ -140,7 +140,9 @@ class TestGet(VOSpaceFixtures, AbstractGetTests):
     # normalizes fsspec's forwarded list of sources (see the list branch on
     # VOSpaceFileSystem._strip_protocol).
 
-    @pytest.mark.parametrize(GLOB_EDGE_CASES_TESTS["argnames"], _GET_GLOB_PARAMS)
+    @pytest.mark.parametrize(
+        GLOB_EDGE_CASES_TESTS["argnames"], _QUESTION_MARK_GLOB_PARAMS
+    )
     def test_get_glob_edge_cases(  # noqa: PLR0913 - mirrors the abstract signature
         self,
         path,
@@ -171,7 +173,9 @@ class TestGet(VOSpaceFixtures, AbstractGetTests):
 class TestPut(VOSpaceFixtures, AbstractPutTests):
     """Local-to-remote upload suite."""
 
-    @pytest.mark.parametrize(GLOB_EDGE_CASES_TESTS["argnames"], _COPY_GLOB_PARAMS)
+    @pytest.mark.parametrize(
+        GLOB_EDGE_CASES_TESTS["argnames"], _QUESTION_MARK_GLOB_PARAMS
+    )
     def test_put_glob_edge_cases(  # noqa: PLR0913 - mirrors the abstract signature
         self,
         path,

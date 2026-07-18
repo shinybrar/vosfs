@@ -17,9 +17,15 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+@pytest.mark.parametrize(
+    "repeat_cancel",
+    [False, True],
+    ids=["single-cancel", "repeated-cancel"],
+)
 @pytest.mark.parametrize("operation", ["pipe", "put"])
 async def test_cancelled_coordinator_quiesces_spawned_transfers_before_return(
     operation: str,
+    repeat_cancel: bool,
     tmp_path: Path,
 ) -> None:
     router = respx.Router(base_url=BASE_URL, assert_all_mocked=True)
@@ -70,6 +76,8 @@ async def test_cancelled_coordinator_quiesces_spawned_transfers_before_return(
     operation_task = asyncio.create_task(coordinated)
     await asyncio.wait_for(parent_request_started.wait(), timeout=1)
     operation_task.cancel()
+    if repeat_cancel:
+        asyncio.get_running_loop().call_soon(operation_task.cancel)
     with pytest.raises(asyncio.CancelledError):
         await operation_task
 
@@ -132,14 +140,9 @@ async def test_expired_coordinator_context_stops_spawned_descendant_before_io() 
     await fs._pipe("/primary/data.bin", b"primary")
     requests_when_operation_returned = len(router.calls)
     release_descendant.set()
-    try:
+    with pytest.raises(asyncio.CancelledError):
         await descendant_tasks[0]
-    except asyncio.CancelledError:
-        descendant_was_stopped = True
-    else:
-        descendant_was_stopped = False
     requests_after_descendant = len(router.calls)
     await fs.aclose()
 
-    assert descendant_was_stopped
     assert requests_after_descendant == requests_when_operation_returned
