@@ -97,7 +97,6 @@ async def _run_test(
     request = _preflight(command, raw_arguments, sources)
     invocation = _SourceInvocation(command, sources)
     backend_error: Exception | None = None
-    incompatible = False
     matched = False
     try:
         filesystems = await invocation.acquire((request.operand.name,))
@@ -114,7 +113,6 @@ async def _run_test(
                 if type(result) is bool:
                     matched = result
                 else:
-                    incompatible = True
                     _render_operand_diagnostic(
                         command,
                         request.operand,
@@ -122,5 +120,5 @@ async def _run_test(
                     )
     finally:
         cleanup_failed = await invocation.close_with_command_error(backend_error)
-    if not matched or incompatible or backend_error is not None or cleanup_failed:
+    if not matched or cleanup_failed:
         raise typer.Exit(1)

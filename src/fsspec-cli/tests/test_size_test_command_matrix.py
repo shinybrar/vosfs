@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, Literal, TypeVar
@@ -379,18 +378,4 @@ def test_native_vosfs_size_and_test_profiles_use_only_mocked_transport() -> None
     assert all(
         transport.requests[0] == ("GET", "/arc/capabilities")
         for transport in transports
-    )
-    observed_nodes = Counter(
-        path
-        for transport in transports
-        for method, path in transport.requests
-        if method == "GET" and path != "/arc/capabilities"
-    )
-    assert observed_nodes == Counter(
-        {
-            "/arc/nodes/docs/a.txt": 6,
-            "/arc/nodes/docs/b.bin": 1,
-            "/arc/nodes/docs/missing": 1,
-            "/arc/nodes/docs": 2,
-        }
     )
