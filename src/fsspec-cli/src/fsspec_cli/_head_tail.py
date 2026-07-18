@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeGuard
+from typing import TYPE_CHECKING, Protocol, TypeGuard
 
 import typer
 
@@ -24,7 +24,7 @@ from ._diagnostics import _render_diagnostic_value
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Awaitable, Collection
 
     from fsspec.asyn import AsyncFileSystem
     from typer._click import Context
@@ -32,13 +32,19 @@ if TYPE_CHECKING:
 
     from ._app import AsyncFilesystemSource
 
-_ASCII_ZERO = ord("0")
-
 
 @dataclass(frozen=True)
 class _ByteRangeRequest:
     count: int
     operand: _MappedOperand
+
+
+class _ReadOperation(Protocol):
+    def __call__(
+        self,
+        request: _ByteRangeRequest,
+        filesystem: AsyncFileSystem,
+    ) -> Awaitable[bytes | _Failure]: ...
 
 
 class _HeadCommand(_RawCommand):
@@ -57,11 +63,24 @@ def _parse_count(command: str, argument: str) -> int:
     if not argument or not argument.isascii() or not argument.isdecimal():
         rendered = _render_diagnostic_value(argument)
         _usage_error(command, f"{rendered}: invalid byte count")
-    # The grammar has no digit ceiling, unlike Python's string-to-int guard.
-    value = 0
-    for digit in argument:
-        value = (value * 10) + ord(digit) - _ASCII_ZERO
-    return value
+    try:
+        return int(argument)
+    except ValueError:
+        rendered = _render_diagnostic_value(argument)
+        _usage_error(command, f"{rendered}: invalid byte count")
+
+
+def _selector_argument(
+    command: str,
+    raw_arguments: tuple[str, ...],
+    index: int,
+) -> str:
+    if index == len(raw_arguments):
+        _usage_error(command, "-c: option requires an argument")
+    argument = raw_arguments[index]
+    if argument == "-c":
+        _usage_error(command, "exactly one byte-count selector is required")
+    return argument
 
 
 def _preflight(
@@ -83,9 +102,10 @@ def _preflight(
             if count is not None:
                 _usage_error(command, "exactly one byte-count selector is required")
             index += 1
-            if index == len(raw_arguments):
-                _usage_error(command, "-c: option requires an argument")
-            count = _parse_count(command, raw_arguments[index])
+            count = _parse_count(
+                command,
+                _selector_argument(command, raw_arguments, index),
+            )
             index += 1
             continue
         if options_active and argument.startswith("-"):
@@ -124,6 +144,18 @@ async def _read_head(
     return result
 
 
+def _size_from_info(operand: _MappedOperand, info: object) -> int | _Failure:
+    if not isinstance(info, Mapping):
+        return _Failure(operand)
+    try:
+        size = info.get("size")
+    except Exception:  # noqa: BLE001 - hostile metadata mapping boundary.
+        return _Failure(operand)
+    if not _valid_size(size):
+        return _Failure(operand)
+    return size
+
+
 async def _read_tail(
     request: _ByteRangeRequest,
     filesystem: AsyncFileSystem,
@@ -132,11 +164,9 @@ async def _read_tail(
         info = await filesystem._info(request.operand.path)  # noqa: SLF001
     except Exception as error:  # noqa: BLE001 - awaited backend boundary.
         return _Failure(request.operand, backend_error=error)
-    if not isinstance(info, Mapping):
-        return _Failure(request.operand)
-    size = info.get("size")
-    if not _valid_size(size):
-        return _Failure(request.operand)
+    size = _size_from_info(request.operand, info)
+    if isinstance(size, _Failure):
+        return size
     try:
         result = await filesystem._cat_file(  # noqa: SLF001
             request.operand.path,
@@ -162,6 +192,7 @@ async def _run_byte_range(
     command: str,
     raw_arguments: tuple[str, ...],
     sources: Mapping[str, AsyncFilesystemSource],
+    operation: _ReadOperation,
 ) -> None:
     request = _preflight(command, raw_arguments, sources)
     invocation = _SourceInvocation(command, sources)
@@ -172,10 +203,7 @@ async def _run_byte_range(
         filesystems = await invocation.acquire((request.operand.name,))
         if filesystems is not None:
             filesystem = filesystems[request.operand.name]
-            if command == "head":
-                result = await _read_head(request, filesystem)
-            else:
-                result = await _read_tail(request, filesystem)
+            result = await operation(request, filesystem)
             if isinstance(result, _Failure):
                 failure = result
                 _render_failure(command, result)
@@ -206,7 +234,7 @@ async def _run_head(
     raw_arguments: tuple[str, ...],
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    await _run_byte_range(command, raw_arguments, sources)
+    await _run_byte_range(command, raw_arguments, sources, _read_head)
 
 
 async def _run_tail(
@@ -214,4 +242,4 @@ async def _run_tail(
     raw_arguments: tuple[str, ...],
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    await _run_byte_range(command, raw_arguments, sources)
+    await _run_byte_range(command, raw_arguments, sources, _read_tail)

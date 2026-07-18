@@ -45,7 +45,6 @@ class _ProfileSource(Generic[_FilesystemT]):
     ) -> None:
         self._factory = factory
         self._close = close
-        self.lifecycle: list[str] = []
         self.calls: list[_ReadHookCall] = []
         self.filesystems: list[_FilesystemT] = []
         self.exit_calls: list[
@@ -57,7 +56,6 @@ class _ProfileSource(Generic[_FilesystemT]):
         ] = []
 
     def __call__(self) -> _ProfileContext[_FilesystemT]:
-        self.lifecycle.append("factory")
         return _ProfileContext(self)
 
 
@@ -73,7 +71,6 @@ class _ProfileContext(
         filesystem = self.source._factory()
         self.filesystem = filesystem
         self.source.filesystems.append(filesystem)
-        self.source.lifecycle.append("enter")
         self._instrument(filesystem)
         return filesystem
 
@@ -115,9 +112,7 @@ class _ProfileContext(
         assert filesystem is not None
         if self.source._close is not None:
             await self.source._close(filesystem)
-            self.source.lifecycle.append("close")
         self.source.exit_calls.append((exc_type, exc, traceback))
-        self.source.lifecycle.append("exit")
 
 
 def _exercise_profiles(
@@ -280,10 +275,6 @@ class _StrictReadTransport(httpx.MockTransport):
         await super().aclose()
 
 
-async def _close_vosfs(filesystem: VOSpaceFileSystem) -> None:
-    await filesystem.aclose()
-
-
 def test_native_vosfs_head_and_tail_profiles_observe_truthful_whole_gets() -> None:
     transports: list[_StrictReadTransport] = []
 
@@ -298,7 +289,7 @@ def test_native_vosfs_head_and_tail_profiles_observe_truthful_whole_gets() -> No
             trust_env=False,
         )
 
-    source = _ProfileSource(make_filesystem, close=_close_vosfs)
+    source = _ProfileSource(make_filesystem, close=VOSpaceFileSystem.aclose)
 
     _exercise_profiles("vos", source, "/blob.bin")
 

@@ -32,9 +32,10 @@ parsing.
 
 `N` MUST contain one or more ASCII decimal digits. It is non-negative and MAY
 contain leading zeros. Signs, suffixes, whitespace, fractions, empty values,
-and non-ASCII digits are invalid. Inline or grouped selectors, repeated
-selectors, `-n`, default counts, stdin, multiple operands, and every other
-option are unsupported.
+non-ASCII digits, and values rejected by Python's configured integer-conversion
+safety ceiling are invalid. Inline or grouped selectors, repeated selectors,
+`-n`, default counts, stdin, multiple operands, and every other option are
+unsupported.
 
 Exact `--help` remains the framework-owned help spelling. The mapped-operand
 grammar and validation order are those of the shared command toolkit. The

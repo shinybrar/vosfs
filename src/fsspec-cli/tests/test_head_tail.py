@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+from collections.abc import Iterator, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, NoReturn
@@ -10,6 +12,7 @@ import pytest
 from click.utils import strip_ansi
 from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App, AsyncFilesystemSource
+from fsspec_cli._head_tail import _run_head, _run_tail
 from typer.testing import CliRunner, Result
 
 if TYPE_CHECKING:
@@ -153,17 +156,24 @@ def test_head_requests_exact_leading_range_and_emits_binary_bytes() -> None:
     assert source.lifecycle == ["factory", "enter", "exit"]
 
 
-def test_head_accepts_an_ascii_count_beyond_the_interpreter_conversion_limit() -> None:
-    source = _ReadSource(payload=b"")
+@pytest.mark.parametrize("command", ["head", "tail"])
+def test_byte_count_rejects_the_interpreter_configured_digit_limit(
+    command: Literal["head", "tail"],
+) -> None:
+    previous_limit = sys.get_int_max_str_digits()
+    limit = sys.int_info.str_digits_check_threshold
+    oversized = "9" * (limit + 1)
+    try:
+        sys.set_int_max_str_digits(limit)
+        result = _invoke(command, ["-c", oversized, "memory:/blob"])
+    finally:
+        sys.set_int_max_str_digits(previous_limit)
 
-    result = _invoke(
-        "head",
-        ["-c", "0" * 5000, "memory:/blob"],
-        sources={"memory": source},
+    assert (result.exit_code, result.stdout_bytes, result.stderr) == (
+        2,
+        b"",
+        f"{command}: {oversized}: invalid byte count\n",
     )
-
-    assert (result.exit_code, result.stdout_bytes, result.stderr) == (0, b"", "")
-    assert source.calls == [_ReadCall("cat_file", "/blob", 0, 0)]
 
 
 @pytest.mark.parametrize(
@@ -183,6 +193,43 @@ def test_tail_reads_size_then_requests_exact_suffix_range(
     assert source.calls == [
         _ReadCall("info", "/blob"),
         _ReadCall("cat_file", "/blob", expected_start, None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runner_semantics_do_not_depend_on_the_diagnostic_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    emitted: list[bytes] = []
+
+    class _Stdout:
+        def write(self, payload: bytes) -> int:
+            emitted.append(payload)
+            return len(payload)
+
+        def flush(self) -> None:
+            return None
+
+    monkeypatch.setattr("fsspec_cli._head_tail._binary_stdout", _Stdout)
+    head_source = _ReadSource(info_result={"size": 6}, payload=b"ab")
+    tail_source = _ReadSource(info_result={"size": 6}, payload=b"ef")
+
+    await _run_head(
+        "tail",
+        ("-c", "2", "memory:/blob"),
+        {"memory": head_source},
+    )
+    await _run_tail(
+        "head",
+        ("-c", "2", "memory:/blob"),
+        {"memory": tail_source},
+    )
+
+    assert emitted == [b"ab", b"ef"]
+    assert head_source.calls == [_ReadCall("cat_file", "/blob", 0, 2)]
+    assert tail_source.calls == [
+        _ReadCall("info", "/blob"),
+        _ReadCall("cat_file", "/blob", 4, None),
     ]
 
 
@@ -213,6 +260,10 @@ def test_byte_range_commands_leave_exact_help_to_the_framework(
         (["-c", "1"], "missing mapped filesystem operand"),
         (
             ["-c", "1", "-c", "2", "memory:/a"],
+            "exactly one byte-count selector is required",
+        ),
+        (
+            ["-c", "-c", "2", "memory:/a"],
             "exactly one byte-count selector is required",
         ),
         (["-c1", "memory:/a"], "-c1: unsupported option"),
@@ -283,6 +334,52 @@ def test_tail_rejects_incompatible_info_before_read(info_result: object) -> None
         "tail: memory:/a: incompatible result\n",
     )
     assert source.calls == [_ReadCall("info", "/a")]
+
+
+class _HostileMapping(Mapping[str, object]):
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+    def __getitem__(self, key: str) -> object:
+        if key == "size":
+            return 6
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(("size",))
+
+    def __len__(self) -> int:
+        return 1
+
+    def get(self, key: str, default: object = None) -> object:
+        del key, default
+        raise self.error
+
+
+def test_tail_treats_an_ordinary_hostile_mapping_as_incompatible() -> None:
+    source = _ReadSource(info_result=_HostileMapping(RuntimeError("hostile")))
+
+    result = _invoke("tail", ["-c", "2", "memory:/a"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout_bytes, result.stderr) == (
+        1,
+        b"",
+        "tail: memory:/a: incompatible result\n",
+    )
+    assert source.calls == [_ReadCall("info", "/a")]
+    assert source.exit_calls == [(None, None, None)]
+
+
+def test_tail_preserves_control_flow_from_a_hostile_mapping() -> None:
+    control = _ReadControl("stop")
+    source = _ReadSource(info_result=_HostileMapping(control))
+
+    with pytest.raises(_ReadControl) as caught:
+        _invoke("tail", ["-c", "2", "memory:/a"], sources={"memory": source})
+
+    assert caught.value is control
+    assert source.lifecycle == ["factory", "enter", "exit"]
+    assert source.exit_calls[0][1] is control
 
 
 @pytest.mark.parametrize("command", ["head", "tail"])
