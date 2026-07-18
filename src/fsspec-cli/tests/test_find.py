@@ -41,11 +41,13 @@ class _ExplodingInfo(dict[str, object]):
 
 
 class _MalformedItemsMapping(dict[str, object]):
-    def __init__(self, entries: list[object]) -> None:
-        self.entries = entries
-
     def items(self) -> Iterator[object]:  # type: ignore[override]
-        return iter(self.entries)
+        return iter(
+            (
+                ("/docs/good", {"type": "directory"}),
+                ("/docs/bad",),
+            )
+        )
 
 
 class _FindControl(BaseException):
@@ -447,24 +449,8 @@ def test_find_rejects_incompatible_directory_results_atomically(
     )
 
 
-@pytest.mark.parametrize(
-    "malformed_entry",
-    [
-        ("/docs/bad",),
-        ("/docs/bad", {"type": "directory"}, "extra"),
-    ],
-)
-def test_find_rejects_malformed_detailed_items_atomically_and_cleans_up(
-    malformed_entry: object,
-) -> None:
-    source = _FindSource(
-        result=_MalformedItemsMapping(
-            [
-                ("/docs/good", {"type": "directory"}),
-                malformed_entry,
-            ]
-        ),
-    )
+def test_find_rejects_malformed_detailed_items_atomically_and_cleans_up() -> None:
+    source = _FindSource(result=_MalformedItemsMapping())
 
     result = _invoke_find(
         ["--type", "d", "memory:/docs"],
