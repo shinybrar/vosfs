@@ -62,6 +62,14 @@ class FilesystemCall:
     destination_path: str | None = None
 
 
+@dataclass(frozen=True)
+class LongListingGolden:
+    exact_directory: str
+    human_directory: str
+    exact_file: str
+    file_name: str = "notes.txt"
+
+
 def _block_network(monkeypatch) -> None:
     def fail_network(*args: object, **kwargs: object) -> None:
         del args, kwargs
@@ -472,6 +480,10 @@ def _invoke_ls(app: App, arguments: list[str]) -> Result:
     return _invoke(app, "ls", arguments)
 
 
+def _invoke_ll(app: App, arguments: list[str]) -> Result:
+    return _invoke(app, "ll", arguments)
+
+
 def _invoke_cat(app: App, arguments: list[str]) -> Result:
     return _invoke(app, "cat", arguments)
 
@@ -605,6 +617,83 @@ def _exercise_locked_profile(
         )
         loop_ids.append(exit_call.loop_id)
         assert len(set(loop_ids)) == 1
+
+
+def _exercise_long_listing_profile(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    path: str,
+    golden: LongListingGolden,
+) -> None:
+    app = App({source_name: source})
+    directory_operand = f"{source_name}:{path}"
+    file_path = f"{path}/{golden.file_name}"
+    file_operand = f"{source_name}:{file_path}"
+
+    exact = _invoke_ls(app, ["-l", directory_operand])
+    human = _invoke_ls(app, ["-lh", directory_operand])
+    alias = _invoke_ll(app, [directory_operand])
+    file_result = _invoke_ls(app, ["-l", file_operand])
+
+    assert (exact.exit_code, exact.stdout, exact.stderr) == (
+        0,
+        golden.exact_directory,
+        "",
+    )
+    assert (human.exit_code, human.stdout, human.stderr) == (
+        0,
+        golden.human_directory,
+        "",
+    )
+    assert (alias.exit_code, alias.stdout, alias.stderr) == (
+        0,
+        golden.exact_directory,
+        "",
+    )
+    assert (file_result.exit_code, file_result.stdout, file_result.stderr) == (
+        0,
+        golden.exact_file,
+        "",
+    )
+    assert [event.stage for event in source.lifecycle] == [
+        "factory",
+        "enter",
+        "exit",
+    ] * 4
+    assert [call.operation for call in source.calls] == [
+        "info",
+        "ls",
+        "info",
+        "ls",
+        "info",
+        "ls",
+        "info",
+    ]
+    assert [call.path for call in source.calls] == [
+        path,
+        path,
+        path,
+        path,
+        path,
+        path,
+        file_path,
+    ]
+    assert [call.detail for call in source.calls] == [
+        None,
+        True,
+        None,
+        True,
+        None,
+        True,
+        None,
+    ]
+    assert all(not call.kwargs for call in source.calls)
+    assert len(source.ls_results) == 3
+    assert all(
+        isinstance(result, list) and all(isinstance(entry, Mapping) for entry in result)
+        for _source_id, result in source.ls_results
+    )
+    assert not source.errors
 
 
 def _exercise_cat_profile(

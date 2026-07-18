@@ -26,8 +26,10 @@ conformance, or GNU `stat` compatibility. It is a **reduced BSD/macOS-shaped
 compatibility profile** over authoritative fsspec `_info` fields only.
 
 This profile MUST NOT be cited as evidence for `ls -l` or any other metadata
-command. Long listing remains rejected under
-[the `ls -l` rejection profile](fsspec-cli-ls-long-rejection-profile.md).
+command. Long listing is separately admitted under its own
+[best-effort command profile](fsspec-cli-ls-long-command-profile.md); the
+[earlier rejection profile](fsspec-cli-ls-long-rejection-profile.md) is
+historical rationale only.
 
 ## Post-profile async constraint
 

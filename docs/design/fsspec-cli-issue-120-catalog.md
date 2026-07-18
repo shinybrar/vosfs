@@ -48,7 +48,8 @@ for source-form claims (`pass` / `fail` / `unsupported` / `unverified`).
 | Utility / profile | Disposition | Profile | Matrix |
 | --- | --- | --- | --- |
 | Plain `ls` and `ls -A` | `admitted` | [plain ls](fsspec-cli-plain-ls-command-profile.md) | matrix rows |
-| `ls -l` (and other unapproved `ls` options) | `rejected` | [ls -l rejection](fsspec-cli-ls-long-rejection-profile.md) | preflight `unsupported` |
+| `ls -l` / `-lh` and `ll` | `admitted` | [long listing](fsspec-cli-ls-long-command-profile.md) | source rows |
+| Other unapproved `ls` options | `rejected` | plain and long-listing profiles | preflight `unsupported` |
 | `basename string` | `admitted` | [basename](fsspec-cli-basename-command-profile.md) | source-free rows |
 | `basename string suffix` | `admitted` | [basename suffix](fsspec-cli-basename-suffix-command-profile.md) | source-free rows |
 | `dirname string` | `admitted` | [dirname](fsspec-cli-dirname-command-profile.md) | source-free rows |

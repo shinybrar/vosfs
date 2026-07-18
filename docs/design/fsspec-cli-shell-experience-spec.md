@@ -166,8 +166,9 @@ backend-specific `extra` keys as data, without a per-backend branch.
 ## 9. Supersedes
 
 - **`fsspec-cli-ls-long-rejection-profile.md`** — `ls -l` is no longer rejected;
-  it is supported best-effort per §2. That profile is superseded by this spec
-  (retain as historical rationale, add a banner).
+  it is supported best-effort per §2 and the normative
+  [`fsspec-cli-ls-long-command-profile.md`](fsspec-cli-ls-long-command-profile.md).
+  Retain the rejection profile only as historical rationale.
 - The strict "MUST NOT quote/decorate/select columns" language in the plain-`ls`
   profile applies to bare `ls` only; `ls -l` is a distinct, documented mode.
 

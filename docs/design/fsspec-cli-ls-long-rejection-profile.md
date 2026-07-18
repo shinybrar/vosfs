@@ -2,7 +2,8 @@
 
 <!-- pyml disable line-length -->
 
-> **Superseded** by
+> **Superseded** by the normative
+> [long-listing command profile](fsspec-cli-ls-long-command-profile.md), under
 > [`fsspec-cli-shell-experience-spec.md`](fsspec-cli-shell-experience-spec.md).
 > `fsspec-cli` no longer targets strict POSIX; `ls -l`/`-lh` (and the `ll` alias)
 > are now supported best-effort via the info-normalization layer — rendering
@@ -30,7 +31,7 @@ The supported command interface remains:
 ls [-A] [--] name:/path...
 ```
 
-This decision adds no long-listing renderer, metadata-normalization interface,
+This historical decision added no long-listing renderer, metadata-normalization interface,
 backend capability registry, backend-type branch, or new adapter at the
 `App(sources).typer_app` seam.
 
@@ -55,7 +56,7 @@ zeroes, question marks, dashes, empty strings, inferred identities, or omitted
 columns. Support must be established through one source-independent consumed
 shape and real version-tested calls, not concrete filesystem branches.
 
-## Locked `-l` rejection delta
+## Historical locked `-l` rejection delta
 
 The plain command's [option preflight](fsspec-cli-plain-ls-command-profile.md#21-option-and-operand-preflight)
 and [exit-status](fsspec-cli-plain-ls-command-profile.md#7-exit-status)
@@ -93,7 +94,7 @@ Sparse authoritative metadata may later justify a deliberately non-POSIX
 [reduced BSD/macOS `stat` profile](fsspec-cli-bsd-macos-stat-command-profile.md)
 and does not weaken this rejection profile or admit `ls -l`.
 
-## Implementation handoff
+## Historical implementation handoff
 
 No dedicated long-listing implementation slice is required. The production
 plain-`ls` parser tests the locked complete-token diagnostic, zero-source-work

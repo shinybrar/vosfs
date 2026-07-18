@@ -59,7 +59,7 @@ python app.py fs ls data:/
 
 | Command | Summary |
 | --- | --- |
-| `ls` | Plain listing of one or more mapped operands |
+| `ls`, `ll` | Names-only `ls`; adaptive long `ls -l` / `-lh`; inherent-long `ll` |
 | `cat` | Concatenate mapped files (and stdin `-`) to stdout |
 | `cp` | Verified same-source, cross-source, and multi-source file copy (no `-R`) |
 | `mv` | Same-source file move, single or multi-file into a directory |

@@ -1,6 +1,8 @@
 """Hermetic evidence independent of the vosfs integration dependency."""
 
+import os
 import socket
+import time
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 
@@ -13,10 +15,12 @@ from fsspec_cli import App
 from typer.testing import CliRunner
 
 from ._matrix_support import (
+    LongListingGolden,
     _block_network,
     _exercise_cat_profile,
     _exercise_cp_locked_profile,
     _exercise_locked_profile,
+    _exercise_long_listing_profile,
     _exercise_mkdir_locked_profile,
     _exercise_mkdir_memory_over_eager_failure,
     _exercise_mkdir_p_locked_profile,
@@ -48,7 +52,10 @@ def _prohibit_unplanned_network(monkeypatch: pytest.MonkeyPatch) -> None:
 def _populate_local(root: Path) -> None:
     root.mkdir()
     for name in ("notes.txt", ".hidden", "guide.md"):
-        (root / name).write_text(name, encoding="utf-8")
+        child = root / name
+        child.write_text(name, encoding="utf-8")
+        child.chmod(0o644)
+        os.utime(child, (1_784_311_200, 1_784_311_200))
 
 
 def _populate_local_with_empty(root: Path) -> None:
@@ -117,6 +124,83 @@ def test_adapted_memory_plain_ls_profile_has_isolated_state(
     assert all(fs.asynchronous is True for fs in source.filesystems)
     assert len({id(fs) for fs in source.filesystems}) == 3
     assert len({id(fs.sync_fs) for fs in source.filesystems}) == 3
+
+
+def test_adapted_local_long_listing_profile_is_rich_and_uses_detail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "fsspec_cli._listing.time.localtime",
+        time.gmtime,
+    )
+    root = tmp_path / "docs"
+    _populate_local(root)
+    path = _local_command_path(root)
+    source = _ProbedSource(
+        lambda: AsyncFileSystemWrapper(
+            LocalFileSystem(skip_instance_cache=True),
+            asynchronous=True,
+        )
+    )
+    owner = os.getuid()
+    group = os.getgid()
+
+    _exercise_long_listing_profile(
+        "local",
+        source,
+        path,
+        LongListingGolden(
+            exact_directory=(
+                f"-rw-r--r--  1  {owner}  {group}  8  Jul 17 18:00  guide.md\n"
+                f"-rw-r--r--  1  {owner}  {group}  9  Jul 17 18:00  notes.txt\n"
+            ),
+            human_directory=(
+                f"-rw-r--r--  1  {owner}  {group}  8B  Jul 17 18:00  guide.md\n"
+                f"-rw-r--r--  1  {owner}  {group}  9B  Jul 17 18:00  notes.txt\n"
+            ),
+            exact_file=(
+                f"-rw-r--r--  1  {owner}  {group}  9  Jul 17 18:00  notes.txt\n"
+            ),
+        ),
+    )
+
+    assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
+    assert all(isinstance(fs.sync_fs, LocalFileSystem) for fs in source.filesystems)
+
+
+def test_adapted_memory_long_listing_profile_is_sparse_and_uses_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+
+    def make_filesystem() -> AsyncFileSystemWrapper:
+        MemoryFileSystem.store.clear()
+        MemoryFileSystem.pseudo_dirs[:] = [""]
+        MemoryFileSystem.clear_instance_cache()
+        filesystem = MemoryFileSystem()
+        filesystem.makedirs("/docs")
+        for name in ("notes.txt", ".hidden", "guide.md"):
+            filesystem.pipe_file(f"/docs/{name}", name.encode())
+        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
+
+    source = _ProbedSource(make_filesystem)
+
+    _exercise_long_listing_profile(
+        "memory",
+        source,
+        "/docs",
+        LongListingGolden(
+            exact_directory="file  8  guide.md\nfile  9  notes.txt\n",
+            human_directory="file  8B  guide.md\nfile  9B  notes.txt\n",
+            exact_file="file  9  notes.txt\n",
+        ),
+    )
+
+    assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
+    assert all(isinstance(fs.sync_fs, MemoryFileSystem) for fs in source.filesystems)
 
 
 def test_adapted_local_base_mkdir_profile_uses_native_temporary_storage(
@@ -284,7 +368,7 @@ def test_adapted_memory_mkdir_p_profile_has_isolated_state(
     _exercise_mkdir_p_locked_profile("memory", source, "/docs")
 
 
-def test_ls_long_rejection_is_source_free() -> None:
+def test_ls_long_option_spelling_rejection_is_source_free() -> None:
     source_calls = 0
 
     def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
@@ -292,12 +376,15 @@ def test_ls_long_rejection_is_source_free() -> None:
         source_calls += 1
         raise AssertionError
 
-    result = _invoke_ls(App({"memory": source_must_not_run}), ["-l", "memory:/docs"])
+    result = _invoke_ls(
+        App({"memory": source_must_not_run}),
+        ["--long", "memory:/docs"],
+    )
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         2,
         "",
-        "ls: -l: unsupported option\n",
+        "ls: --long: unsupported option\n",
     )
     assert source_calls == 0
 

@@ -92,7 +92,7 @@ def test_ls_starts_exactly_one_command_coroutine_with_asyncio_run(
 
 @pytest.mark.parametrize(
     "option",
-    ["-l", "-ll", "-Al", "--long", "-a", "--all", "-h", "--help=value"],
+    ["--long", "-a", "--all", "-x", "-lx", "--help=value"],
 )
 def test_ls_rejects_the_complete_unsupported_option_token(option: str) -> None:
     result = _invoke_ls([option, "memory:/docs"])
@@ -104,16 +104,42 @@ def test_ls_rejects_the_complete_unsupported_option_token(option: str) -> None:
 
 @pytest.mark.parametrize(
     "supported_options",
-    [["-A"], ["-AA"], ["-A", "-AAA"], ["memory:/docs", "-A"]],
+    [
+        ["-A"],
+        ["-AA"],
+        ["-A", "-AAA"],
+        ["memory:/docs", "-A"],
+        ["-l"],
+        ["-ll"],
+        ["-Al"],
+        ["-lh"],
+        ["-h", "-l"],
+        ["-hAl"],
+    ],
 )
-def test_ls_accepts_repeated_grouped_and_interspersed_uppercase_a(
+def test_ls_accepts_repeated_grouped_and_interspersed_supported_options(
     supported_options: list[str],
 ) -> None:
-    result = _invoke_ls([*supported_options, "-l"])
+    result = _invoke_ls([*supported_options, "bad"])
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert result.stderr == "ls: -l: unsupported option\n"
+    assert result.stderr == "ls: bad: invalid mapped filesystem operand\n"
+
+
+@pytest.mark.parametrize(
+    ("arguments", "token"),
+    [(["-h"], "-h"), (["-Ah"], "-Ah"), (["memory:/docs", "-h"], "-h")],
+)
+def test_ls_rejects_human_sizes_without_long_mode(
+    arguments: list[str],
+    token: str,
+) -> None:
+    result = _invoke_ls(arguments)
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert result.stderr == f"ls: {token}: unsupported option\n"
 
 
 @pytest.mark.parametrize(
@@ -203,7 +229,7 @@ def test_ls_reports_a_missing_operand_after_supported_option_syntax(
             ["unknown:/docs", "-l"],
             "ls: unknown:/docs: unknown filesystem (known: memory)\n",
         ),
-        (["-l", "bare"], "ls: -l: unsupported option\n"),
+        (["-l", "bare"], "ls: bare: invalid mapped filesystem operand\n"),
     ],
 )
 def test_ls_reports_only_the_first_preflight_error_in_argument_order(
@@ -246,12 +272,12 @@ def test_ls_preserves_preflight_when_mounted_below_a_parent_typer_app() -> None:
 
     result = CliRunner().invoke(
         parent,
-        ["data", "ls", "-l", "memory:/docs"],
+        ["data", "ls", "--long", "memory:/docs"],
     )
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert result.stderr == "ls: -l: unsupported option\n"
+    assert result.stderr == "ls: --long: unsupported option\n"
 
 
 def test_active_loop_refusal_precedes_command_preflight() -> None:
