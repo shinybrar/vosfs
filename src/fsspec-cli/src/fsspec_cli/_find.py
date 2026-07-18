@@ -7,19 +7,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, TypeGuard
 
-import typer
-
 from ._command import (
     _Failure,
     _MappedOperand,
     _parse_mapped_operand,
     _RawCommand,
-    _render_failure,
-    _render_output_failure,
+    _run_single_operand_text,
     _usage_error,
 )
 from ._diagnostics import _render_diagnostic_value
-from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -104,17 +100,14 @@ def _preflight(
 
 
 def _render_result(request: _FindRequest, result: object) -> str | _Failure:
-    try:
-        paths = _directory_paths(result) if request.kind == "d" else _file_paths(result)
-        if paths is None:
-            return _Failure(request.operand)
-        if request.maxdepth == 0:
-            root = request.operand.path.rstrip("/")
-            paths = [path for path in paths if path.rstrip("/") == root]
-        paths.sort(key=lambda path: (locale.strxfrm(path), path))
-        return "".join(f"{path}\n" for path in paths)
-    except Exception:  # noqa: BLE001 - fail closed on hostile list behavior.
+    paths = _directory_paths(result) if request.kind == "d" else _file_paths(result)
+    if paths is None:
         return _Failure(request.operand)
+    if request.maxdepth == 0:
+        root = request.operand.path.rstrip("/")
+        paths = [path for path in paths if path.rstrip("/") == root]
+    paths.sort(key=lambda path: (locale.strxfrm(path), path))
+    return "".join(f"{path}\n" for path in paths)
 
 
 def _file_paths(result: object) -> list[str] | None:
@@ -131,11 +124,18 @@ def _file_paths(result: object) -> list[str] | None:
 def _directory_paths(result: object) -> list[str] | None:
     if not isinstance(result, Mapping):
         return None
+    try:
+        entries = list(result.items())
+    except Exception:  # noqa: BLE001 - fail closed on hostile mapping iteration.
+        return None
     paths: list[str] = []
-    for path, info in result.items():
+    for path, info in entries:
         if not _valid_path(path) or not isinstance(info, Mapping):
             return None
-        kind = info.get("type")
+        try:
+            kind = info.get("type")
+        except Exception:  # noqa: BLE001 - fail closed on hostile mapping access.
+            return None
         if type(kind) is not str:
             return None
         if kind == "directory":
@@ -169,28 +169,9 @@ async def _run_find(
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
     request = _preflight(command, raw_arguments, sources)
-    invocation = _SourceInvocation(command, sources)
-    succeeded = False
-    failure: _Failure | None = None
-    output_error: Exception | None = None
-    try:
-        filesystems = await invocation.acquire((request.operand.name,))
-        if filesystems is not None:
-            result = await _search(request, filesystems[request.operand.name])
-            if isinstance(result, _Failure):
-                failure = result
-                _render_failure(command, failure)
-            elif result:
-                try:
-                    typer.echo(result, nl=False, color=True)
-                except BrokenPipeError as error:
-                    output_error = error
-                except Exception as error:  # noqa: BLE001 - output boundary.
-                    output_error = error
-                    _render_output_failure(command, error)
-            succeeded = failure is None and output_error is None
-    finally:
-        command_error = failure.backend_error if failure is not None else output_error
-        cleanup_failed = await invocation.close_with_command_error(command_error)
-    if not succeeded or cleanup_failed:
-        raise typer.Exit(1)
+    await _run_single_operand_text(
+        command,
+        request.operand,
+        sources,
+        lambda filesystem: _search(request, filesystem),
+    )

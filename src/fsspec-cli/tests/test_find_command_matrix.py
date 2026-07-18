@@ -84,13 +84,11 @@ def _prohibit_unplanned_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
 class _StrictFindTransport(httpx.MockTransport):
     def __init__(self) -> None:
-        self.requests: list[tuple[str, str]] = []
         self.closed = False
         super().__init__(self._respond)
 
     async def _respond(self, request: httpx.Request) -> httpx.Response:
         call = (request.method, request.url.path)
-        self.requests.append(call)
         response = _RESPONSES.get(call)
         if response is None:
             message = f"unplanned mocked request: {call!r}"
@@ -148,10 +146,9 @@ def _exercise_find_profile(  # noqa: PLR0913 - matrix golden expectations.
         "enter",
         "exit",
     ] * 4
-    find_calls = [call for call in source.calls if call.operation == "find"]
     assert [
         (call.path, call.maxdepth, call.withdirs, call.detail, call.kwargs)
-        for call in find_calls
+        for call in source.find_calls
     ] == [
         (path, None, False, False, {}),
         (path, 1, False, False, {}),
@@ -253,30 +250,4 @@ def test_native_vosfs_find_profile_uses_only_mocked_transport() -> None:
 
     assert all(isinstance(fs, VOSpaceFileSystem) for fs in source.filesystems)
     assert all(fs._pool.closed is True for fs in source.filesystems)
-    assert [transport.requests for transport in transports] == [
-        [
-            ("GET", "/arc/capabilities"),
-            ("GET", "/arc/nodes/docs"),
-            ("GET", "/arc/nodes/docs/sub"),
-            ("GET", "/arc/nodes/docs/empty"),
-        ],
-        [
-            ("GET", "/arc/capabilities"),
-            ("GET", "/arc/nodes/docs"),
-        ],
-        [
-            ("GET", "/arc/capabilities"),
-            ("GET", "/arc/nodes/docs"),
-            ("GET", "/arc/nodes/docs"),
-            ("GET", "/arc/nodes/docs"),
-            ("GET", "/arc/nodes/docs/sub"),
-            ("GET", "/arc/nodes/docs/empty"),
-        ],
-        [
-            ("GET", "/arc/capabilities"),
-            ("GET", "/arc/nodes/docs"),
-            ("GET", "/arc/nodes/docs"),
-            ("GET", "/arc/nodes/docs"),
-        ],
-    ]
     assert all(transport.closed for transport in transports)

@@ -44,7 +44,6 @@ class FilesystemCall:
         "info",
         "ls",
         "du",
-        "find",
         "get_file",
         "mkdir",
         "makedirs",
@@ -63,8 +62,17 @@ class FilesystemCall:
     exist_ok: bool | None = None
     destination_path: str | None = None
     total: bool | None = None
-    maxdepth: int | None = None
-    withdirs: bool | None = None
+
+
+@dataclass(frozen=True)
+class FindCall:
+    source_id: int
+    path: str
+    maxdepth: int | None
+    withdirs: bool
+    detail: bool
+    kwargs: Mapping[str, object]
+    loop_id: int
 
 
 def _block_network(monkeypatch) -> None:
@@ -89,6 +97,7 @@ class _ProbedSource(Generic[_FilesystemT]):
         self.lifecycle: list[LifecycleEvent] = []
         self.exit_calls: list[ExitCall] = []
         self.calls: list[FilesystemCall] = []
+        self.find_calls: list[FindCall] = []
         self.info_results: list[tuple[int, object]] = []
         self.ls_results: list[tuple[int, object]] = []
         self.get_file_results: list[tuple[int, str]] = []
@@ -202,16 +211,15 @@ class _ProbedSource(Generic[_FilesystemT]):
             **kwargs: object,
         ) -> object:
             detail = kwargs.pop("detail", False)
-            self.calls.append(
-                FilesystemCall(
-                    "find",
+            self.find_calls.append(
+                FindCall(
                     source_id,
                     path,
+                    maxdepth,
+                    withdirs,
                     detail,
                     kwargs,
                     id(asyncio.get_running_loop()),
-                    maxdepth=maxdepth,
-                    withdirs=withdirs,
                 )
             )
             try:

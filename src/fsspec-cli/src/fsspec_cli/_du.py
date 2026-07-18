@@ -7,20 +7,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeGuard
 
-import typer
-
 from ._command import (
     _Failure,
     _MappedOperand,
     _parse_mapped_operand,
     _RawCommand,
-    _render_failure,
-    _render_output_failure,
+    _run_single_operand_text,
     _usage_error,
 )
 from ._diagnostics import _render_diagnostic_value
 from ._listing import format_size
-from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -144,28 +140,9 @@ async def _run_du(
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
     request = _preflight(command, raw_arguments, sources)
-    invocation = _SourceInvocation(command, sources)
-    succeeded = False
-    failure: _Failure | None = None
-    output_error: Exception | None = None
-    try:
-        filesystems = await invocation.acquire((request.operand.name,))
-        if filesystems is not None:
-            result = await _measure(request, filesystems[request.operand.name])
-            if isinstance(result, _Failure):
-                failure = result
-                _render_failure(command, failure)
-            elif result:
-                try:
-                    typer.echo(result, nl=False, color=True)
-                except BrokenPipeError as error:
-                    output_error = error
-                except Exception as error:  # noqa: BLE001 - output boundary.
-                    output_error = error
-                    _render_output_failure(command, error)
-            succeeded = failure is None and output_error is None
-    finally:
-        command_error = failure.backend_error if failure is not None else output_error
-        cleanup_failed = await invocation.close_with_command_error(command_error)
-    if not succeeded or cleanup_failed:
-        raise typer.Exit(1)
+    await _run_single_operand_text(
+        command,
+        request.operand,
+        sources,
+        lambda filesystem: _measure(request, filesystem),
+    )

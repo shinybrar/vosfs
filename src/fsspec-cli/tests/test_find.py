@@ -1,12 +1,16 @@
 """``find`` command tests through the public embedded-command seam."""
 
-from collections.abc import Iterator
+import asyncio
+import locale
+from contextlib import AbstractAsyncContextManager
+from types import TracebackType
 from typing import NoReturn
 
 import pytest
 import typer
-
-from ._support import _invoke_find, _RecordingSource
+from fsspec.asyn import AsyncFileSystem
+from fsspec_cli import App, AsyncFilesystemSource
+from typer.testing import CliRunner, Result
 
 _EXACT_FIND_HELP = (
     "                                                                                \n"
@@ -21,9 +25,8 @@ _EXACT_FIND_HELP = (
 )
 
 
-class _ExplodingList(list[str]):
-    def __iter__(self) -> Iterator[str]:
-        raise RuntimeError
+class _ListSubclass(list[str]):
+    pass
 
 
 class _ExplodingMapping(dict[str, object]):
@@ -31,15 +34,122 @@ class _ExplodingMapping(dict[str, object]):
         raise RuntimeError
 
 
+class _ExplodingInfo(dict[str, object]):
+    def get(self, key: str, default: object = None) -> NoReturn:
+        del key, default
+        raise RuntimeError
+
+
 class _FindControl(BaseException):
     pass
 
 
+def _source_must_not_run() -> NoReturn:
+    raise AssertionError
+
+
+def _invoke_find(
+    arguments: list[str],
+    *,
+    sources: dict[str, AsyncFilesystemSource] | None = None,
+) -> Result:
+    if sources is None:
+        sources = {"memory": _source_must_not_run}
+    return CliRunner().invoke(App(sources).typer_app, ["find", *arguments])
+
+
+class _FindFileSystem(AsyncFileSystem):
+    cachable = False
+
+    def __init__(self, source: "_FindSource", source_id: int) -> None:
+        super().__init__(asynchronous=True)
+        self.source = source
+        self.source_id = source_id
+
+    async def _find(
+        self,
+        path: str,
+        maxdepth: int | None = None,
+        withdirs: bool = False,  # noqa: FBT002 - fsspec hook signature.
+        **kwargs: object,
+    ) -> object:
+        detail = kwargs.pop("detail", False)
+        assert not kwargs
+        self.source.events.append(
+            (
+                "find",
+                self.source_id,
+                path,
+                maxdepth,
+                withdirs,
+                detail,
+                id(asyncio.get_running_loop()),
+            )
+        )
+        if self.source.error is not None:
+            raise self.source.error
+        return self.source.result
+
+
+class _FindSource:
+    def __init__(
+        self,
+        events: list[tuple[object, ...]],
+        *,
+        result: object = (),
+        error: BaseException | None = None,
+        exit_error: BaseException | None = None,
+    ) -> None:
+        self.events = events
+        self.result = result
+        self.error = error
+        self.exit_error = exit_error
+        self.exit_calls: list[
+            tuple[
+                type[BaseException] | None,
+                BaseException | None,
+                TracebackType | None,
+            ]
+        ] = []
+        self.call_count = 0
+
+    def __call__(self) -> "_FindContext":
+        self.call_count += 1
+        self.events.append(("factory", self.call_count))
+        return _FindContext(self, self.call_count)
+
+
+class _FindContext(AbstractAsyncContextManager[_FindFileSystem]):
+    def __init__(self, source: _FindSource, source_id: int) -> None:
+        self.source = source
+        self.source_id = source_id
+        self.filesystem = _FindFileSystem(source, source_id)
+
+    async def __aenter__(self) -> _FindFileSystem:
+        self.source.events.append(
+            ("enter", self.source_id, id(asyncio.get_running_loop()))
+        )
+        return self.filesystem
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.source.exit_calls.append((exc_type, exc, traceback))
+        self.source.events.append(
+            ("exit", self.source_id, id(asyncio.get_running_loop()))
+        )
+        if self.source.exit_error is not None:
+            raise self.source.exit_error
+
+
 def test_find_renders_recursive_backend_file_paths_after_one_call() -> None:
     events: list[tuple[object, ...]] = []
-    source = _RecordingSource(
+    source = _FindSource(
         events,
-        find_result=["/docs/sub/b.txt", "/docs/a.txt"],
+        result=["/docs/sub/b.txt", "/docs/a.txt"],
     )
 
     result = _invoke_find(["memory:/docs"], sources={"memory": source})
@@ -57,11 +167,60 @@ def test_find_renders_recursive_backend_file_paths_after_one_call() -> None:
     ]
 
 
+def test_find_orders_paths_by_locale_then_raw_spelling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _FindSource(
+        [],
+        result=["/docs/b.txt", "/docs/z.txt", "/docs/a.txt"],
+    )
+    transformed = {
+        "/docs/z.txt": "0",
+        "/docs/a.txt": "1",
+        "/docs/b.txt": "1",
+    }
+    monkeypatch.setattr(locale, "strxfrm", transformed.__getitem__)
+
+    result = _invoke_find(["memory:/docs"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "/docs/z.txt\n/docs/a.txt\n/docs/b.txt\n",
+        "",
+    )
+
+
+def test_find_does_not_misclassify_an_internal_locale_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    internal_error = RuntimeError("locale failure")
+    source = _FindSource([], result=["/docs/a.txt"])
+
+    def fail_locale(_path: str) -> str:
+        raise internal_error
+
+    monkeypatch.setattr(locale, "strxfrm", fail_locale)
+    result = _invoke_find(["memory:/docs"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (1, "", "")
+    assert result.exception is internal_error
+    exception_type, exception, traceback = source.exit_calls[0]
+    assert exception_type is RuntimeError
+    assert exception is internal_error
+    assert traceback is not None
+
+
 @pytest.mark.parametrize(
     ("arguments", "find_result", "call", "stdout"),
     [
         (
             ["--maxdepth", "2", "memory:/docs"],
+            ["/docs/sub/b.txt", "/docs/a.txt"],
+            ("/docs", 2, False, False),
+            "/docs/a.txt\n/docs/sub/b.txt\n",
+        ),
+        (
+            ["--maxdepth", "0002", "memory:/docs"],
             ["/docs/sub/b.txt", "/docs/a.txt"],
             ("/docs", 2, False, False),
             "/docs/a.txt\n/docs/sub/b.txt\n",
@@ -90,6 +249,12 @@ def test_find_renders_recursive_backend_file_paths_after_one_call() -> None:
             "/docs/a.txt\n",
         ),
         (
+            ["--type", "d", "--type", "f", "memory:/docs"],
+            ["/docs/a.txt"],
+            ("/docs", None, False, False),
+            "/docs/a.txt\n",
+        ),
+        (
             ["--", "memory:/docs"],
             ["/docs/a.txt"],
             ("/docs", None, False, False),
@@ -104,7 +269,7 @@ def test_find_accepts_locked_interspersed_options_and_call_shapes(
     stdout: str,
 ) -> None:
     events: list[tuple[object, ...]] = []
-    source = _RecordingSource(events, find_result=find_result)
+    source = _FindSource(events, result=find_result)
 
     result = _invoke_find(arguments, sources={"memory": source})
 
@@ -146,7 +311,7 @@ def test_find_maxdepth_zero_filters_the_single_backend_call_to_the_root(
     stdout: str,
 ) -> None:
     events: list[tuple[object, ...]] = []
-    source = _RecordingSource(events, find_result=find_result)
+    source = _FindSource(events, result=find_result)
 
     result = _invoke_find(arguments, sources={"memory": source})
 
@@ -189,6 +354,18 @@ def test_find_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
         (
             ["--maxdepth", "1.0", "memory:/docs"],
             "find: 1.0: invalid --maxdepth value\n",
+        ),
+        (
+            ["--maxdepth", "", "memory:/docs"],
+            "find: : invalid --maxdepth value\n",
+        ),
+        (
+            ["--maxdepth", " ", "memory:/docs"],
+            "find:  : invalid --maxdepth value\n",
+        ),
+        (
+            ["--maxdepth", "\u0661", "memory:/docs"],
+            "find: \u0661: invalid --maxdepth value\n",
         ),
         (
             ["--type", "x", "memory:/docs"],
@@ -240,13 +417,13 @@ def test_find_rejects_a_depth_too_large_for_the_runtime_deterministically() -> N
         [1],
         ["/docs/bad\nname"],
         ["/docs/bad\0name"],
-        _ExplodingList(["/docs/a.txt"]),
+        _ListSubclass(["/docs/a.txt"]),
     ],
 )
 def test_find_rejects_incompatible_file_results_atomically(
     find_result: object,
 ) -> None:
-    source = _RecordingSource([], find_result=find_result)
+    source = _FindSource([], result=find_result)
 
     result = _invoke_find(["memory:/docs"], sources={"memory": source})
 
@@ -266,6 +443,7 @@ def test_find_rejects_incompatible_file_results_atomically(
         {"/docs": None},
         {"/docs": {}},
         {"/docs": {"type": True}},
+        {"/docs": _ExplodingInfo({"type": "directory"})},
         {"/docs/bad\nname": {"type": "directory"}},
         {"/docs/bad\0name": {"type": "directory"}},
         _ExplodingMapping({"/docs": {"type": "directory"}}),
@@ -274,7 +452,7 @@ def test_find_rejects_incompatible_file_results_atomically(
 def test_find_rejects_incompatible_directory_results_atomically(
     find_result: object,
 ) -> None:
-    source = _RecordingSource([], find_result=find_result)
+    source = _FindSource([], result=find_result)
 
     result = _invoke_find(
         ["--type", "d", "memory:/docs"],
@@ -289,9 +467,9 @@ def test_find_rejects_incompatible_directory_results_atomically(
 
 
 def test_find_validates_the_complete_result_before_output() -> None:
-    source = _RecordingSource(
+    source = _FindSource(
         [],
-        find_result=["/docs/good", "/docs/bad\nname"],
+        result=["/docs/good", "/docs/bad\nname"],
     )
 
     result = _invoke_find(["memory:/docs"], sources={"memory": source})
@@ -320,7 +498,7 @@ def test_find_reports_backend_failures_and_passes_them_to_cleanup(
     error: Exception,
     diagnostic: str,
 ) -> None:
-    source = _RecordingSource([], find_error=error)
+    source = _FindSource([], error=error)
 
     result = _invoke_find(["memory:/docs"], sources={"memory": source})
 
@@ -339,7 +517,7 @@ def test_find_cleans_up_after_an_output_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     output_error = OSError("write failed")
-    source = _RecordingSource([], find_result=["/docs/a"])
+    source = _FindSource([], result=["/docs/a"])
     real_echo = typer.echo
 
     def fail_stdout(
@@ -370,7 +548,7 @@ def test_find_keeps_broken_pipe_silent_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     broken_pipe = BrokenPipeError()
-    source = _RecordingSource([], find_result=["/docs/a"])
+    source = _FindSource([], result=["/docs/a"])
 
     def break_stdout(*args: object, **kwargs: object) -> None:
         del args, kwargs
@@ -387,9 +565,9 @@ def test_find_keeps_broken_pipe_silent_and_cleans_up(
 
 
 def test_find_retains_complete_output_when_source_exit_fails() -> None:
-    source = _RecordingSource(
+    source = _FindSource(
         [],
-        find_result=["/docs/a"],
+        result=["/docs/a"],
         exit_error=OSError("cleanup"),
     )
 
@@ -404,9 +582,9 @@ def test_find_retains_complete_output_when_source_exit_fails() -> None:
 
 def test_find_cleans_up_then_propagates_backend_control_flow() -> None:
     control = _FindControl("stop")
-    source = _RecordingSource(
+    source = _FindSource(
         [],
-        find_error=control,
+        error=control,
         exit_error=OSError("cleanup"),
     )
 

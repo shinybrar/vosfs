@@ -3,9 +3,9 @@
 Every mapped-operand command (``ls``, ``du``, ``find``, ``cat``, ``cp``,
 ``mv``, ``mkdir``, ``rmdir``, ``rm``, ``unlink``, ``stat``, ``basename``,
 ``dirname``) parses its own raw ``argv`` and renders stable diagnostics. This
-module is the single home
-for the pieces they all share: raw-argument capture, the malformed-help shield,
-the mapped-operand record, usage-error reporting, and binary stdout access.
+module is the single home for the pieces they share: raw-argument capture, the
+malformed-help shield, mapped operands, usage errors, binary stdout, and the
+single-operand buffered-text lifecycle.
 """
 
 from __future__ import annotations
@@ -19,11 +19,15 @@ import typer
 from typer.core import TyperCommand
 
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
+from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Awaitable, Callable, Collection, Mapping
 
+    from fsspec.asyn import AsyncFileSystem
     from typer._click import Context
+
+    from ._app import AsyncFilesystemSource
 
 _RAW_ARGUMENTS = "fsspec_cli.raw_arguments"
 
@@ -145,6 +149,40 @@ def _render_output_failure(command: str, error: Exception) -> None:
         err=True,
         color=True,
     )
+
+
+async def _run_single_operand_text(
+    command: str,
+    operand: _MappedOperand,
+    sources: Mapping[str, AsyncFilesystemSource],
+    operation: Callable[[AsyncFileSystem], Awaitable[str | _Failure]],
+) -> None:
+    """Run one mapped async operation with buffered text output and cleanup."""
+    invocation = _SourceInvocation(command, sources)
+    succeeded = False
+    failure: _Failure | None = None
+    output_error: Exception | None = None
+    try:
+        filesystems = await invocation.acquire((operand.name,))
+        if filesystems is not None:
+            result = await operation(filesystems[operand.name])
+            if isinstance(result, _Failure):
+                failure = result
+                _render_failure(command, failure)
+            elif result:
+                try:
+                    typer.echo(result, nl=False, color=True)
+                except BrokenPipeError as error:
+                    output_error = error
+                except Exception as error:  # noqa: BLE001 - output boundary.
+                    output_error = error
+                    _render_output_failure(command, error)
+            succeeded = failure is None and output_error is None
+    finally:
+        command_error = failure.backend_error if failure is not None else output_error
+        cleanup_failed = await invocation.close_with_command_error(command_error)
+    if not succeeded or cleanup_failed:
+        raise typer.Exit(1)
 
 
 def _sorted_known(known_names: Collection[str]) -> list[str]:
