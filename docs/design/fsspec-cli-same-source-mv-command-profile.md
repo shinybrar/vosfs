@@ -59,21 +59,36 @@ by configured source form. Public synchronous `mv`, copy-then-delete,
 cross-source staging, and inherited or non-awaitable move defaults are
 excluded.
 
-Before mutation, command stages source bytes. After `_mv`, success requires:
+Immediately after validating source `_info`, command freezes the expected size
+and recognized source tokens into an immutable proof. Destination resolution
+and `_mv` cannot change that proof through a backend-owned mutable mapping.
+
+After `_mv`, success requires:
 
 1. destination is `type == "file"` with original size;
-2. destination staged bytes match original staged bytes; and
+2. every normalized metadata field shared between source and destination
+   matches exactly; and
 3. source `_info` raises `FileNotFoundError`.
+
+Recognized metadata consists of exact `str` or `bytes` values under `ETag` /
+`etag`, `md5`, `content-md5` / `content_md5`, and `checksum`. With no shared
+recognized field, destination type and exact size plus source absence are the
+truthful success proof. Tokens do not claim cryptographic strength. Verification
+awaits destination `_info` exactly once and performs no `_get_file`, local
+temporary, public checksum/synchronous-facade call, or backend-type branch. Any
+future byte comparison requires a separately profiled explicit opt-in and
+blocking comparison through `asyncio.to_thread`.
 
 Any move exception, wrong destination result, destination mismatch, source
 residue, or verification failure exits `1` with residue disclosure. Cancellation
-and other control flow propagate after source cleanup. Successful invocations
-emit no stdout.
+and other control flow propagate unchanged. Successful invocations emit no
+stdout.
 
-Passing result proves target resolution, replacement, destination completeness,
-source absence, diagnostics, cleanup, and partial-state reporting only. It does
-not prove atomic rename, identity preservation, POSIX mode, ownership, links,
-timestamps, or generic metadata preservation.
+Passing result proves target resolution, replacement, destination type and size,
+comparable metadata-token agreement, source absence, diagnostics, cleanup, and
+partial-state reporting only. It does not prove atomic rename, byte identity
+when no token is shared, POSIX mode, ownership, links, timestamps, or generic
+metadata preservation.
 
 ## Evidence
 

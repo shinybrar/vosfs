@@ -36,10 +36,10 @@ source-reported `type == "file"`. For distinct configured names, use
 Multi-source, directory source, recursive copy, and every option remain outside
 this profile.
 
-A passing row proves target resolution, replacement, bytes, diagnostics,
-cleanup, and partial-state reporting only. Mode-less sources do not prove POSIX
-Issue 8 creation mode, ownership, link identity, timestamps, or other
-characteristics.
+A passing row proves target resolution, replacement, destination file type and
+size, comparable metadata-token agreement, diagnostics, cleanup, and
+partial-state reporting only. Mode-less sources do not prove POSIX Issue 8
+creation mode, ownership, link identity, timestamps, or other characteristics.
 
 `type == "file"` is only fsspec's common type shape. It does not prove POSIX
 regular-file or non-link identity.
@@ -100,12 +100,24 @@ Production code MUST await `_cp_file(source_path, resolved_destination)` exactly
 once. It MUST NOT call public synchronous facades, retries, alternate-operation
 fallbacks, concurrency, or transport replay.
 
-Success requires the destination to be source-reported `type == "file"`, to
-report the expected byte count from the pre-copy source `_info`, and to match
-source content byte-for-byte. When authoritative matching digests are
-unavailable, verification MUST use the bounded disk-backed staging/comparison
-seam established by mapped-file `cat` (`_get_file` into secure temporaries and
-chunked comparison). Digest optimization is absent unless separately profiled.
+Immediately after validating source `_info`, command freezes the expected size
+and recognized source tokens into an immutable proof. Destination resolution and
+mutation cannot change that proof through a backend-owned mutable mapping.
+
+Success requires the destination to be source-reported `type == "file"` and to
+report the expected byte count from the pre-copy source `_info`. Verification
+recognizes exact `str` or `bytes` values under `ETag` / `etag`, `md5`,
+`content-md5` / `content_md5`, and `checksum`. Aliases are normalized; every
+normalized field present on both source and destination MUST match exactly. No
+shared recognized field means exact type and size are the truthful success
+proof, preserving Local and Memory source forms. These tokens are backend
+metadata, not a claim of cryptographic strength.
+
+Verification MUST await destination `_info` exactly once and MUST NOT download
+source or destination bytes, create a local verification temporary, call a
+public checksum or synchronous facade, or branch on backend type. Any future
+byte comparison requires a separately profiled explicit opt-in and MUST run its
+blocking comparison through `asyncio.to_thread`.
 
 The command MUST NEVER delete the source. A failed or unverifiable copy MAY
 leave a partial or complete destination; diagnostics MUST disclose residue and
@@ -130,15 +142,14 @@ cp: <mapped operand>: <stable category>
 | Pre-mutation invalid consumed backend shape | `incompatible result` |
 | Pre-mutation any other backend exception | `backend failure (<class>): <message>` |
 | `_cp_file` exception | `uncertain mutation state; destination residue may remain` |
-| Post-copy type/size/byte mismatch | `verification failure; destination residue may remain` |
-| Local staging/compare/cleanup failure after copy | `staging failure (<class>); destination residue may remain` |
+| Post-copy type/size/comparable-token mismatch | `verification failure; destination residue may remain` |
 
 ## 6. Exit status
 
 | Status | Meaning |
 | ---: | --- |
-| `0` | Byte-verified copy completed and the source was retained. |
-| `1` | Source-lifecycle, backend, verification, staging, residue, or cleanup failure. |
+| `0` | Metadata-verified copy completed and the source was retained. |
+| `1` | Source-lifecycle, backend, verification, residue, or cleanup failure. |
 | `2` | Usage, option, mapped-operand, or mapped-name preflight failed. |
 
 ## 7. Downstream ownership

@@ -25,8 +25,9 @@ process sequentially in argv order. Each destination resolves from the source
 basename under that directory and reuses the
 [two-operand same-source file `mv`](fsspec-cli-same-source-mv-command-profile.md)
 positively evidenced move path, including exact awaitable `_mv`, destination
-byte proof, source absence, same-path no-op after resolution, and eligible
-replacement.
+metadata proof, source absence, same-path no-op after resolution, and eligible
+replacement. When no recognized metadata token is shared, exact destination
+type and size plus source absence are the truthful proof.
 
 Earlier completed moves remain after a later failure. There is no rollback.
 Successful invocations emit no stdout.

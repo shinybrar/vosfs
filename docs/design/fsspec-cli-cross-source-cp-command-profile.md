@@ -24,23 +24,33 @@ source and destination once, in operand order, before backend I/O or output.
 Source `_info` must report `type == "file"` and non-negative integer `size`.
 Destination resolution, existing-parent requirement, replacement rules, and
 diagnostics match [verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md).
+Expected size and recognized source tokens are frozen into an immutable proof
+immediately after that validation, before destination resolution or mutation.
 
 Command creates one secure local source staging temporary, downloads source
 through `_get_file`, closes it, uploads through destination `_put_file(...,
-mode="overwrite")`, then requires destination `_info` file type and original
-source size. It verifies destination by bounded streaming comparison against
-that same source temporary: destination bytes flow through a secure FIFO (or
-backend open stream when FIFO is unsupported), so no second full destination
-disk temporary exists. FIFO/pipe and source temporary cleanup runs after
-success, verification failure, and unlink faults; cleanup errors remain
-failures. If both configured names yield the same filesystem object and
-resolved path, it rejects `same path` before staging or upload. Staging errors
-disclose only error class, never local temporary paths or source content.
+mode="overwrite")`, then uses the shared metadata verifier. The staged source
+size MUST match the pre-transfer source `_info`; the destination MUST be a file
+of that exact size. Exact `str` or `bytes` metadata tokens under normalized
+`ETag` / `etag`, `md5`, `content-md5` / `content_md5`, and `checksum` names MUST
+match for every shared field. With no shared recognized token, exact type and
+size are the truthful proof; no cryptographic strength is claimed.
 
-Successful status `0` proves source retention, destination type, byte count,
-and content. Failed upload or later verification reports destination residue
-may remain. Command never deletes destination to simulate rollback and never
-claims atomicity.
+The source temporary is the transfer bridge, not a verification download.
+There is no destination download, FIFO, pipe, worker thread, synchronous open,
+or second temporary. Source-temporary cleanup runs after success, ordinary
+failure, and escaping control flow. An ordinary cleanup failure is reported
+only when no transfer or verification failure already exists and never masks
+escaping control flow. If both configured names yield the same filesystem
+object and resolved path, command rejects `same path` before staging or upload.
+Staging errors disclose only error class, never local temporary paths or source
+content. Any future byte comparison requires a separately profiled explicit
+opt-in and blocking comparison through `asyncio.to_thread`.
+
+Successful status `0` proves source retention, destination type and byte count,
+and agreement of every shared recognized metadata token. Failed upload or later
+verification reports destination residue may remain. Command never deletes
+destination to simulate rollback and never claims atomicity.
 
 ## Evidence
 

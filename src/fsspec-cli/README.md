@@ -68,8 +68,8 @@ python app.py fs ls data:/
 | `tree` | Unicode recursive tree; optional `--maxdepth N` |
 | `info` | One normalized metadata dictionary plus backend-specific `extra` values |
 | `cat` | Concatenate mapped files (and stdin `-`) to stdout |
-| `cp` | Verified same-source, cross-source, and multi-source file copy (no `-R`) |
-| `mv` | Same-source file move, single or multi-file into a directory |
+| `cp` | Metadata-verified same-source, cross-source, and multi-source file copy (no `-R`) |
+| `mv` | Metadata-verified same-source file move, single or multi-file into a directory |
 | `mkdir` | Create directories; `-p` creates parents |
 | `rmdir` | Remove empty directories |
 | `rm` | Remove files; `-d` empty dirs, `-f` force, `-v` verbose |

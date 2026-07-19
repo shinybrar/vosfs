@@ -29,8 +29,10 @@ final destination directory and processes sources sequentially in argv order.
 For each source, the target is the destination path joined with its basename.
 The existing same-configured-name transfer path applies when source and
 destination names match; otherwise the existing cross-source staging, upload,
-and byte-verification path applies. Configured names select this behavior, not
-backend class or object identity.
+and metadata-verification path applies. Exact type and size are sufficient when
+no recognized metadata token is shared; every shared normalized token must
+match exactly. Configured names select this behavior, not backend class or
+object identity.
 
 Existing target files are replaced. Duplicate basenames are deterministically
 replaced by later argv operands after each prior target is fully verified.
