@@ -1,4 +1,4 @@
-"""Cancellation and ownership tests for coordinated uploads."""
+"""Cancellation and ownership tests through fsspec's async-facade hooks."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import asyncio
 import gc
 import traceback
 import warnings
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
@@ -28,13 +28,27 @@ async def test_cancelled_upload_waits_for_started_requests(
     operation: str,
     repeat_cancel: bool,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     router = respx.Router(base_url=BASE_URL, assert_all_mocked=True)
-    VOSpaceSim().add_container("/cancel").install(router)
+    VOSpaceSim().install(router)
     request_started = asyncio.Event()
     release_requests = asyncio.Event()
     request_tasks: list[asyncio.Task[object]] = []
+    coordinator_tasks: list[asyncio.Future[Any]] = []
     requests: list[tuple[str, str]] = []
+    ensure_future = asyncio.ensure_future
+
+    def record_task(
+        awaitable: Awaitable[Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> asyncio.Future[Any]:
+        task = ensure_future(awaitable, *args, **kwargs)
+        coordinator_tasks.append(task)
+        return task
+
+    monkeypatch.setattr(asyncio, "ensure_future", record_task)
 
     async def transport(request: httpx.Request) -> httpx.Response:
         requests.append((request.method, str(request.url)))
@@ -42,7 +56,8 @@ async def test_cancelled_upload_waits_for_started_requests(
             task = asyncio.current_task()
             assert task is not None
             request_tasks.append(task)
-            request_started.set()
+            if len(request_tasks) == 2:
+                request_started.set()
             await release_requests.wait()
         return await router.async_handler(request)
 
@@ -52,7 +67,7 @@ async def test_cancelled_upload_waits_for_started_requests(
         asynchronous=True,
         skip_instance_cache=True,
     )
-    remote: list[str] = [f"/cancel/{name}.bin" for name in ("a", "b", "c")]
+    remote: list[str] = [f"/{name}.bin" for name in ("a", "b", "c")]
     if operation == "pipe":
         upload = fs._pipe(dict.fromkeys(remote, b"data"), batch_size=2)
     else:
@@ -78,6 +93,9 @@ async def test_cancelled_upload_waits_for_started_requests(
     await fs.aclose()
 
     assert type(cancelled.value) is asyncio.CancelledError
+    assert len(request_tasks) == 2
+    assert len(coordinator_tasks) == 2
+    assert all(child.done() for child in coordinator_tasks)
     assert finished_before_return
     assert request_count_after_release == request_count
 
@@ -196,7 +214,9 @@ async def test_cancelled_put_waits_for_callback_prelude(
     assert finished_before_return
 
 
-async def test_cancelled_dispatched_put_closes_response_and_invalidates_cache() -> None:
+async def test_cancelled_dispatched_put_closes_response_and_invalidates_cache(
+    tmp_path: Path,
+) -> None:
     router = respx.Router(base_url=BASE_URL, assert_all_mocked=True)
     VOSpaceSim().add_container("/cached").install(router)
     response_started = asyncio.Event()
@@ -233,7 +253,9 @@ async def test_cancelled_dispatched_put_closes_response_and_invalidates_cache() 
     fs.dircache["/"] = []
     fs.dircache["/cached"] = []
     fs.dircache["/cached/data.bin"] = []
-    task = asyncio.create_task(fs._pipe({"/cached/data.bin": b"data"}))
+    local = tmp_path / "data.bin"
+    local.write_bytes(b"data")
+    task = asyncio.create_task(fs._put([str(local)], ["/cached/data.bin"]))
     await asyncio.wait_for(response_started.wait(), timeout=1)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

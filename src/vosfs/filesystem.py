@@ -63,7 +63,7 @@ _DEFAULT_CONTENT_TYPE = "application/octet-stream"
 _GET_CONTAINER_MARKER = "_vosfs_materialize_get_container"
 
 
-class _WriteParentState:
+class _CoordinatedWriteState:
     """Operation-scoped upload state and owned child tasks."""
 
     def __init__(self, owner: object) -> None:
@@ -76,16 +76,16 @@ class _WriteParentState:
         self.failure: Exception | None = None
 
 
-_WRITE_PARENT_STATE: contextvars.ContextVar[_WriteParentState | None] = (
-    contextvars.ContextVar("vosfs_write_parent_state", default=None)
+_COORDINATED_WRITE_STATE: contextvars.ContextVar[_CoordinatedWriteState | None] = (
+    contextvars.ContextVar("vosfs_coordinated_write_state", default=None)
 )
 
 
 @contextlib.asynccontextmanager
 async def _write_scope(owner: object) -> AsyncIterator[None]:
     """Bind one bulk write and drain every child before returning."""
-    state = _WriteParentState(owner)
-    token = _WRITE_PARENT_STATE.set(state)
+    state = _CoordinatedWriteState(owner)
+    token = _COORDINATED_WRITE_STATE.set(state)
     body_error: BaseException | None = None
     try:
         try:
@@ -100,18 +100,17 @@ async def _write_scope(owner: object) -> AsyncIterator[None]:
                 try:
                     await asyncio.shield(cleanup)
                 except asyncio.CancelledError as exc:  # noqa: PERF203 - drain loop
-                    if body_error is None:
-                        body_error = exc
+                    body_error = exc
             cleanup.result()
         finally:
-            _WRITE_PARENT_STATE.reset(token)
+            _COORDINATED_WRITE_STATE.reset(token)
     if body_error is not None:
         raise body_error
 
 
-def _write_state(owner: object) -> _WriteParentState | None:
+def _join_write_scope(owner: object) -> _CoordinatedWriteState | None:
     """Return owner state and register calling child task."""
-    state = _WRITE_PARENT_STATE.get()
+    state = _COORDINATED_WRITE_STATE.get()
     if state is None or state.owner is not owner:
         return None
     task = asyncio.current_task()
@@ -124,7 +123,7 @@ def _write_state(owner: object) -> _WriteParentState | None:
 
 
 def _discard_write_task(
-    state: _WriteParentState,
+    state: _CoordinatedWriteState,
     task: asyncio.Task[object],
 ) -> None:
     """Retrieve child outcome and release completed task ownership."""
@@ -133,7 +132,7 @@ def _discard_write_task(
     state.tasks.discard(task)
 
 
-async def _drain_write_tasks(state: _WriteParentState) -> None:
+async def _drain_write_tasks(state: _CoordinatedWriteState) -> None:
     """Cancel and await registered children, including late joiners."""
     observed: set[asyncio.Task[object]] | None = None
     while observed != state.tasks:
@@ -161,7 +160,7 @@ class _DeferredAwaitable:
         self._factory = factory
 
     def __await__(self) -> Generator[Any, None, Any]:
-        _write_state(self._owner)
+        _join_write_scope(self._owner)
         return self._factory().__await__()
 
 
@@ -935,7 +934,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
     ) -> None:
         """Write ``value`` to ``path`` with one whole PUT (create or overwrite)."""
         path = self._strip_protocol(path)
-        state = _write_state(self)
+        state = _join_write_scope(self)
         if mode == "create" and await self._exists(path):
             msg = f"path already exists: {path}"
             raise FileExistsError(msg)
@@ -958,7 +957,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         """Stream one local file through one negotiated whole PUT."""
         callback: Callback = kwargs.get("callback", DEFAULT_CALLBACK)
         rpath = self._strip_protocol(rpath)
-        state = _write_state(self)
+        state = _join_write_scope(self)
         if mode == "create" and await self._exists(rpath):
             msg = f"path already exists: {rpath}"
             raise FileExistsError(msg)
@@ -1049,7 +1048,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
     async def _makedirs(self, path: str, exist_ok: bool = False) -> None:  # noqa: FBT001, FBT002
         """Create ``path`` and every missing ancestor, top-down."""
         path = self._strip_protocol(path)
-        state = _write_state(self)
+        state = _join_write_scope(self)
         if not exist_ok and await self._exists(path):
             msg = f"path already exists: {path}"
             raise FileExistsError(msg)
@@ -1062,7 +1061,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
     async def _materialize_write_parent(
         self,
         path: str,
-        state: _WriteParentState | None,
+        state: _CoordinatedWriteState | None,
     ) -> None:
         """Materialize one coordinated write's missing parent containers."""
         parent = paths.parent(path)
@@ -1072,7 +1071,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
     async def _materialize_write_containers(
         self,
         path: str,
-        state: _WriteParentState,
+        state: _CoordinatedWriteState,
     ) -> None:
         """Create required containers top-down at most once in one operation."""
         async with state.lock:
