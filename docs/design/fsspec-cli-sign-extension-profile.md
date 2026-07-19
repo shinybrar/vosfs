@@ -27,9 +27,9 @@ and an immutable snapshot of the configured source mapping. Extensions add
 commands; they do not add a runner, source-lifecycle API, backend registry, or
 runtime matrix. Core command modules do not import or branch on this extension.
 
-This additive constructor argument does not change the sole stable host
-integration seam established by ADR 0002 and ADR 0003:
-`App(...).typer_app`.
+This additive constructor argument amends the sole stable host integration seam
+as accepted by [ADR 0004](../adr/0004-add-opt-in-command-extensions.md). The
+integration point remains `App(...).typer_app`; no second host seam is added.
 
 ## 2. Command form and preflight
 
