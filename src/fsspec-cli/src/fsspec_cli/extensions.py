@@ -8,15 +8,13 @@ from ._app import _register_async_command
 from ._command import (
     _Failure,
     _MappedOperand,
-    _parse_mapped_operand,
+    _preflight_single_mapped_operand,
     _RawCommand,
     _run_single_operand_text,
-    _usage_error,
 )
-from ._diagnostics import _render_diagnostic_value
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Mapping
+    from collections.abc import Mapping
 
     import typer
     from fsspec.asyn import AsyncFileSystem
@@ -30,28 +28,6 @@ class _SignCommand(_RawCommand):
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         del ctx
         formatter.write_usage("sign", "[--] name:/path")
-
-
-def _preflight(
-    command: str,
-    raw_arguments: tuple[str, ...],
-    known_names: Collection[str],
-) -> _MappedOperand:
-    operand = None
-    options_active = True
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            continue
-        if options_active and argument.startswith("-"):
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: unsupported option")
-        if operand is not None:
-            _usage_error(command, "extra operand")
-        operand = _parse_mapped_operand(command, argument, known_names)
-    if operand is None:
-        _usage_error(command, "missing mapped filesystem operand")
-    return operand
 
 
 async def _sign(
@@ -74,7 +50,7 @@ async def _run_sign(
     raw_arguments: tuple[str, ...],
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    operand = _preflight(command, raw_arguments, sources)
+    operand = _preflight_single_mapped_operand(command, raw_arguments, sources)
 
     async def operation(filesystem: AsyncFileSystem) -> str | _Failure:
         return await _sign(operand, filesystem)

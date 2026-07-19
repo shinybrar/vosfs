@@ -232,3 +232,26 @@ def _parse_mapped_operand(
         )
 
     return _MappedOperand(spelling=argument, name=name, path=path)
+
+
+def _preflight_single_mapped_operand(
+    command: str,
+    raw_arguments: tuple[str, ...],
+    known_names: Collection[str],
+) -> _MappedOperand:
+    """Parse one mapped operand for a command with no options."""
+    operand = None
+    options_active = True
+    for argument in raw_arguments:
+        if options_active and argument == "--":
+            options_active = False
+            continue
+        if options_active and argument.startswith("-"):
+            rendered = _render_diagnostic_value(argument)
+            _usage_error(command, f"{rendered}: unsupported option")
+        if operand is not None:
+            _usage_error(command, "extra operand")
+        operand = _parse_mapped_operand(command, argument, known_names)
+    if operand is None:
+        _usage_error(command, "missing mapped filesystem operand")
+    return operand
