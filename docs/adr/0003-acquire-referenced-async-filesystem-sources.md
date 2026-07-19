@@ -96,9 +96,23 @@ source on the same task and loop; then propagates the original control flow
 unchanged. An ordinary exit failure is diagnosed but cannot replace it, and a
 truthy exit cannot suppress it.
 
-V1 adds no numeric `130` contract, shield task, cleanup timeout, background
-loop, or runner thread. An exit that returns or raises permits later exits; an
-exit that never returns can prevent cleanup completion and propagation.
+Pinned fsspec 2026.6.0 requires one narrow exception before that same-task
+cleanup. `tree` can await an `AsyncFileSystemWrapper._walk` hook that resolves
+to a lazy synchronous iterator. The command owns one worker task and thread
+only while materializing that iterator. The synchronous worker catches every
+iterator `BaseException` and returns it as typed outcome data, so iterator
+control flow never crosses the child-task boundary as task cancellation. The
+invocation task shields and, when interrupted, drains that worker before
+source cleanup. It then raises the exact iterator control-flow object, or the
+unchanged outer control flow when the invocation itself was interrupted. A
+source is therefore never exited while its invocation-owned iterator is still
+running.
+
+Apart from that tree-only adapter, V1 adds no numeric `130` contract, general
+shield task, cleanup timeout, background loop, or general runner thread.
+Source cleanup itself is not shielded. An exit that returns or raises permits
+later exits; an exit that never returns can prevent cleanup completion and
+propagation.
 
 Outcome precedence is:
 
@@ -125,8 +139,9 @@ helper remains an implementation detail and does not become a second seam.
   states before tracer evidence shows startup latency matters.
 - Allowing context exits to suppress or replace failures would transfer command
   policy to host adapters and make outcomes backend-dependent.
-- A shield, timeout, or second runner would add lifecycle policy not supplied by
-  `App(sources).typer_app`.
+- A general shield, timeout, or second runner would add lifecycle policy not
+  supplied by `App(sources).typer_app`. The tree-only worker above instead
+  terminates one pinned lazy iterator before the existing same-task cleanup.
 
 ## Consequences
 
