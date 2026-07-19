@@ -333,3 +333,42 @@ async def test_scope_owner_and_descendants_share_state_without_owner_deadlock() 
     assert descendant_state == [owner_state]
     assert descendant_task.done()
     assert not owner_was_registered
+
+
+async def test_scope_drains_same_cardinality_task_replacement() -> None:
+    owner = object()
+    first_joined = asyncio.Event()
+    replacement_joined = asyncio.Event()
+    release_replacement = asyncio.Event()
+    replacement_tasks: list[asyncio.Task[None]] = []
+
+    async def replacement() -> None:
+        try:
+            _write_coordination.current(owner)
+        except asyncio.CancelledError:
+            replacement_joined.set()
+            await release_replacement.wait()
+
+    async def first() -> None:
+        assert _write_coordination.current(owner) is not None
+        first_joined.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            replacement_tasks.append(asyncio.create_task(replacement()))
+            await replacement_joined.wait()
+
+    replacement_done_when_scope_returned = False
+    try:
+        async with _write_coordination.scope(owner):
+            first_task = asyncio.create_task(first())
+            await first_joined.wait()
+
+        replacement_done_when_scope_returned = replacement_tasks[0].done()
+    finally:
+        release_replacement.set()
+        if replacement_tasks:
+            await asyncio.gather(*replacement_tasks, return_exceptions=True)
+
+    assert first_task.done()
+    assert replacement_done_when_scope_returned

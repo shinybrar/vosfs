@@ -150,9 +150,9 @@ async def _finish_uninterruptibly(
 
 async def _drain(state: _WriteParentState) -> None:
     """Cancel and await every joined descendant, including late joiners."""
-    observed = -1
-    while observed != len(state.tasks):
-        observed = len(state.tasks)
+    observed: set[asyncio.Task[object]] | None = None
+    while observed != state.tasks:
+        observed = set(state.tasks)
         await asyncio.sleep(0)
         registered = list(state.tasks)
         for task in registered:
