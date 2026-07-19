@@ -18,23 +18,14 @@ def _source_must_not_run() -> NoReturn:
 
 
 def test_sign_command_is_absent_without_the_extension() -> None:
-    source_called = False
-
-    @asynccontextmanager
-    async def source():
-        nonlocal source_called
-        source_called = True
-        yield AsyncFileSystem(asynchronous=True)
-
     result = CliRunner().invoke(
-        App({"memory": source}).typer_app,
+        App({"memory": _source_must_not_run}).typer_app,
         ["sign", "memory:/report.csv"],
     )
 
     assert result.exit_code == 2
     assert "No such command 'sign'" in result.stderr
     assert result.stdout == ""
-    assert source_called is False
 
 
 @pytest.mark.parametrize(
