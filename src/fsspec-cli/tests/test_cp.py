@@ -1429,6 +1429,77 @@ class _SecondaryControlFlow(BaseException):
     pass
 
 
+def test_cp_propagates_cleanup_control_flow_after_descriptor_close_error(
+    monkeypatch,
+) -> None:
+    primary = OSError("descriptor-close")
+    cleanup_control = _SecondaryControlFlow("cleanup-control")
+    cleaned: list[str] = []
+    source = _file_source()
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
+
+    def fail_close(_descriptor: int) -> NoReturn:
+        raise primary
+
+    def fail_cleanup(path: str) -> NoReturn:
+        cleaned.append(path)
+        Path(path).unlink(missing_ok=True)
+        raise cleanup_control
+
+    monkeypatch.setattr("fsspec_cli._cp.os.close", fail_close)
+    monkeypatch.setattr("fsspec_cli._cp._remove_temporary", fail_cleanup)
+
+    with pytest.raises(_SecondaryControlFlow) as caught:
+        _invoke_cp(
+            ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+            sources={"source": source, "destination": destination},
+        )
+
+    assert caught.value is cleanup_control
+    assert len(cleaned) == 1
+    assert not Path(cleaned[0]).exists()
+    assert not source.get_file_paths
+
+
+def test_cp_propagates_cleanup_control_flow_after_staging_download_error(
+    monkeypatch,
+) -> None:
+    primary = OSError("staging-download")
+    cleanup_control = _SecondaryControlFlow("cleanup-control")
+    cleaned: list[str] = []
+
+    def fail_download(_local_path: str) -> NoReturn:
+        raise primary
+
+    def fail_cleanup(path: str) -> NoReturn:
+        cleaned.append(path)
+        Path(path).unlink(missing_ok=True)
+        raise cleanup_control
+
+    source = _file_source(get_file_by_path={"/docs/notes.txt": fail_download})
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
+    monkeypatch.setattr("fsspec_cli._cp._remove_temporary", fail_cleanup)
+
+    with pytest.raises(_SecondaryControlFlow) as caught:
+        _invoke_cp(
+            ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+            sources={"source": source, "destination": destination},
+        )
+
+    assert caught.value is cleanup_control
+    assert cleaned == source.get_file_paths
+    assert len(cleaned) == 1
+    assert not Path(cleaned[0]).exists()
+
+
 @pytest.mark.parametrize(
     "secondary",
     [OSError("cleanup-error"), _SecondaryControlFlow("cleanup-control")],

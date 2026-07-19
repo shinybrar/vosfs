@@ -238,7 +238,7 @@ async def _stage_remote(
     try:
         os.close(descriptor)
     except Exception as error:  # noqa: BLE001 - local staging descriptor boundary.
-        _discard_temporary(temporary)
+        _remove_temporary(temporary)
         return None, error
     except BaseException:
         _discard_temporary(temporary)
@@ -247,7 +247,7 @@ async def _stage_remote(
     try:
         await filesystem._get_file(remote, temporary)  # noqa: SLF001
     except Exception as error:  # noqa: BLE001 - staging download boundary.
-        _discard_temporary(temporary)
+        _remove_temporary(temporary)
         return None, error
     except BaseException:
         _discard_temporary(temporary)
