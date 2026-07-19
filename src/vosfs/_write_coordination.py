@@ -53,6 +53,7 @@ async def scope(
     token = _CURRENT.set(state)
     body_error: BaseException | None = None
     failure_before_cleanup: Exception | None = None
+    failure_to_raise: Exception | None = None
     cleanup_cancel: asyncio.CancelledError | None = None
     try:
         try:
@@ -69,18 +70,21 @@ async def scope(
         try:
             cleanup_cancel = await _finish_uninterruptibly(state)
         finally:
-            recorded_failure_wins = failure_before_cleanup is not None and (
+            if failure_before_cleanup is not None and (
                 body_error is None or isinstance(body_error, asyncio.CancelledError)
-            )
+            ):
+                failure_to_raise = failure_before_cleanup
+            elif body_error is None:
+                failure_to_raise = state.failure
             restore_count = (
                 entry_cancellation_count
-                if recorded_failure_wins
+                if failure_to_raise is not None
                 else cleanup_cancellation_count
             )
             _restore_cancellation_count(state.owner_task, restore_count)
             _CURRENT.reset(token)
-        if recorded_failure_wins:
-            raise failure_before_cleanup
+        if failure_to_raise is not None:
+            raise failure_to_raise
         if cleanup_cancel is not None and body_error is None:
             raise cleanup_cancel
 

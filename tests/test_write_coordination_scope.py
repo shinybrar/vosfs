@@ -306,6 +306,70 @@ async def test_scope_retrieves_failures_from_done_descendants_on_cancellation() 
     assert unretrieved == []
 
 
+async def test_successful_scope_raises_descendant_failure_during_cleanup() -> None:
+    owner = object()
+    owner_task = asyncio.current_task()
+    assert owner_task is not None
+    baseline = owner_task.cancelling() if hasattr(asyncio.Task, "uncancel") else None
+    joined = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release_failure = asyncio.Event()
+    descendant_tasks: list[asyncio.Task[None]] = []
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    exception_contexts: list[dict[str, object]] = []
+
+    def capture_exception(
+        _loop: asyncio.AbstractEventLoop,
+        context: dict[str, object],
+    ) -> None:
+        exception_contexts.append(context)
+
+    async def fail_during_cleanup() -> None:
+        assert _write_coordination.current(owner) is not None
+        joined.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cleanup_started.set()
+            await release_failure.wait()
+            msg = "failure during cleanup"
+            raise RuntimeError(msg) from None
+
+    async def cancel_cleanup() -> None:
+        await cleanup_started.wait()
+        owner_task.cancel("cleanup cancellation")
+        release_failure.set()
+
+    async def successful_operation() -> None:
+        async with _write_coordination.scope(owner):
+            descendant_tasks.append(asyncio.create_task(fail_during_cleanup()))
+            await joined.wait()
+
+    loop.set_exception_handler(capture_exception)
+    cleanup_canceller = asyncio.create_task(cancel_cleanup())
+    try:
+        with pytest.raises(RuntimeError, match="failure during cleanup"):
+            await successful_operation()
+        assert descendant_tasks.pop().done()
+        assert baseline is None or owner_task.cancelling() == baseline
+        gc.collect()
+    finally:
+        release_failure.set()
+        await cleanup_canceller
+        if descendant_tasks:
+            await asyncio.gather(*descendant_tasks, return_exceptions=True)
+        loop.set_exception_handler(previous_handler)
+        if baseline is not None:
+            while owner_task.cancelling() > baseline:
+                owner_task.uncancel()
+
+    assert not any(
+        context.get("message") == "Task exception was never retrieved"
+        for context in exception_contexts
+    )
+
+
 async def test_scope_owner_and_descendants_share_state_without_owner_deadlock() -> None:
     owner = object()
     descendant_joined = asyncio.Event()
