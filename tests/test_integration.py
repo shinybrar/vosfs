@@ -137,3 +137,41 @@ def test_recursive_get(
     assert list((local_tree / "empty").iterdir()) == []
     assert (local_tree / "root.bin").read_bytes() == b"root-live-bytes"
     assert (local_tree / "nested" / "leaf.bin").read_bytes() == b"leaf-live-bytes"
+
+
+@requires_service
+def test_coordinated_put_and_pipe_create_remote_parents(
+    fs: VOSpaceFileSystem,
+    run_namespace: str,
+    tmp_path,
+) -> None:
+    local_tree = tmp_path / "upload"
+    (local_tree / "empty").mkdir(parents=True)
+    (local_tree / "nested").mkdir()
+    (local_tree / "root.bin").write_bytes(b"put-root-live-bytes")
+    (local_tree / "nested" / "leaf.bin").write_bytes(b"put-leaf-live-bytes")
+    remote_put = f"{run_namespace}/coordinated-put/tree"
+
+    fs.put(str(local_tree), remote_put, recursive=True, batch_size=2)
+
+    assert fs.isdir(f"{remote_put}/empty")
+    assert fs.ls(f"{remote_put}/empty", detail=False) == []
+    assert fs.cat_file(f"{remote_put}/root.bin") == b"put-root-live-bytes"
+    assert fs.cat_file(f"{remote_put}/nested/leaf.bin") == b"put-leaf-live-bytes"
+
+    pipe_root = f"{run_namespace}/coordinated-pipe/nested"
+    fs.pipe(
+        {
+            f"{pipe_root}/a.bin": b"pipe-a-live-bytes",
+            f"{pipe_root}/b.bin": b"pipe-b-live-bytes",
+        },
+        batch_size=2,
+    )
+
+    assert fs.isdir(pipe_root)
+    assert sorted(fs.ls(pipe_root, detail=False)) == [
+        f"{pipe_root}/a.bin",
+        f"{pipe_root}/b.bin",
+    ]
+    assert fs.cat_file(f"{pipe_root}/a.bin") == b"pipe-a-live-bytes"
+    assert fs.cat_file(f"{pipe_root}/b.bin") == b"pipe-b-live-bytes"

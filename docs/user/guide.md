@@ -110,6 +110,24 @@ Recursive `get` is client-derived. `vosfs` traverses the remote
 directory (including empty containers), and downloads each `DataNode` through
 the normal whole-object read path.
 
+Coordinated `put` and `pipe` operations create any required remote
+`ContainerNode` parents before writing descendant bytes. A recursive `put`
+also reproduces the local directory tree, including empty directories:
+
+```python
+fs.put("local-results", "/project/archive/results", recursive=True)
+fs.pipe(
+    {
+        "/project/generated/a.txt": b"a",
+        "/project/generated/b.txt": b"b",
+    }
+)
+```
+
+Each destination file still uses one negotiated whole-object `PUT`; parent
+creation is scoped to the coordinated operation and does not change the
+single-file `put_file` or `pipe_file` hooks.
+
 `open("rb")` downloads once into a disk-backed temporary file and then provides
 local `read`/`readinto`/`readline`/iteration/`tell`/`seek`. `open("wb")` and
 `open("w")` disk-stage writes and upload once only after a successful close or

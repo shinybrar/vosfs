@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import contextvars
 import datetime
 import errno
 import hashlib
@@ -52,6 +53,23 @@ _IDENTITY_ENCODING = {"Accept-Encoding": "identity"}
 _READ_CHUNK = 1 << 20
 _DEFAULT_CONTENT_TYPE = "application/octet-stream"
 _GET_CONTAINER_MARKER = "_vosfs_materialize_get_container"
+_WRITE_PARENT_STATE: contextvars.ContextVar[_WriteParentState | None]
+
+
+class _WriteParentState:
+    """Operation-scoped coordination for remote upload containers."""
+
+    def __init__(self, owner: object) -> None:
+        self.owner = owner
+        self.lock = asyncio.Lock()
+        self.materialized: set[str] = set()
+        self.failure: Exception | None = None
+
+
+_WRITE_PARENT_STATE = contextvars.ContextVar(
+    "vosfs_write_parent_state",
+    default=None,
+)
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -678,6 +696,50 @@ class VOSpaceFileSystem(AsyncFileSystem):
 
     # -- writing bytes -------------------------------------------------------
 
+    async def _put(  # noqa: PLR0913 - fsspec hook signature
+        self,
+        lpath: str | list[str],
+        rpath: str | list[str],
+        recursive: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
+        callback: Callback = DEFAULT_CALLBACK,
+        batch_size: int | None = None,
+        maxdepth: int | None = None,
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> list[Any] | None:
+        """Use fsspec's upload coordinator with one shared parent-creation scope."""
+        token = _WRITE_PARENT_STATE.set(_WriteParentState(self))
+        try:
+            return await super()._put(
+                lpath,
+                rpath,
+                recursive=recursive,
+                callback=callback,
+                batch_size=batch_size,
+                maxdepth=maxdepth,
+                **kwargs,
+            )
+        finally:
+            _WRITE_PARENT_STATE.reset(token)
+
+    async def _pipe(
+        self,
+        path: str | Mapping[str, bytes],
+        value: bytes | None = None,
+        batch_size: int | None = None,
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> list[Any] | None:
+        """Use fsspec's pipe coordinator with one shared parent-creation scope."""
+        token = _WRITE_PARENT_STATE.set(_WriteParentState(self))
+        try:
+            return await super()._pipe(
+                path,
+                value=value,
+                batch_size=batch_size,
+                **kwargs,
+            )
+        finally:
+            _WRITE_PARENT_STATE.reset(token)
+
     async def _write(
         self,
         path: str,
@@ -722,6 +784,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         if mode == "create" and await self._exists(path):
             msg = f"path already exists: {path}"
             raise FileExistsError(msg)
+        await self._materialize_write_parent(path)
         await self._write(
             path,
             value,
@@ -743,6 +806,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         if mode == "create" and await self._exists(rpath):
             msg = f"path already exists: {rpath}"
             raise FileExistsError(msg)
+        await self._materialize_write_parent(rpath)
         size = Path(lpath).stat().st_size  # noqa: ASYNC240 - local-disk stat, not remote I/O
         callback.set_size(size)
         await self._write(
@@ -832,8 +896,50 @@ class VOSpaceFileSystem(AsyncFileSystem):
         if not exist_ok and await self._exists(path):
             msg = f"path already exists: {path}"
             raise FileExistsError(msg)
+        state = _WRITE_PARENT_STATE.get()
+        if state is not None and state.owner is not self:
+            state = None
+        if state is not None:
+            await self._materialize_write_containers(path, state)
+            return
         for ancestor in _ancestors_top_down(path):
             await self._ensure_container(ancestor)
+
+    async def _materialize_write_parent(
+        self,
+        path: str,
+    ) -> None:
+        """Materialize one coordinated write's missing parent containers."""
+        state = _WRITE_PARENT_STATE.get()
+        parent = paths.parent(path)
+        if state is not None and state.owner is self and parent not in ("/", path):
+            await self._materialize_write_containers(parent, state)
+
+    async def _materialize_write_containers(
+        self,
+        path: str,
+        state: _WriteParentState,
+    ) -> None:
+        """Create required containers top-down at most once in one operation."""
+        async with state.lock:
+            if state.failure is not None:
+                raise state.failure
+            try:
+                for ancestor in _ancestors_top_down(path):
+                    if ancestor in state.materialized:
+                        continue
+                    try:
+                        info = await self._info(ancestor)
+                    except FileNotFoundError:
+                        await self._ensure_container(ancestor)
+                    else:
+                        if info["type"] != "directory":
+                            msg = f"write parent is not a directory: {ancestor}"
+                            raise FileExistsError(msg)
+                    state.materialized.add(ancestor)
+            except Exception as exc:
+                state.failure = exc
+                raise
 
     async def _ensure_container(self, path: str) -> None:
         """Create a container, tolerating a concurrently-created container."""
