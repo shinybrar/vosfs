@@ -2,83 +2,118 @@
 
 <!-- pyml disable line-length -->
 
-Status: **Reusable execution contract.** System-agnostic. This document is
-handed to a subagent together with a **spec**; it defines *how* to take one
-ticket from that spec to a merged change and continue. It hard-codes no project,
-path, or command — the spec and the project's own contributing guide supply
-those.
+Status: **Reusable execution contract.** System-agnostic. Handed to a subagent
+together with a **spec**; it defines *how* to take a spec from its first ticket
+to a fully merged, review-clean whole. It hard-codes no project, path, or
+command — the spec and the project's own contributing guide supply those.
 
 ## What you have been given
 
 - A **spec** — the source of truth for *what* to build and the invariants it must
   hold. It wins on every question of behavior.
-- One **assigned ticket** from that spec's epic.
+- One or more **assigned tickets** from that spec's epic.
 - **This handoff** — the *how*. It wins on process only.
 
-Read the spec and the ticket first. Do not restate spec detail here; keep it as
-the single source.
+Read the spec and the ticket first. Do not restate spec detail here.
 
-## The loop
+## Two loops
 
-Run this cycle for the assigned ticket, then take the next one.
+The **per-ticket loop** stays light so tickets flow; the **heavy multi-reviewer
+suite runs once**, as the spec-completion gate, after every sub-ticket is merged.
+This split is deliberate — reviewing the finished whole once beats re-reviewing
+each ticket N times.
 
 ```text
-/implement  →  review (parallel, once, at the end)  →  fix until green  →  merge  →  continue
+per ticket:   worktree → /implement → ONE deep /code-review → fix (blocking) → gate → merge → next
+end of spec:  thermo + ponytail + deslop + code-review + improve-architecture + simplify → fix → repeat until ALL happy
 ```
 
-### 1. `/implement`
+## Per-ticket loop
 
-- Branch off the current default branch. **One ticket = one branch = one PR.**
-  Never batch tickets.
-- Invoke **`/implement`** for the ticket. Build to the spec — honor its
-  invariants, write the tests/profiles it requires, and keep the project's
-  validation gate (lint, types, tests, docs build, and any release/live gate the
-  spec names) green as you go.
-- Stay in scope. An out-of-scope finding becomes a tracked follow-up ticket, not
-  a fold-in.
+### 1. Worktree (always)
 
-### 2. Review — parallel subagents, once, at the end
+**Always work in a git worktree** off the current default branch — never edit the
+default checkout directly, and never reuse a worktree across tickets. One ticket
+= one worktree = one branch = one PR. Independent tickets (no open blocker in the
+epic's dependency graph) may run in **parallel worktrees**. Remove the worktree
+after merge.
 
-When the PR's implementation is complete and the gate is green, spawn these
-reviews **in parallel, each as its own subagent**, run **once** over the finished
-change (not interleaved per commit):
+### 2. `/implement`
 
-- `/deslop`
-- `/thermo-nuclear-code-quality-review`
-- `/improve-codebase-architecture`
-- `/ponytail-review`
-- `/simplify`
+Invoke `/implement` for the ticket. Build to the spec — honor its invariants,
+write the tests/profiles it requires, and keep the validation gate (lint, types,
+tests, docs build, any live/release gate the spec names) green as you go. Apply
+deterministic auto-fixes (formatter, lint `--fix`) inline — they are not review
+findings. Stay in scope; an out-of-scope finding is a tracked follow-up ticket.
 
-Collect every finding into one list. (Run whichever of these the environment
-provides; note any that were unavailable.)
+### 3. One deep `/code-review` (per ticket, exactly one round)
 
-### 3. Fix until green
-
-- Address the findings, then re-run the affected reviews **and** the validation
-  gate until the review pass is clean and the gate is green.
-- A finding that is genuinely out of scope becomes a follow-up ticket — never a
-  silent skip.
+After `/implement`, run **exactly one** round of deep `/code-review`, scoped to
+the ticket's diff (`<default-branch>..HEAD`, not the whole repo). **Take and
+implement its feedback** — but **block the merge only on correctness, security,
+and spec-conformance**. Roll style, simplification, and architecture nits
+**forward to the end-of-spec gate**: do not perfect each ticket, and do not loop
+`/code-review` per ticket. (For a purely mechanical ticket — a rename, a doc, a
+config bump — a green gate is enough; skip the review round.)
 
 ### 4. Merge
 
-- Validation gate green, CI green, reviews green, hooks never bypassed.
-- Open/merge the PR; reference the ticket and its epic; tick the epic's
-  checklist item.
+Validation gate green, CI green, the one review's blocking findings addressed,
+hooks never bypassed. Merge the PR; reference the ticket + epic; tick the epic's
+checklist item; delete the worktree.
 
 ### 5. Continue
 
-- Sync the default branch. Take the next ticket in the epic's order. Repeat the
-  loop.
+Sync the default branch; take the next unblocked ticket. Repeat.
+
+## Spec-completion gate (once, after ALL sub-tickets are merged)
+
+Only when **every** sub-ticket of the spec is merged, run the full suite as the
+**last gate** — the single place the heavy, cross-cutting quality reviews live.
+
+Spawn these **in parallel, each its own subagent**, over the spec's whole change:
+
+- `/thermo-nuclear-code-quality-review`
+- `/ponytail-review`
+- `/deslop`
+- `/code-review`
+- `/improve-codebase-architecture`
+- `/simplify`
+
+Then **iterate until every reviewer is happy**: fix the findings, **re-run only
+the reviewers that flagged something** (over the changed files), and repeat until
+all pass and the gate is green. Converge — don't re-run the whole suite each
+round. (Run whichever reviewers the environment provides; note any unavailable.)
+
+## Keeping it fast
+
+The loop is tuned for throughput; hold these so it does not bog down:
+
+- **Scope every review to the diff**, never the whole repo.
+- **Severity-gate per ticket**: block only on correctness/security/spec; defer
+  every quality nit to the final gate.
+- **Parallelize unblocked tickets** in separate worktrees, driven by the epic's
+  dependency graph — don't serialize independent work.
+- **Converge the final gate** by re-running only the reviewers that flagged, and
+  **cap the rounds** (e.g. 3): remaining nits become follow-up tickets rather
+  than an unbounded back-and-forth.
+- **Auto-apply mechanical fixes** (format, lint `--fix`, deterministic
+  deslop/simplify rewrites) without a deliberation round.
+- **A single review-driver** owns the final gate's back-and-forth (collect all
+  reviewers' findings, fix, re-run the failed ones) so convergence is one driven
+  process, not a manual shuffle.
 
 ## Rules of engagement
 
-- **Spec wins on *what*; this handoff wins on *how*.** If they seem to conflict,
-  the spec is right about behavior — fix the process, not the spec, unless the
-  spec is demonstrably wrong (then raise it, don't silently deviate).
-- **One ticket, one branch, one PR** — small and reviewable.
-- **Reviews run once, at the end, in parallel** — after implementation is done,
-  not per commit.
-- **Never bypass hooks or gates**, and never weaken a test to make it pass.
+- **Spec wins on *what*; this handoff wins on *how*.** If they conflict, the spec
+  is right about behavior — fix the process, or raise the spec; never silently
+  deviate.
+- **Always a worktree; one ticket, one branch, one PR** — small and reviewable.
+- **Per ticket: exactly one deep `/code-review` round**, blocking only on
+  correctness/security/spec.
+- **The heavy suite runs once, at the end of the whole spec**, and loops until
+  every reviewer passes.
+- **Never bypass hooks or gates; never weaken a test to make it pass.**
 - **Out-of-scope findings become follow-up tickets**, never silent scope creep.
-- **Behavior-preserving refactors must prove it**: the test suite is unchanged
-  and green before and after.
+- **Behavior-preserving refactors must prove it**: the suite is unchanged and
+  green before and after.
