@@ -37,7 +37,9 @@ _Avoid_: Unimplemented endpoint
 The separately installable, library-only `fsspec-cli` uv workspace member at
 `src/fsspec-cli`, with its Python package at `src/fsspec-cli/src/fsspec_cli`,
 that turns named async filesystem sources into POSIX-shaped Typer commands. Its
-sole stable v1 seam for host tools is `App(sources).typer_app`; it owns each
+sole stable v1 seam for host tools is
+`App(sources, *, extensions=[...]).typer_app`; extensions add opt-in commands
+without changing the core surface when omitted. The embedded command library owns each
 yielded filesystem only for one command invocation, while hosts own source
 configuration and cleanup declaration.
 _Avoid_: vosfs CLI, fsspec-cli executable

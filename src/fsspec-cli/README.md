@@ -55,6 +55,24 @@ Name a configured source as `name:/path` when running a command:
 python app.py fs ls data:/
 ```
 
+Backend-specific commands are opt-in extensions. For example, add `sign` only
+when the host wants to expose a filesystem's signed-URL capability:
+
+```python
+from fsspec_cli.extensions import sign
+
+signed_app = typer.Typer()
+signed_app.add_typer(
+    App({"data": data_source}, extensions=[sign]).typer_app,
+    name="fs",
+)
+```
+
+`sign data:/path` calls the selected filesystem's `sign` capability. A source
+without that capability exits nonzero with one `unsupported operation`
+diagnostic and no traceback. The extension does not infer support from backend
+type or protocol.
+
 ## Commands
 
 | Command | Summary |
@@ -67,6 +85,7 @@ python app.py fs ls data:/
 | `head`, `tail` | Exact leading or trailing bytes via `-c N` |
 | `tree` | Unicode recursive tree; optional `--maxdepth N` |
 | `info` | One normalized metadata dictionary plus backend-specific `extra` values |
+| `sign` (opt-in) | Backend-signed URL when the selected source implements `sign` |
 | `cat` | Concatenate mapped files (and stdin `-`) to stdout |
 | `cp` | Metadata-verified same-source, cross-source, and multi-source file copy (no `-R`) |
 | `mv` | Metadata-verified same-source file move, single or multi-file into a directory |
