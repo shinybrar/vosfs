@@ -27,6 +27,7 @@ def _three_file_upload(
     operation: str,
     tmp_path: Path,
     remote_paths: list[str],
+    callback: Callback | None = None,
 ) -> Coroutine[Any, Any, list[Any] | None]:
     """Create one inherited three-file upload through its public mapping inputs."""
     if operation == "pipe":
@@ -44,6 +45,7 @@ def _three_file_upload(
         local_paths,
         remote_paths,
         batch_size=1,
+        callback=callback or Callback(),
         mode="overwrite",
     )
 
@@ -133,8 +135,7 @@ async def test_cancelled_coordinator_quiesces_spawned_transfers_before_return(
     handler_done_when_cancel_returned = all(task.done() for task in handler_tasks)
     requests_when_cancel_returned = len(transport_requests)
     release_parent_request.set()
-    for _ in range(10):
-        await asyncio.sleep(0)
+    await asyncio.gather(*handler_tasks, return_exceptions=True)
     requests_after_release = len(transport_requests)
     await fs.aclose()
 
@@ -155,6 +156,7 @@ async def test_bounded_coordinator_owns_every_created_upload_awaitable(
     sim.install(router)
     transfer_started = asyncio.Event()
     release_transfer = asyncio.Event()
+    transfer_finished = asyncio.Event()
     transport_requests: list[tuple[str, str]] = []
 
     async def transport_handler(request: httpx.Request) -> httpx.Response:
@@ -163,7 +165,10 @@ async def test_bounded_coordinator_owns_every_created_upload_awaitable(
             transfer_started.set()
             if termination == "error":
                 return httpx.Response(500, text="forced transfer failure")
-            await release_transfer.wait()
+            try:
+                await release_transfer.wait()
+            finally:
+                transfer_finished.set()
             raise asyncio.CancelledError
         return await router.async_handler(request)
 
@@ -174,25 +179,30 @@ async def test_bounded_coordinator_owns_every_created_upload_awaitable(
         skip_instance_cache=True,
     )
     remote_paths = [f"/bounded/{name}.bin" for name in ("a", "b", "c")]
-    coordinated = _three_file_upload(fs, operation, tmp_path, remote_paths)
+    callback = Callback()
+    coordinated = _three_file_upload(
+        fs,
+        operation,
+        tmp_path,
+        remote_paths,
+        callback,
+    )
 
     with warnings.catch_warnings(record=True) as caught_warnings:
         warnings.simplefilter("always", RuntimeWarning)
         operation_task = asyncio.create_task(coordinated)
         await asyncio.wait_for(transfer_started.wait(), timeout=1)
-        for _ in range(10):
-            await asyncio.sleep(0)
+        await _await_upload_termination(operation_task, termination)
         started_transfers = sum(
             method == "POST" and url == SYNC_URL for method, url in transport_requests
         )
-        await _await_upload_termination(operation_task, termination)
 
         requests_when_operation_returned = len(transport_requests)
         release_transfer.set()
+        if termination == "cancellation":
+            await transfer_finished.wait()
         del coordinated, operation_task
         gc.collect()
-        for _ in range(10):
-            await asyncio.sleep(0)
         leaked_awaitables = [
             str(warning.message)
             for warning in caught_warnings
@@ -205,6 +215,49 @@ async def test_bounded_coordinator_owns_every_created_upload_awaitable(
     assert started_transfers == 1
     assert requests_after_release == requests_when_operation_returned
     assert leaked_awaitables == []
+    if operation == "put":
+        assert callback.size == 3
+        assert callback.value == 0
+
+
+async def test_batch_one_does_not_fan_out_tasks_for_unstarted_items() -> None:
+    router = respx.Router(base_url=BASE_URL, assert_all_mocked=True)
+    sim = VOSpaceSim().add_container("/fanout")
+    sim.install(router)
+    transfer_started = asyncio.Event()
+    transfer_finished = asyncio.Event()
+
+    async def transport_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and str(request.url) == SYNC_URL:
+            transfer_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                transfer_finished.set()
+        return await router.async_handler(request)
+
+    fs = VOSpaceFileSystem(
+        BASE_URL,
+        transport=httpx.MockTransport(transport_handler),
+        asynchronous=True,
+        skip_instance_cache=True,
+    )
+    paths = {f"/fanout/{index}.bin": b"data" for index in range(2000)}
+    tasks_before_upload = asyncio.all_tasks()
+    operation_task = asyncio.create_task(fs._pipe(paths, batch_size=1))
+    await asyncio.wait_for(transfer_started.wait(), timeout=1)
+    live_upload_tasks = {
+        task
+        for task in asyncio.all_tasks()
+        if task not in tasks_before_upload and not task.done()
+    }
+    operation_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await operation_task
+    await transfer_finished.wait()
+    await fs.aclose()
+
+    assert len(live_upload_tasks) <= 3
 
 
 @pytest.mark.parametrize("operation", ["pipe", "put"])
@@ -227,8 +280,10 @@ async def test_bounded_coordinator_preserves_limit_results_mode_and_callback(
         if request.method == "POST" and str(request.url) == SYNC_URL:
             active_transfers += 1
             max_active_transfers = max(max_active_transfers, active_transfers)
-            first_transfer_started.set()
             try:
+                if active_transfers == 1:
+                    await asyncio.sleep(0)
+                    first_transfer_started.set()
                 await release_transfers.wait()
                 return await router.async_handler(request)
             finally:
@@ -268,15 +323,12 @@ async def test_bounded_coordinator_preserves_limit_results_mode_and_callback(
 
     operation_task = asyncio.create_task(coordinated)
     await asyncio.wait_for(first_transfer_started.wait(), timeout=1)
-    for _ in range(10):
-        await asyncio.sleep(0)
-    active_before_release = active_transfers
+    assert active_transfers == 1
     release_transfers.set()
     results = await operation_task
     stored_values = [await fs._cat_file(path) for path in remote_paths]
     await fs.aclose()
 
-    assert active_before_release == 1
     assert max_active_transfers == 1
     assert results == [None, None, None]
     assert stored_values == values

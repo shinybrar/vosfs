@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 
-class _UncancellableTask(Protocol):
+class _TaskWithUncancel(Protocol):
     """Task accounting added in Python 3.11, kept structural for 3.10."""
 
     def cancelling(self) -> int: ...
@@ -26,7 +26,6 @@ class _WriteParentState:
         self,
         owner: object,
         owner_task: asyncio.Task[object] | None,
-        max_concurrency: int | None,
     ) -> None:
         self.owner = owner
         self.owner_task = owner_task
@@ -35,26 +34,6 @@ class _WriteParentState:
         self.lock = asyncio.Lock()
         self.materialized: set[str] = set()
         self.failure: Exception | None = None
-        self._limiter = (
-            asyncio.Semaphore(max_concurrency) if max_concurrency is not None else None
-        )
-        self._transfer_error: BaseException | None = None
-
-    @asynccontextmanager
-    async def transfer_slot(self) -> AsyncIterator[None]:
-        """Hold one operation-scoped transfer slot, if writes are bounded."""
-        if self._limiter is None:
-            yield
-            return
-        async with self._limiter:
-            if self._transfer_error is not None:
-                raise self._transfer_error
-            try:
-                yield
-            except BaseException as exc:
-                if self._transfer_error is None:
-                    self._transfer_error = exc
-                raise
 
 
 _CURRENT: contextvars.ContextVar[_WriteParentState | None] = contextvars.ContextVar(
@@ -66,11 +45,9 @@ _CURRENT: contextvars.ContextVar[_WriteParentState | None] = contextvars.Context
 @asynccontextmanager
 async def scope(
     owner: object,
-    *,
-    max_concurrency: int | None = None,
 ) -> AsyncIterator[None]:
     """Coordinate one owner's bulk write and quiesce its joined descendants."""
-    state = _WriteParentState(owner, asyncio.current_task(), max_concurrency)
+    state = _WriteParentState(owner, asyncio.current_task())
     token = _CURRENT.set(state)
     body_error: BaseException | None = None
     cleanup_cancel: asyncio.CancelledError | None = None
@@ -109,7 +86,7 @@ def _cancellation_baseline(task: asyncio.Task[object] | None) -> int | None:
     """Capture a restorable count only on runtimes that support ``uncancel``."""
     if task is None or not hasattr(task, "cancelling") or not hasattr(task, "uncancel"):
         return None
-    return cast("_UncancellableTask", task).cancelling()
+    return cast("_TaskWithUncancel", task).cancelling()
 
 
 def _restore_cancellation_count(
@@ -119,9 +96,9 @@ def _restore_cancellation_count(
     """Remove only cancellation requests intercepted during scope cleanup."""
     if task is None or baseline is None:
         return
-    uncancellable = cast("_UncancellableTask", task)
-    while uncancellable.cancelling() > baseline:
-        uncancellable.uncancel()
+    task_with_uncancel = cast("_TaskWithUncancel", task)
+    while task_with_uncancel.cancelling() > baseline:
+        task_with_uncancel.uncancel()
 
 
 async def _finish_uninterruptibly(
@@ -146,8 +123,10 @@ async def _drain(state: _WriteParentState) -> None:
     while observed != len(state.tasks):
         observed = len(state.tasks)
         await asyncio.sleep(0)
-        pending = [task for task in state.tasks if not task.done()]
-        for task in pending:
+        registered = list(state.tasks)
+        for task in registered:
+            if task.done():
+                continue
             task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        if registered:
+            await asyncio.gather(*registered, return_exceptions=True)

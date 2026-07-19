@@ -15,17 +15,22 @@ import datetime
 import errno
 import hashlib
 import os
+from functools import partial
+from glob import has_magic
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast, overload
 from urllib.parse import unquote, urlsplit
 
 import httpx
-from fsspec.asyn import AsyncFileSystem, _get_batch_size, sync
+from fsspec.asyn import AsyncFileSystem, sync
 from fsspec.callbacks import DEFAULT_CALLBACK
 from fsspec.compression import compr
 from fsspec.core import get_compression
+from fsspec.implementations.local import LocalFileSystem, make_path_posix, trailing_sep
+from fsspec.utils import other_paths
 
 from vosfs import (
+    _bulk,
     _write_coordination,
     capabilities,
     config,
@@ -62,23 +67,6 @@ _IDENTITY_ENCODING = {"Accept-Encoding": "identity"}
 _READ_CHUNK = 1 << 20
 _DEFAULT_CONTENT_TYPE = "application/octet-stream"
 _GET_CONTAINER_MARKER = "_vosfs_materialize_get_container"
-
-
-def _upload_batch_limit(
-    requested: int | None,
-    configured: int | None,
-    *,
-    nofiles: bool,
-) -> int | None:
-    """Resolve fsspec's effective batch size; ``None`` means unbounded."""
-    effective = requested or configured
-    if effective is None:
-        effective = _get_batch_size(nofiles=nofiles)
-    if effective == -1:
-        return None
-    if effective <= 0:
-        raise ValueError
-    return effective
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -716,23 +704,44 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's upload coordinator with one shared parent-creation scope."""
-        max_concurrency = _upload_batch_limit(
+        mapped = await self._map_put_paths(lpath, rpath, recursive, maxdepth)
+        if mapped is None:
+            return None
+        local_paths, remote_paths = mapped
+        max_concurrency = _bulk.resolve_batch_size(
             batch_size,
             self.batch_size,
             nofiles=False,
         )
-        async with _write_coordination.scope(
-            self,
-            max_concurrency=max_concurrency,
-        ):
-            return await super()._put(
-                lpath,
-                rpath,
-                recursive=recursive,
-                callback=callback,
-                batch_size=-1,
-                maxdepth=maxdepth,
-                **kwargs,
+        is_dir = {
+            path: os.path.isdir(path)  # noqa: ASYNC240, PTH112 - local mapping
+            for path in local_paths
+        }
+        remote_dirs = [
+            remote
+            for local, remote in zip(local_paths, remote_paths, strict=False)
+            if is_dir[local]
+        ]
+        file_pairs = [
+            (local, remote)
+            for local, remote in zip(local_paths, remote_paths, strict=False)
+            if not is_dir[local]
+        ]
+
+        async with _write_coordination.scope(self):
+            await _bulk.run_factories(
+                [partial(self._makedirs, path, exist_ok=True) for path in remote_dirs],
+                max_concurrency=max_concurrency,
+            )
+            callback.set_size(len(file_pairs))
+            factories = []
+            for local, remote in file_pairs:
+                put_file = callback.branch_coro(self._put_file)
+                factories.append(partial(put_file, local, remote, **kwargs))
+            return await _bulk.run_factories(
+                factories,
+                max_concurrency=max_concurrency,
+                on_success=callback.relative_update,
             )
 
     async def _pipe(
@@ -743,21 +752,69 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's pipe coordinator with one shared parent-creation scope."""
-        max_concurrency = _upload_batch_limit(
+        if isinstance(path, str):
+            path_map: Mapping[str, bytes] = {path: cast("bytes", value)}
+        else:
+            path_map = path
+        max_concurrency = _bulk.resolve_batch_size(
             batch_size,
             self.batch_size,
             nofiles=True,
         )
-        async with _write_coordination.scope(
-            self,
-            max_concurrency=max_concurrency,
-        ):
-            return await super()._pipe(
-                path,
-                value=value,
-                batch_size=-1,
-                **kwargs,
+        async with _write_coordination.scope(self):
+            return await _bulk.run_factories(
+                [
+                    partial(self._pipe_file, remote, data, **kwargs)
+                    for remote, data in path_map.items()
+                ],
+                max_concurrency=max_concurrency,
             )
+
+    async def _map_put_paths(
+        self,
+        lpath: Any,  # noqa: ANN401 - fsspec accepts strings, globs, and path lists
+        rpath: Any,  # noqa: ANN401 - paired lists or one destination root
+        recursive: bool,  # noqa: FBT001 - mirrors the fsspec hook
+        maxdepth: int | None,
+    ) -> tuple[list[str], list[str]] | None:
+        """Map local inputs to remote paths as fsspec 2026.6 ``_put`` does."""
+        if isinstance(lpath, list) and isinstance(rpath, list):
+            return lpath, rpath
+
+        source_is_str = isinstance(lpath, str)
+        if source_is_str:
+            lpath = make_path_posix(lpath)
+        local_fs = LocalFileSystem()
+        local_paths = local_fs.expand_path(
+            lpath,
+            recursive=recursive,
+            maxdepth=maxdepth,
+        )
+        if source_is_str and (not recursive or maxdepth is not None):
+            local_paths = [
+                path
+                for path in local_paths
+                if not (trailing_sep(path) or local_fs.isdir(path))
+            ]
+            if not local_paths:
+                return None
+
+        source_is_file = len(local_paths) == 1
+        destination_is_dir = isinstance(rpath, str) and (
+            trailing_sep(rpath) or await self._isdir(rpath)
+        )
+        rpath = self._strip_protocol(rpath)
+        exists = source_is_str and (
+            (has_magic(lpath) and source_is_file)
+            or (not has_magic(lpath) and destination_is_dir and not trailing_sep(lpath))
+        )
+        remote_paths = other_paths(
+            local_paths,
+            rpath,
+            exists=exists,
+            flatten=not source_is_str,
+        )
+        return local_paths, remote_paths
 
     async def _write(
         self,
@@ -801,21 +858,17 @@ class VOSpaceFileSystem(AsyncFileSystem):
         """Write ``value`` to ``path`` with one whole PUT (create or overwrite)."""
         path = self._strip_protocol(path)
         state = _write_coordination.current(self)
-        transfer_slot = (
-            state.transfer_slot() if state is not None else contextlib.nullcontext()
+        if mode == "create" and await self._exists(path):
+            msg = f"path already exists: {path}"
+            raise FileExistsError(msg)
+        await self._materialize_write_parent(path, state)
+        await self._write(
+            path,
+            value,
+            size=len(value),
+            content_type=kwargs.get("content_type"),
+            expected_digest=hashlib.md5(value, usedforsecurity=False).digest(),
         )
-        async with transfer_slot:
-            if mode == "create" and await self._exists(path):
-                msg = f"path already exists: {path}"
-                raise FileExistsError(msg)
-            await self._materialize_write_parent(path, state)
-            await self._write(
-                path,
-                value,
-                size=len(value),
-                content_type=kwargs.get("content_type"),
-                expected_digest=hashlib.md5(value, usedforsecurity=False).digest(),
-            )
 
     async def _put_file(
         self,
@@ -828,23 +881,19 @@ class VOSpaceFileSystem(AsyncFileSystem):
         callback: Callback = kwargs.get("callback", DEFAULT_CALLBACK)
         rpath = self._strip_protocol(rpath)
         state = _write_coordination.current(self)
-        transfer_slot = (
-            state.transfer_slot() if state is not None else contextlib.nullcontext()
+        if mode == "create" and await self._exists(rpath):
+            msg = f"path already exists: {rpath}"
+            raise FileExistsError(msg)
+        await self._materialize_write_parent(rpath, state)
+        size = Path(lpath).stat().st_size  # noqa: ASYNC240 - local-disk stat, not remote I/O
+        callback.set_size(size)
+        await self._write(
+            rpath,
+            _file_body(lpath, callback),
+            size=size,
+            content_type=kwargs.get("content_type"),
+            expected_digest=_md5_of_file(lpath),
         )
-        async with transfer_slot:
-            if mode == "create" and await self._exists(rpath):
-                msg = f"path already exists: {rpath}"
-                raise FileExistsError(msg)
-            await self._materialize_write_parent(rpath, state)
-            size = Path(lpath).stat().st_size  # noqa: ASYNC240 - local-disk stat, not remote I/O
-            callback.set_size(size)
-            await self._write(
-                rpath,
-                _file_body(lpath, callback),
-                size=size,
-                content_type=kwargs.get("content_type"),
-                expected_digest=_md5_of_file(lpath),
-            )
 
     def touch(
         self,

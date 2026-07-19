@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import gc
 import sys
 from typing import TYPE_CHECKING, Literal
 
@@ -139,36 +140,29 @@ async def test_scope_preserves_initial_cancellation_when_cleanup_is_cancelled() 
     not hasattr(asyncio.Task, "uncancel"),
     reason="cancellation-count restoration requires Python 3.11 or newer",
 )
-async def test_successful_cleanup_cancellation_restores_cancellation_count() -> None:
-    cancellation_counts: list[int] = []
-
-    with pytest.raises(asyncio.CancelledError) as error:
-        await _run_scope_case(
-            "success",
-            cancel_during_cleanup=True,
-            cancellation_counts=cancellation_counts,
-        )
-
-    _assert_cancellation_reason(error.value, "cleanup cancellation")
-    assert cancellation_counts == [0]
-
-
-@pytest.mark.skipif(
-    not hasattr(asyncio.Task, "uncancel"),
-    reason="cancellation-count restoration requires Python 3.11 or newer",
+@pytest.mark.parametrize(
+    ("outcome", "expected_reason", "expected_count"),
+    [
+        ("success", "cleanup cancellation", 0),
+        ("initial-cancellation", "initial cancellation", 1),
+    ],
 )
-async def test_initial_cancellation_preserves_original_count() -> None:
+async def test_cleanup_cancellation_restores_only_intercepted_count(
+    outcome: Literal["success", "initial-cancellation"],
+    expected_reason: str,
+    expected_count: int,
+) -> None:
     cancellation_counts: list[int] = []
 
     with pytest.raises(asyncio.CancelledError) as error:
         await _run_scope_case(
-            "initial-cancellation",
+            outcome,
             cancel_during_cleanup=True,
             cancellation_counts=cancellation_counts,
         )
 
-    _assert_cancellation_reason(error.value, "initial cancellation")
-    assert cancellation_counts == [1]
+    _assert_cancellation_reason(error.value, expected_reason)
+    assert cancellation_counts == [expected_count]
 
 
 @pytest.mark.skipif(
@@ -234,6 +228,63 @@ async def test_body_failure_cleanup_cancellation_does_not_poison_caller() -> Non
         await cleanup_canceller
         while caller.cancelling() > baseline:
             caller.uncancel()
+
+
+async def test_scope_retrieves_failures_from_done_descendants_on_cancellation() -> None:
+    owner = object()
+    owner_task = asyncio.current_task()
+    assert owner_task is not None
+    descendants_done = asyncio.Event()
+    never = asyncio.Event()
+    completed = 0
+    descendant_tasks: list[asyncio.Task[None]] = []
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    exception_contexts: list[dict[str, object]] = []
+
+    def capture_exception(
+        _loop: asyncio.AbstractEventLoop,
+        context: dict[str, object],
+    ) -> None:
+        exception_contexts.append(context)
+
+    async def fail_after_joining() -> None:
+        nonlocal completed
+        assert _write_coordination.current(owner) is not None
+        completed += 1
+        if completed == 2:
+            descendants_done.set()
+        msg = "joined descendant failure"
+        raise RuntimeError(msg)
+
+    async def cancel_owner() -> None:
+        await descendants_done.wait()
+        owner_task.cancel("body cancellation")
+
+    async def cancel_scope_with_failed_descendants() -> None:
+        async with _write_coordination.scope(owner):
+            descendant_tasks.extend(
+                asyncio.create_task(fail_after_joining()) for _ in range(2)
+            )
+            await never.wait()
+
+    loop.set_exception_handler(capture_exception)
+    cancel_task = asyncio.create_task(cancel_owner())
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await cancel_scope_with_failed_descendants()
+        await cancel_task
+        descendant_tasks.clear()
+        gc.collect()
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+    unretrieved = [
+        context
+        for context in exception_contexts
+        if context.get("message") == "Task exception was never retrieved"
+    ]
+    assert unretrieved == []
 
 
 async def test_scope_owner_and_descendants_share_state_without_owner_deadlock() -> None:
