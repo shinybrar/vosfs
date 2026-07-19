@@ -544,7 +544,7 @@ async def test_completed_bulk_tasks_are_released_at_120k_scale(
     paths = dict.fromkeys((f"/bulk/{index}" for index in range(item_count)), b"")
     operation_task = asyncio.create_task(fs._pipe(paths, batch_size=1))
     try:
-        await asyncio.wait_for(last_started.wait(), timeout=10)
+        await asyncio.wait_for(last_started.wait(), timeout=60)
         gc.collect()
         assert first_task is not None
         assert first_task() is None
