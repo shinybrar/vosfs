@@ -1,7 +1,8 @@
 """Construction and preflight tests for the public embedded-command seam."""
 
 import asyncio
-from typing import NoReturn
+from collections.abc import Mapping
+from typing import NoReturn, cast
 from unittest.mock import Mock
 
 import pytest
@@ -48,9 +49,13 @@ def test_app_rejects_invalid_source_names(name, error_type) -> None:
     assert type(error.value) is error_type
 
 
-def test_public_exports_are_app_and_the_source_type() -> None:
+def test_public_exports_are_app_source_type_and_extension_protocol() -> None:
     assert AsyncFilesystemSource is not None
-    assert __import__("fsspec_cli").__all__ == ["App", "AsyncFilesystemSource"]
+    assert __import__("fsspec_cli").__all__ == [
+        "App",
+        "AsyncFilesystemSource",
+        "CommandExtension",
+    ]
 
 
 def test_ls_rejects_a_missing_mapped_filesystem_operand() -> None:
@@ -195,6 +200,29 @@ def test_app_snapshots_its_source_mapping_once() -> None:
     assert result.exit_code == 2
     assert result.stdout == ""
     assert result.stderr == ("ls: later:/docs: unknown filesystem (known: memory)\n")
+
+
+def test_app_registers_extensions_with_an_immutable_source_snapshot() -> None:
+    class RecordingExtension:
+        def register(
+            self,
+            typer_app: typer.Typer,
+            sources: Mapping[str, AsyncFilesystemSource],
+        ) -> None:
+            self.typer_app = typer_app
+            self.sources = sources
+
+    sources = {"memory": _source_must_not_run}
+    extension = RecordingExtension()
+    app = App(sources, extensions=[extension])
+    sources.clear()
+
+    assert extension.typer_app is app.typer_app
+    assert tuple(extension.sources) == ("memory",)
+    with pytest.raises(TypeError):
+        cast("dict[str, AsyncFilesystemSource]", extension.sources)["later"] = (
+            _source_must_not_run
+        )
 
 
 def test_ls_escapes_each_known_name_in_an_unknown_name_diagnostic() -> None:
