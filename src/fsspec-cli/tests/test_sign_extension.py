@@ -9,7 +9,12 @@ from typing import NoReturn
 import pytest
 from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App
+from fsspec_cli.extensions import sign
 from typer.testing import CliRunner
+
+
+def _source_must_not_run() -> NoReturn:
+    raise AssertionError
 
 
 def test_sign_command_is_absent_without_the_extension() -> None:
@@ -55,13 +60,8 @@ def test_sign_extension_rejects_invalid_argv_before_source_entry(
     arguments: list[str],
     diagnostic: str,
 ) -> None:
-    from fsspec_cli.extensions import sign
-
-    def source_must_not_run() -> NoReturn:
-        raise AssertionError
-
     result = CliRunner().invoke(
-        App({"memory": source_must_not_run}, extensions=[sign]).typer_app,
+        App({"memory": _source_must_not_run}, extensions=[sign]).typer_app,
         ["sign", *arguments],
     )
 
@@ -69,8 +69,6 @@ def test_sign_extension_rejects_invalid_argv_before_source_entry(
 
 
 def test_sign_extension_calls_capability_on_the_invocation_loop() -> None:
-    from fsspec_cli.extensions import sign
-
     events: list[tuple[object, ...]] = []
 
     class SigningFileSystem(AsyncFileSystem):
@@ -114,8 +112,6 @@ def test_sign_extension_calls_capability_on_the_invocation_loop() -> None:
 
 
 def test_sign_extension_reports_missing_capability_without_a_traceback() -> None:
-    from fsspec_cli.extensions import sign
-
     lifecycle: list[str] = []
 
     @asynccontextmanager
@@ -137,4 +133,3 @@ def test_sign_extension_reports_missing_capability_without_a_traceback() -> None
         "sign: memory:/report.csv: unsupported operation\n",
     )
     assert lifecycle == ["enter", "exit"]
-    assert "Traceback" not in result.stderr
