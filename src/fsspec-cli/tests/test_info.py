@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import ItemsView, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType
@@ -21,7 +22,7 @@ from typer.main import get_command
 from ._support import _invoke_info, _RecordingSource
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 _INFO = MappingProxyType(
     {
@@ -82,6 +83,35 @@ class _ContainerFrozenSet(frozenset[object]):
 class _SamePresentation:
     def __repr__(self) -> str:
         return "same-key"
+
+
+class _CoreOnlyMapping(Mapping[object, object]):
+    def __init__(self) -> None:
+        self._values = {"visible": 1, "hidden": 2}
+
+    def __getitem__(self, key: object) -> object:
+        return self._values[key]
+
+    def __iter__(self) -> Iterator[object]:
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def items(self) -> ItemsView[object, object]:
+        visible: dict[object, object] = {"visible": 1}
+        return visible.items()
+
+
+class _StatefulPresentation:
+    def __init__(self, first: str, later: str) -> None:
+        self.first = first
+        self.later = later
+        self.repr_calls = 0
+
+    def __repr__(self) -> str:
+        self.repr_calls += 1
+        return self.first if self.repr_calls == 1 else self.later
 
 
 class _ReprFailure:
@@ -338,6 +368,43 @@ def test_info_rejects_distinct_mapping_keys_with_one_presentation() -> None:
         "",
         "info: memory:/x: incompatible result\n",
     )
+
+
+def test_info_uses_the_authoritative_mapping_core_interface() -> None:
+    source = _RecordingSource(
+        [],
+        info_result={
+            "name": "/x",
+            "type": "file",
+            "keyed": _CoreOnlyMapping(),
+        },
+    )
+
+    result = _invoke_info(["memory:/x"], sources={"memory": source})
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    assert "'keyed': {'hidden': 2, 'visible': 1}" in result.stdout
+
+
+def test_info_freezes_each_validated_mapping_key_spelling() -> None:
+    first = _StatefulPresentation("first-key", "changed-first-key")
+    second = _StatefulPresentation("second-key", "changed-second-key")
+    source = _RecordingSource(
+        [],
+        info_result={
+            "name": "/x",
+            "type": "file",
+            "keyed": {first: 1, second: 2},
+        },
+    )
+
+    result = _invoke_info(["memory:/x"], sources={"memory": source})
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    assert "'keyed': {first-key: 1, second-key: 2}" in result.stdout
+    assert (first.repr_calls, second.repr_calls) == (1, 1)
 
 
 def test_info_turns_an_ordinary_repr_failure_into_an_atomic_incompatible_result() -> (

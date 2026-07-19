@@ -36,8 +36,9 @@ if TYPE_CHECKING:
 _PRETTY_WIDTH = 80
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class _StablePresentation:
+    sort_type: str
     text: str
 
     def __repr__(self) -> str:
@@ -103,9 +104,11 @@ def _canonical_mapping(
     value: Mapping[object, object],
     active: set[int],
 ) -> dict[object, object]:
+    source_length = len(value)
     entries: list[tuple[object, object]] = []
     spellings: set[str] = set()
-    for key, item in value.items():
+    for key in value:
+        item = value[key]
         canonical_key = _canonical_value(key, active)
         hash(canonical_key)
         spelling = _pretty(canonical_key)
@@ -113,10 +116,21 @@ def _canonical_mapping(
             message = "distinct mapping keys have the same presentation"
             raise ValueError(message)
         spellings.add(spelling)
-        entries.append((canonical_key, _canonical_value(item, active)))
+        entries.append(
+            (
+                _StablePresentation(
+                    f"{type(key).__module__}.{type(key).__qualname__}",
+                    spelling,
+                ),
+                _canonical_value(item, active),
+            )
+        )
 
+    if len(entries) != source_length:
+        message = "mapping iteration does not match its reported length"
+        raise ValueError(message)
     canonical = dict(entries)
-    if len(canonical) != len(entries):
+    if len(canonical) != source_length:
         message = "canonical mapping keys are not distinct"
         raise ValueError(message)
     return canonical
@@ -135,7 +149,9 @@ def _canonical_set(
         )
     else:
         spelling = "set()" if not members else f"{{{', '.join(members)}}}"
-    return _StablePresentation(spelling)
+    return _StablePresentation(
+        f"{type(value).__module__}.{type(value).__qualname__}", spelling
+    )
 
 
 def _pretty(value: object) -> str:

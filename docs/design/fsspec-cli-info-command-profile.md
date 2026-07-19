@@ -101,13 +101,22 @@ frozenset elements are recursively rendered, sorted by those rendered strings,
 and presented with their native `{...}` / `set()` / `frozenset({...})`
 spelling.
 
+Mapping traversal snapshots `len(mapping)`, enumerates keys through the core
+`for key in mapping` interface, and retrieves each value through
+`mapping[key]`. It does not consult an overridden `items()` view. The number of
+enumerated entries and the final canonical dictionary size must both equal the
+snapshot; any disagreement makes the whole result incompatible.
+
 A mapping key must canonicalize to a hashable presentation. Its exact
 `pprint.pformat(..., width=80, sort_dicts=True)` spelling must also be unique
 within that mapping. If two distinct source keys produce one spelling, or the
 canonical dictionary has fewer entries than the source mapping, the whole
 result is incompatible; the renderer never silently collapses an entry.
 Structured tuple/frozenset keys therefore remain stable across Python hash
-seeds without being converted to strings.
+seeds without being converted to strings. After uniqueness validation, the
+final dictionary key is a stable hashable presentation containing that frozen
+spelling and a stable source-type sort key. Final pretty-printing therefore
+cannot invoke the original key's `repr` again or change its validated spelling.
 
 An identity is recursive only while it is active on the current traversal
 stack. A cycle through a mapping key or value, including an indirect cycle
@@ -170,7 +179,8 @@ Hermetic public-`App` evidence covers:
 - subprocess rendering under distinct `PYTHONHASHSEED` values, including set
   values and structured frozenset/tuple mapping keys; and
 - mapping-key collisions, key/value cycles, subclass cycles, shared acyclic
-  containers, and ordinary/control-flow `repr` failures.
+  containers, an overridden incomplete `items()` view, one-time key spelling,
+  and ordinary/control-flow `repr` failures.
 
 These tests establish only the named source forms and the locked command seam.
 They are not live OpenCADC evidence, a completeness claim for arbitrary fsspec
