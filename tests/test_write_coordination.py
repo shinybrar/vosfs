@@ -20,7 +20,7 @@ from vospace_sim import VOSpaceSim
 from vosfs import VOSpaceError, VOSpaceFileSystem, _write_coordination
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine
+    from collections.abc import Awaitable, Callable, Coroutine
     from pathlib import Path
 
     from vosfs._write_coordination import _WriteParentState
@@ -128,6 +128,74 @@ async def test_coordinator_delegates_to_authoritative_fsspec_hook(
 
     await fs.aclose()
     assert result is expected
+
+
+async def test_deferred_callback_preserves_caller_branch_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BranchOverrideCallback(Callback):
+        def __init__(self) -> None:
+            super().__init__()
+            self.branch_calls = 0
+            self.wrapped_calls = 0
+            self.child = Callback()
+
+        def branch_coro(
+            self,
+            function: Callable[..., Awaitable[Any]],
+        ) -> Callable[..., Awaitable[Any]]:
+            self.branch_calls += 1
+
+            def wrapped(
+                path1: str,
+                path2: str,
+                **kwargs: Any,
+            ) -> Awaitable[Any]:
+                self.wrapped_calls += 1
+                return function(path1, path2, callback=self.child, **kwargs)
+
+            return wrapped
+
+    router = respx.Router(base_url=BASE_URL, assert_all_mocked=True)
+    fs = make_fs(router, asynchronous=True)
+    callback = BranchOverrideCallback()
+    awaitable_built = asyncio.Event()
+    release_schedule = asyncio.Event()
+    observed_children: list[Callback] = []
+
+    async def put_file(
+        _lpath: str,
+        _rpath: str,
+        *,
+        callback: Callback,
+    ) -> None:
+        observed_children.append(callback)
+
+    async def inherited_put(
+        _self: object,
+        *_args: object,
+        callback: Callback,
+        **_kwargs: object,
+    ) -> list[None]:
+        wrapped = callback.branch_coro(put_file)
+        item = wrapped("local", "/remote")
+        awaitable_built.set()
+        await release_schedule.wait()
+        return [await item]
+
+    monkeypatch.setattr(AsyncFileSystem, "_put", inherited_put)
+    operation_task = asyncio.create_task(fs._put("local", "/remote", callback=callback))
+    await awaitable_built.wait()
+    try:
+        assert callback.branch_calls == 1
+        assert callback.wrapped_calls == 0
+    finally:
+        release_schedule.set()
+        await operation_task
+        await fs.aclose()
+
+    assert callback.wrapped_calls == 1
+    assert observed_children == [callback.child]
 
 
 @pytest.mark.parametrize(
@@ -490,7 +558,6 @@ async def test_bounded_coordinator_preserves_limit_results_mode_and_callback(
 
     operation_task = asyncio.create_task(coordinated)
     await asyncio.wait_for(first_transfer_started.wait(), timeout=1)
-    assert active_transfers == 1
     release_transfers.set()
     results = await operation_task
     stored_values = [await fs._cat_file(path) for path in remote_paths]

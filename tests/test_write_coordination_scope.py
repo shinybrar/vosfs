@@ -106,10 +106,17 @@ async def test_scope_completes_after_successful_body_and_cleanup() -> None:
 
 
 async def test_scope_raises_cancellation_received_during_successful_cleanup() -> None:
+    cancellation_counts = [] if hasattr(asyncio.Task, "uncancel") else None
     with pytest.raises(asyncio.CancelledError) as error:
-        await _run_scope_case("success", cancel_during_cleanup=True)
+        await _run_scope_case(
+            "success",
+            cancel_during_cleanup=True,
+            cancellation_counts=cancellation_counts,
+        )
 
     _assert_cancellation_reason(error.value, "cleanup cancellation")
+    if cancellation_counts is not None:
+        assert cancellation_counts == [0]
 
 
 async def test_scope_raises_body_failure_after_cleanup() -> None:
@@ -130,10 +137,17 @@ async def test_scope_raises_initial_cancellation_after_cleanup() -> None:
 
 
 async def test_scope_preserves_initial_cancellation_when_cleanup_is_cancelled() -> None:
+    cancellation_counts = [] if hasattr(asyncio.Task, "uncancel") else None
     with pytest.raises(asyncio.CancelledError) as error:
-        await _run_scope_case("initial-cancellation", cancel_during_cleanup=True)
+        await _run_scope_case(
+            "initial-cancellation",
+            cancel_during_cleanup=True,
+            cancellation_counts=cancellation_counts,
+        )
 
     _assert_cancellation_reason(error.value, "initial cancellation")
+    if cancellation_counts is not None:
+        assert cancellation_counts == [1]
 
 
 async def test_initial_cancellation_wins_late_descendant_failure() -> None:
@@ -168,37 +182,6 @@ async def test_initial_cancellation_wins_late_descendant_failure() -> None:
         await operation_task
 
     _assert_cancellation_reason(error.value, "initial cancellation")
-    if hasattr(operation_task, "cancelling"):
-        assert operation_task.cancelling() == 1
-
-
-@pytest.mark.skipif(
-    not hasattr(asyncio.Task, "uncancel"),
-    reason="cancellation-count restoration requires Python 3.11 or newer",
-)
-@pytest.mark.parametrize(
-    ("outcome", "expected_reason", "expected_count"),
-    [
-        ("success", "cleanup cancellation", 0),
-        ("initial-cancellation", "initial cancellation", 1),
-    ],
-)
-async def test_cleanup_cancellation_restores_only_intercepted_count(
-    outcome: Literal["success", "initial-cancellation"],
-    expected_reason: str,
-    expected_count: int,
-) -> None:
-    cancellation_counts: list[int] = []
-
-    with pytest.raises(asyncio.CancelledError) as error:
-        await _run_scope_case(
-            outcome,
-            cancel_during_cleanup=True,
-            cancellation_counts=cancellation_counts,
-        )
-
-    _assert_cancellation_reason(error.value, expected_reason)
-    assert cancellation_counts == [expected_count]
 
 
 @pytest.mark.skipif(

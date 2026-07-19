@@ -44,7 +44,6 @@ if TYPE_CHECKING:
         AsyncIterator,
         Awaitable,
         Callable,
-        Coroutine,
         Generator,
         Mapping,
         Sequence,
@@ -83,7 +82,7 @@ class _DeferredAwaitable:
 
     __slots__ = ("_factory",)
 
-    def __init__(self, factory: Callable[[], Coroutine[Any, Any, Any]]) -> None:
+    def __init__(self, factory: Callable[[], Awaitable[Any]]) -> None:
         self._factory = factory
 
     def __await__(self) -> Generator[Any, None, Any]:
@@ -92,8 +91,6 @@ class _DeferredAwaitable:
 
 class _DeferredBranchCallback:
     """Delegate fsspec progress while deferring each branched upload."""
-
-    __slots__ = ("_callback",)
 
     def __init__(self, callback: Callback) -> None:
         self._callback = callback
@@ -109,17 +106,14 @@ class _DeferredBranchCallback:
         function: Callable[..., Awaitable[Any]],
     ) -> Callable[..., _DeferredAwaitable]:
         """Return fsspec's branching wrapper without creating a coroutine yet."""
+        wrapped = self._callback.branch_coro(function)
 
         def deferred(
             path1: str,
             path2: str,
             **kwargs: Any,  # noqa: ANN401 - fsspec forwards arbitrary hook options
         ) -> _DeferredAwaitable:
-            async def run() -> Any:  # noqa: ANN401 - wrapped fsspec hook result
-                with self._callback.branched(path1, path2, **kwargs) as child:
-                    return await function(path1, path2, callback=child, **kwargs)
-
-            return _DeferredAwaitable(run)
+            return _DeferredAwaitable(partial(wrapped, path1, path2, **kwargs))
 
         return deferred
 
@@ -132,14 +126,8 @@ class _InheritedWriteAdapter:
     coordination sees this adapter.
     """
 
-    __slots__ = ("_filesystem",)
-
     def __init__(self, filesystem: VOSpaceFileSystem) -> None:
         self._filesystem = filesystem
-
-    @property
-    def batch_size(self) -> int | None:
-        return self._filesystem.batch_size
 
     def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - fsspec hook surface
         return getattr(self._filesystem, name)
