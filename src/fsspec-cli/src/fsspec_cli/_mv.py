@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import typer
@@ -12,13 +11,11 @@ from ._command import _parse_mapped_operand, _usage_error
 from ._cp import (
     _CpFailure,
     _CpRequest,
-    _files_match,
-    _remove_temporary,
     _render_failure,
     _require_directory,
-    _require_file_size,
+    _require_source_file_size,
     _resolve_destination,
-    _stage_remote,
+    _verify_transfer,
 )
 from ._diagnostics import _render_diagnostic_value
 from ._sources import _SourceInvocation
@@ -64,24 +61,21 @@ def _preflight(
     )
 
 
-async def _confirmed_mv_file(  # noqa: C901, PLR0911, PLR0912
+async def _confirmed_mv_file(  # noqa: PLR0911
     request: _CpRequest, filesystem: AsyncFileSystem
 ) -> _CpFailure | None:
     try:
         source_info = await filesystem._info(request.source.path)  # noqa: SLF001
     except Exception as error:  # noqa: BLE001
         return _CpFailure(request.source, backend_error=error)
-    expected_size = _require_file_size(source_info)
+    expected_size, source_failure = _require_source_file_size(
+        request.source,
+        source_info,
+    )
+    if source_failure is not None:
+        return source_failure
     if expected_size is None:
-        return _CpFailure(
-            request.source,
-            incompatible="directory"
-            if (
-                isinstance(source_info, Mapping)
-                and source_info.get("type") == "directory"
-            )
-            else "result",
-        )
+        return _CpFailure(request.source, incompatible="result")
     resolved, failure = await _resolve_destination(
         request.destination, request.source.path, filesystem
     )
@@ -96,56 +90,26 @@ async def _confirmed_mv_file(  # noqa: C901, PLR0911, PLR0912
             backend_error=NotImplementedError("_mv must be configured by source form"),
         )
 
-    source_temp, error = await _stage_remote(
-        filesystem, request.source.path, "fsspec-cli-mv-src-"
-    )
-    if error is not None or source_temp is None:
-        return _CpFailure(
-            request.destination, backend_error=error, category="staging failure"
-        )
-    dest_temp: str | None = None
     try:
-        try:
-            await declared_operation(filesystem, request.source.path, resolved)
-        except Exception as operation_error:  # noqa: BLE001
-            return _CpFailure(
-                request.destination,
-                backend_error=operation_error,
-                uncertain=True,
-                residue=True,
-            )
-        try:
-            destination_info = await filesystem._info(resolved)  # noqa: SLF001
-            if _require_file_size(destination_info) != expected_size:
-                message = "destination verification failed"
-                raise ValueError(message)  # noqa: TRY301
-            dest_temp, error = await _stage_remote(
-                filesystem, resolved, "fsspec-cli-mv-dst-"
-            )
-            if error is not None or dest_temp is None:
-                message = "destination staging failed"
-                raise error or ValueError(message)  # noqa: TRY301
-            matched, error = _files_match(source_temp, dest_temp)
-            if error is not None or not matched:
-                message = "destination verification failed"
-                raise error or ValueError(message)  # noqa: TRY301
-            try:
-                await filesystem._info(request.source.path)  # noqa: SLF001
-            except FileNotFoundError:
-                return None
-            message = "source remains after move"
-            raise ValueError(message)  # noqa: TRY301
-        except Exception as verify_error:  # noqa: BLE001
-            return _CpFailure(
-                request.destination,
-                backend_error=verify_error,
-                category="verification failure",
-                residue=True,
-            )
-    finally:
-        _remove_temporary(source_temp)
-        if dest_temp is not None:
-            _remove_temporary(dest_temp)
+        await declared_operation(filesystem, request.source.path, resolved)
+    except Exception as operation_error:  # noqa: BLE001
+        return _CpFailure(
+            request.destination,
+            backend_error=operation_error,
+            uncertain=True,
+            residue=True,
+        )
+
+    return await _verify_transfer(
+        filesystem,
+        filesystem,
+        request.source.path,
+        resolved,
+        source_info,
+        expected_size,
+        request.destination,
+        require_source_absent=True,
+    )
 
 
 async def _run_mv(

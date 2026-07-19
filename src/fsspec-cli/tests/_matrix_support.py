@@ -1328,7 +1328,9 @@ def _exercise_cp_locked_profile(  # noqa: PLR0913 - matrix probe knobs.
         call.operation in {"rm", "rm_file", "rmdir"} for call in source.calls
     )
     get_file_calls = [call for call in source.calls if call.operation == "get_file"]
-    assert len(get_file_calls) >= 4
+    # Native `_cp_file` implementations may stage once internally; command-layer
+    # verification must not add a second source/destination download.
+    assert len(get_file_calls) <= len(cp_calls)
 
 
 def _exercise_multi_source_cp_locked_profile(

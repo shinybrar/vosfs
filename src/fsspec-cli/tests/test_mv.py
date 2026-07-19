@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-from pathlib import Path
 
 import pytest
 from fsspec_cli import App
@@ -56,8 +55,67 @@ def test_mv_moves_one_file_without_stdout() -> None:
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     assert source.file_contents == {"/docs/moved.txt": b"payload"}
-    assert len(source.get_file_paths) == 2
-    assert all(not Path(path).exists() for path in source.get_file_paths)
+    assert not source.get_file_paths
+
+
+def test_mv_accepts_matching_metadata_tokens_and_proves_source_absence() -> None:
+    source = _source(
+        info_by_path={
+            "/docs/notes.txt": {
+                "type": "file",
+                "size": 7,
+                "ETag": "etag-token",
+                "content-md5": b"content-token",
+            },
+            "/docs/moved.txt": {
+                "type": "file",
+                "size": 7,
+                "etag": "etag-token",
+                "content_md5": b"content-token",
+            },
+        }
+    )
+
+    result = _invoke(source, "memory:/docs/notes.txt", "memory:/docs/moved.txt")
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert not source.get_file_paths
+    mutation_index = next(
+        index for index, event in enumerate(source.events) if event[0] == "mv"
+    )
+    assert [
+        event[:3] for event in source.events[mutation_index + 1 :] if event[0] == "info"
+    ] == [
+        ("info", 1, "/docs/moved.txt"),
+        ("info", 1, "/docs/notes.txt"),
+    ]
+
+
+def test_mv_rejects_mismatched_metadata_token() -> None:
+    source = _source(
+        info_by_path={
+            "/docs/notes.txt": {
+                "type": "file",
+                "size": 7,
+                "checksum": "source-token",
+            },
+            "/docs/moved.txt": {
+                "type": "file",
+                "size": 7,
+                "checksum": "destination-token",
+            },
+        }
+    )
+
+    result = _invoke(source, "memory:/docs/notes.txt", "memory:/docs/moved.txt")
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "mv: memory:/docs/moved.txt: verification failure; "
+        "destination residue may remain\n",
+    )
+    assert not source.get_file_paths
 
 
 def test_mv_rejects_inherited_async_move_operation() -> None:
@@ -363,8 +421,7 @@ def test_mv_multiple_files_cancellation_removes_temps_and_closes_source() -> Non
         "/docs/out/one.txt": b"one",
         "/docs/two.txt": b"two",
     }
-    assert source.get_file_paths
-    assert all(not Path(path).exists() for path in source.get_file_paths)
+    assert not source.get_file_paths
     assert len(source.exit_calls) == 1
     assert isinstance(source.exit_calls[0][1], asyncio.CancelledError)
 
@@ -562,8 +619,7 @@ def test_mv_reports_mutation_exception_as_uncertain_residue() -> None:
         "destination residue may remain\n",
     )
     assert source.file_contents == {"/docs/notes.txt": b"payload"}
-    assert len(source.get_file_paths) == 1
-    assert all(not Path(path).exists() for path in source.get_file_paths)
+    assert not source.get_file_paths
 
 
 def test_mv_reports_source_deletion_failure_after_destination_creation() -> None:
@@ -660,13 +716,11 @@ def test_mv_rejects_source_retained_after_complete_destination() -> None:
     }
 
 
-def test_mv_cancellation_removes_temps_and_closes_source() -> None:
+def test_mv_cancellation_closes_source_without_verification_downloads() -> None:
     source = _source(mv_error=asyncio.CancelledError())
 
     with pytest.raises(asyncio.CancelledError):
         _invoke(source, "memory:/docs/notes.txt", "memory:/docs/moved.txt")
-    assert len(source.get_file_paths) == 1
-    source_staging_path = source.get_file_paths[0]
-    assert not Path(source_staging_path).exists()
+    assert not source.get_file_paths
     assert len(source.exit_calls) == 1
     assert isinstance(source.exit_calls[0][1], asyncio.CancelledError)
