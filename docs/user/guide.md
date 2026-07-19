@@ -126,7 +126,10 @@ fs.pipe(
 
 Each destination file still uses one negotiated whole-object `PUT`; parent
 creation is scoped to the coordinated operation and does not change the
-single-file `put_file` or `pipe_file` hooks.
+single-file `put_file` or `pipe_file` hooks. Cancelling coordinated `put` or
+`pipe` stops later batch items and waits for started writes to close. A
+dispatched `PUT` remains uncertain, so `vosfs` invalidates cached destination
+and parent state without attempting rollback.
 
 `open("rb")` downloads once into a disk-backed temporary file and then provides
 local `read`/`readinto`/`readline`/iteration/`tell`/`seek`. `open("wb")` and

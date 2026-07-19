@@ -16,6 +16,7 @@ import datetime
 import errno
 import hashlib
 import os
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast, overload
 from urllib.parse import unquote, urlsplit
@@ -31,7 +32,14 @@ from vosfs.transport import ClientPool, build_timeout
 
 if TYPE_CHECKING:
     import io
-    from collections.abc import AsyncIterator, Mapping, Sequence
+    from collections.abc import (
+        AsyncIterator,
+        Awaitable,
+        Callable,
+        Generator,
+        Mapping,
+        Sequence,
+    )
 
     from fsspec.callbacks import Callback
 
@@ -53,23 +61,161 @@ _IDENTITY_ENCODING = {"Accept-Encoding": "identity"}
 _READ_CHUNK = 1 << 20
 _DEFAULT_CONTENT_TYPE = "application/octet-stream"
 _GET_CONTAINER_MARKER = "_vosfs_materialize_get_container"
-_WRITE_PARENT_STATE: contextvars.ContextVar[_WriteParentState | None]
 
 
-class _WriteParentState:
-    """Operation-scoped coordination for remote upload containers."""
+class _CoordinatedWriteState:
+    """Operation-scoped upload state and owned child tasks."""
 
     def __init__(self, owner: object) -> None:
         self.owner = owner
+        self.owner_task = asyncio.current_task()
+        self.active = True
+        self.tasks: set[asyncio.Task[object]] = set()
         self.lock = asyncio.Lock()
         self.materialized: set[str] = set()
         self.failure: Exception | None = None
 
 
-_WRITE_PARENT_STATE = contextvars.ContextVar(
-    "vosfs_write_parent_state",
-    default=None,
+_COORDINATED_WRITE_STATE: contextvars.ContextVar[_CoordinatedWriteState | None] = (
+    contextvars.ContextVar("vosfs_coordinated_write_state", default=None)
 )
+
+
+@contextlib.asynccontextmanager
+async def _write_scope(owner: object) -> AsyncIterator[None]:
+    """Bind one bulk write and drain every child before returning."""
+    state = _CoordinatedWriteState(owner)
+    token = _COORDINATED_WRITE_STATE.set(state)
+    body_error: BaseException | None = None
+    try:
+        try:
+            yield
+        except BaseException as exc:  # noqa: BLE001 - drain before propagation
+            body_error = exc
+    finally:
+        state.active = False
+        try:
+            cleanup = asyncio.create_task(_drain_write_tasks(state))
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError as exc:  # noqa: PERF203 - drain loop
+                    body_error = exc
+            cleanup.result()
+        finally:
+            _COORDINATED_WRITE_STATE.reset(token)
+    if body_error is not None:
+        raise body_error
+
+
+def _join_write_scope(owner: object) -> _CoordinatedWriteState | None:
+    """Return owner state and register calling child task."""
+    state = _COORDINATED_WRITE_STATE.get()
+    if state is None or state.owner is not owner:
+        return None
+    task = asyncio.current_task()
+    if task is not None and task is not state.owner_task and task not in state.tasks:
+        state.tasks.add(task)
+        task.add_done_callback(partial(_discard_write_task, state))
+    if not state.active:
+        raise asyncio.CancelledError
+    return state
+
+
+def _discard_write_task(
+    state: _CoordinatedWriteState,
+    task: asyncio.Task[object],
+) -> None:
+    """Retrieve child outcome and release completed task ownership."""
+    with contextlib.suppress(asyncio.CancelledError):
+        task.exception()
+    state.tasks.discard(task)
+
+
+async def _drain_write_tasks(state: _CoordinatedWriteState) -> None:
+    """Cancel and await registered children, including late joiners."""
+    observed: set[asyncio.Task[object]] | None = None
+    while observed != state.tasks:
+        observed = set(state.tasks)
+        await asyncio.sleep(0)
+        registered = list(state.tasks)
+        for task in registered:
+            if not task.done():
+                task.cancel()
+        if registered:
+            await asyncio.gather(*registered, return_exceptions=True)
+
+
+class _DeferredAwaitable:
+    """Create child coroutine only when fsspec schedules this inert awaitable."""
+
+    __slots__ = ("_factory", "_owner")
+
+    def __init__(
+        self,
+        owner: object,
+        factory: Callable[[], Awaitable[Any]],
+    ) -> None:
+        self._owner = owner
+        self._factory = factory
+
+    def __await__(self) -> Generator[Any, None, Any]:
+        _join_write_scope(self._owner)
+        return self._factory().__await__()
+
+
+class _DeferredBranchCallback:
+    """Delegate fsspec progress while deferring each branched upload."""
+
+    def __init__(self, callback: Callback, owner: object) -> None:
+        self._callback = callback
+        self._owner = owner
+
+    def set_size(self, size: int) -> None:
+        self._callback.set_size(size)
+
+    def relative_update(self, inc: int = 1) -> None:
+        self._callback.relative_update(inc)
+
+    def branch_coro(
+        self,
+        function: Callable[..., Awaitable[Any]],
+    ) -> Callable[..., _DeferredAwaitable]:
+        """Preserve caller callback wrapper without starting it eagerly."""
+        wrapped = self._callback.branch_coro(function)
+
+        def deferred(
+            path1: str,
+            path2: str,
+            **kwargs: Any,  # noqa: ANN401 - fsspec forwards hook options
+        ) -> _DeferredAwaitable:
+            return _DeferredAwaitable(
+                self._owner,
+                partial(wrapped, path1, path2, **kwargs),
+            )
+
+        return deferred
+
+
+class _InheritedWriteAdapter:
+    """Make inherited bulk hooks build inert per-file awaitables."""
+
+    def __init__(self, filesystem: VOSpaceFileSystem) -> None:
+        self._filesystem = filesystem
+
+    def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - fsspec hook surface
+        return getattr(self._filesystem, name)
+
+    def _pipe_file(
+        self,
+        path: str,
+        value: bytes,
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> _DeferredAwaitable:
+        return _DeferredAwaitable(
+            self._filesystem,
+            partial(self._filesystem._pipe_file, path, value, **kwargs),  # noqa: SLF001
+        )
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -707,19 +853,18 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's upload coordinator with one shared parent-creation scope."""
-        token = _WRITE_PARENT_STATE.set(_WriteParentState(self))
-        try:
-            return await super()._put(
+        async with _write_scope(self):
+            adapter = cast("AsyncFileSystem", _InheritedWriteAdapter(self))
+            return await AsyncFileSystem._put(  # noqa: SLF001 - inherited hook seam
+                adapter,
                 lpath,
                 rpath,
                 recursive=recursive,
-                callback=callback,
+                callback=cast("Callback", _DeferredBranchCallback(callback, self)),
                 batch_size=batch_size,
                 maxdepth=maxdepth,
                 **kwargs,
             )
-        finally:
-            _WRITE_PARENT_STATE.reset(token)
 
     async def _pipe(
         self,
@@ -729,16 +874,15 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's pipe coordinator with one shared parent-creation scope."""
-        token = _WRITE_PARENT_STATE.set(_WriteParentState(self))
-        try:
-            return await super()._pipe(
+        async with _write_scope(self):
+            adapter = cast("AsyncFileSystem", _InheritedWriteAdapter(self))
+            return await AsyncFileSystem._pipe(  # noqa: SLF001 - inherited hook seam
+                adapter,
                 path,
                 value=value,
                 batch_size=batch_size,
                 **kwargs,
             )
-        finally:
-            _WRITE_PARENT_STATE.reset(token)
 
     async def _write(
         self,
@@ -758,19 +902,28 @@ class VOSpaceFileSystem(AsyncFileSystem):
         headers = {"Content-Type": content_type or _DEFAULT_CONTENT_TYPE}
         if size is not None:
             headers["Content-Length"] = str(size)
-        response = await self._byte_send(endpoint, "PUT", content=body, headers=headers)
-        if response.status_code == _HTTP_PRECONDITION_FAILED:
-            msg = f"integrity check failed for {path}"
-            raise errors.VOSpaceError(msg, status=_HTTP_PRECONDITION_FAILED)
-        if response.status_code != _HTTP_CREATED:
-            detail = errors.bounded_text(response.content)
-            msg = (
-                f"uncertain write to {path}: HTTP {response.status_code}; the "
-                f"target may have been truncated. {detail}"
+        try:
+            response = await self._byte_send(
+                endpoint,
+                "PUT",
+                content=body,
+                headers=headers,
             )
-            raise errors.VOSpaceError(msg, status=response.status_code)
-        _verify_returned_digest(response, expected_digest, path)
-        self._invalidate(path)
+            if response.status_code == _HTTP_PRECONDITION_FAILED:
+                msg = f"integrity check failed for {path}"
+                raise errors.VOSpaceError(msg, status=_HTTP_PRECONDITION_FAILED)
+            if response.status_code != _HTTP_CREATED:
+                detail = errors.bounded_text(response.content)
+                msg = (
+                    f"uncertain write to {path}: HTTP {response.status_code}; the "
+                    f"target may have been truncated. {detail}"
+                )
+                raise errors.VOSpaceError(msg, status=response.status_code)
+            _verify_returned_digest(response, expected_digest, path)
+        finally:
+            # Once PUT dispatch begins, success, failure, and cancellation can all
+            # leave remote state changed. Never promise rollback; evict stale views.
+            self._invalidate(path)
 
     async def _pipe_file(
         self,
@@ -781,10 +934,11 @@ class VOSpaceFileSystem(AsyncFileSystem):
     ) -> None:
         """Write ``value`` to ``path`` with one whole PUT (create or overwrite)."""
         path = self._strip_protocol(path)
+        state = _join_write_scope(self)
         if mode == "create" and await self._exists(path):
             msg = f"path already exists: {path}"
             raise FileExistsError(msg)
-        await self._materialize_write_parent(path)
+        await self._materialize_write_parent(path, state)
         await self._write(
             path,
             value,
@@ -803,10 +957,11 @@ class VOSpaceFileSystem(AsyncFileSystem):
         """Stream one local file through one negotiated whole PUT."""
         callback: Callback = kwargs.get("callback", DEFAULT_CALLBACK)
         rpath = self._strip_protocol(rpath)
+        state = _join_write_scope(self)
         if mode == "create" and await self._exists(rpath):
             msg = f"path already exists: {rpath}"
             raise FileExistsError(msg)
-        await self._materialize_write_parent(rpath)
+        await self._materialize_write_parent(rpath, state)
         size = Path(lpath).stat().st_size  # noqa: ASYNC240 - local-disk stat, not remote I/O
         callback.set_size(size)
         await self._write(
@@ -893,12 +1048,10 @@ class VOSpaceFileSystem(AsyncFileSystem):
     async def _makedirs(self, path: str, exist_ok: bool = False) -> None:  # noqa: FBT001, FBT002
         """Create ``path`` and every missing ancestor, top-down."""
         path = self._strip_protocol(path)
+        state = _join_write_scope(self)
         if not exist_ok and await self._exists(path):
             msg = f"path already exists: {path}"
             raise FileExistsError(msg)
-        state = _WRITE_PARENT_STATE.get()
-        if state is not None and state.owner is not self:
-            state = None
         if state is not None:
             await self._materialize_write_containers(path, state)
             return
@@ -908,17 +1061,17 @@ class VOSpaceFileSystem(AsyncFileSystem):
     async def _materialize_write_parent(
         self,
         path: str,
+        state: _CoordinatedWriteState | None,
     ) -> None:
         """Materialize one coordinated write's missing parent containers."""
-        state = _WRITE_PARENT_STATE.get()
         parent = paths.parent(path)
-        if state is not None and state.owner is self and parent not in ("/", path):
+        if state is not None and parent not in ("/", path):
             await self._materialize_write_containers(parent, state)
 
     async def _materialize_write_containers(
         self,
         path: str,
-        state: _WriteParentState,
+        state: _CoordinatedWriteState,
     ) -> None:
         """Create required containers top-down at most once in one operation."""
         async with state.lock:
