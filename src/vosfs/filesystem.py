@@ -11,11 +11,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import contextvars
 import datetime
 import errno
 import hashlib
 import os
-from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast, overload
 from urllib.parse import unquote, urlsplit
@@ -26,32 +26,15 @@ from fsspec.callbacks import DEFAULT_CALLBACK
 from fsspec.compression import compr
 from fsspec.core import get_compression
 
-from vosfs import (
-    _write_coordination,
-    capabilities,
-    config,
-    errors,
-    negotiate,
-    nodes,
-    paths,
-    staging,
-)
+from vosfs import capabilities, config, errors, negotiate, nodes, paths, staging
 from vosfs.transport import ClientPool, build_timeout
 
 if TYPE_CHECKING:
     import io
-    from collections.abc import (
-        AsyncIterator,
-        Awaitable,
-        Callable,
-        Generator,
-        Mapping,
-        Sequence,
-    )
+    from collections.abc import AsyncIterator, Mapping, Sequence
 
     from fsspec.callbacks import Callback
 
-    from vosfs._write_coordination import _WriteParentState
     from vosfs.capabilities import ServiceBindings
     from vosfs.negotiate import NegotiatedEndpoint
     from vosfs.nodes import Node
@@ -70,99 +53,23 @@ _IDENTITY_ENCODING = {"Accept-Encoding": "identity"}
 _READ_CHUNK = 1 << 20
 _DEFAULT_CONTENT_TYPE = "application/octet-stream"
 _GET_CONTAINER_MARKER = "_vosfs_materialize_get_container"
+_WRITE_PARENT_STATE: contextvars.ContextVar[_WriteParentState | None]
 
 
-class _DeferredAwaitable:
-    """Create a coroutine only when fsspec schedules this inert awaitable.
+class _WriteParentState:
+    """Operation-scoped coordination for remote upload containers."""
 
-    fsspec 2026.6 bounds live tasks but eagerly builds its input awaitables.
-    Keeping these values inert means an early failure leaves no raw coroutine
-    requiring caller-specific close or finalizer behavior.
-    """
-
-    __slots__ = ("_factory", "_owner")
-
-    def __init__(
-        self,
-        owner: object,
-        factory: Callable[[], Awaitable[Any]],
-    ) -> None:
-        self._owner = owner
-        self._factory = factory
-
-    def __await__(self) -> Generator[Any, None, Any]:
-        _write_coordination.current(self._owner)
-        return self._factory().__await__()
+    def __init__(self, owner: object) -> None:
+        self.owner = owner
+        self.lock = asyncio.Lock()
+        self.materialized: set[str] = set()
+        self.failure: Exception | None = None
 
 
-class _DeferredBranchCallback:
-    """Delegate fsspec progress while deferring each branched upload."""
-
-    def __init__(self, callback: Callback, owner: object) -> None:
-        self._callback = callback
-        self._owner = owner
-
-    def set_size(self, size: int) -> None:
-        self._callback.set_size(size)
-
-    def relative_update(self, inc: int = 1) -> None:
-        self._callback.relative_update(inc)
-
-    def branch_coro(
-        self,
-        function: Callable[..., Awaitable[Any]],
-    ) -> Callable[..., _DeferredAwaitable]:
-        """Return fsspec's branching wrapper without creating a coroutine yet."""
-        wrapped = self._callback.branch_coro(function)
-
-        def deferred(
-            path1: str,
-            path2: str,
-            **kwargs: Any,  # noqa: ANN401 - fsspec forwards arbitrary hook options
-        ) -> _DeferredAwaitable:
-            return _DeferredAwaitable(
-                self._owner,
-                partial(wrapped, path1, path2, **kwargs),
-            )
-
-        return deferred
-
-
-class _InheritedWriteAdapter:
-    """Let inherited bulk hooks build inert per-file awaitables.
-
-    Direct ``_put_file`` and ``_pipe_file`` remain coroutine functions so
-    fsspec can mirror their synchronous methods. Only inherited bulk
-    coordination sees this adapter.
-    """
-
-    def __init__(self, filesystem: VOSpaceFileSystem) -> None:
-        self._filesystem = filesystem
-
-    def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - fsspec hook surface
-        return getattr(self._filesystem, name)
-
-    def _pipe_file(
-        self,
-        path: str,
-        value: bytes,
-        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
-    ) -> _DeferredAwaitable:
-        return _DeferredAwaitable(
-            self._filesystem,
-            partial(self._filesystem._pipe_file, path, value, **kwargs),  # noqa: SLF001
-        )
-
-    def _put_file(
-        self,
-        lpath: str,
-        rpath: str,
-        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
-    ) -> _DeferredAwaitable:
-        return _DeferredAwaitable(
-            self._filesystem,
-            partial(self._filesystem._put_file, lpath, rpath, **kwargs),  # noqa: SLF001
-        )
+_WRITE_PARENT_STATE = contextvars.ContextVar(
+    "vosfs_write_parent_state",
+    default=None,
+)
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -800,18 +707,19 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's upload coordinator with one shared parent-creation scope."""
-        async with _write_coordination.scope(self):
-            adapter = cast("AsyncFileSystem", _InheritedWriteAdapter(self))
-            return await AsyncFileSystem._put(  # noqa: SLF001 - inherited hook seam
-                adapter,
+        token = _WRITE_PARENT_STATE.set(_WriteParentState(self))
+        try:
+            return await super()._put(
                 lpath,
                 rpath,
                 recursive=recursive,
-                callback=cast("Callback", _DeferredBranchCallback(callback, self)),
+                callback=callback,
                 batch_size=batch_size,
                 maxdepth=maxdepth,
                 **kwargs,
             )
+        finally:
+            _WRITE_PARENT_STATE.reset(token)
 
     async def _pipe(
         self,
@@ -821,15 +729,16 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's pipe coordinator with one shared parent-creation scope."""
-        async with _write_coordination.scope(self):
-            adapter = cast("AsyncFileSystem", _InheritedWriteAdapter(self))
-            return await AsyncFileSystem._pipe(  # noqa: SLF001 - inherited hook seam
-                adapter,
+        token = _WRITE_PARENT_STATE.set(_WriteParentState(self))
+        try:
+            return await super()._pipe(
                 path,
                 value=value,
                 batch_size=batch_size,
                 **kwargs,
             )
+        finally:
+            _WRITE_PARENT_STATE.reset(token)
 
     async def _write(
         self,
@@ -872,11 +781,10 @@ class VOSpaceFileSystem(AsyncFileSystem):
     ) -> None:
         """Write ``value`` to ``path`` with one whole PUT (create or overwrite)."""
         path = self._strip_protocol(path)
-        state = _write_coordination.current(self)
         if mode == "create" and await self._exists(path):
             msg = f"path already exists: {path}"
             raise FileExistsError(msg)
-        await self._materialize_write_parent(path, state)
+        await self._materialize_write_parent(path)
         await self._write(
             path,
             value,
@@ -895,11 +803,10 @@ class VOSpaceFileSystem(AsyncFileSystem):
         """Stream one local file through one negotiated whole PUT."""
         callback: Callback = kwargs.get("callback", DEFAULT_CALLBACK)
         rpath = self._strip_protocol(rpath)
-        state = _write_coordination.current(self)
         if mode == "create" and await self._exists(rpath):
             msg = f"path already exists: {rpath}"
             raise FileExistsError(msg)
-        await self._materialize_write_parent(rpath, state)
+        await self._materialize_write_parent(rpath)
         size = Path(lpath).stat().st_size  # noqa: ASYNC240 - local-disk stat, not remote I/O
         callback.set_size(size)
         await self._write(
@@ -986,10 +893,12 @@ class VOSpaceFileSystem(AsyncFileSystem):
     async def _makedirs(self, path: str, exist_ok: bool = False) -> None:  # noqa: FBT001, FBT002
         """Create ``path`` and every missing ancestor, top-down."""
         path = self._strip_protocol(path)
-        state = _write_coordination.current(self)
         if not exist_ok and await self._exists(path):
             msg = f"path already exists: {path}"
             raise FileExistsError(msg)
+        state = _WRITE_PARENT_STATE.get()
+        if state is not None and state.owner is not self:
+            state = None
         if state is not None:
             await self._materialize_write_containers(path, state)
             return
@@ -999,11 +908,11 @@ class VOSpaceFileSystem(AsyncFileSystem):
     async def _materialize_write_parent(
         self,
         path: str,
-        state: _WriteParentState | None,
     ) -> None:
         """Materialize one coordinated write's missing parent containers."""
+        state = _WRITE_PARENT_STATE.get()
         parent = paths.parent(path)
-        if state is not None and parent not in ("/", path):
+        if state is not None and state.owner is self and parent not in ("/", path):
             await self._materialize_write_containers(parent, state)
 
     async def _materialize_write_containers(
