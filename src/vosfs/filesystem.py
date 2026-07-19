@@ -80,20 +80,27 @@ class _DeferredAwaitable:
     requiring caller-specific close or finalizer behavior.
     """
 
-    __slots__ = ("_factory",)
+    __slots__ = ("_factory", "_owner")
 
-    def __init__(self, factory: Callable[[], Awaitable[Any]]) -> None:
+    def __init__(
+        self,
+        owner: object,
+        factory: Callable[[], Awaitable[Any]],
+    ) -> None:
+        self._owner = owner
         self._factory = factory
 
     def __await__(self) -> Generator[Any, None, Any]:
+        _write_coordination.current(self._owner)
         return self._factory().__await__()
 
 
 class _DeferredBranchCallback:
     """Delegate fsspec progress while deferring each branched upload."""
 
-    def __init__(self, callback: Callback) -> None:
+    def __init__(self, callback: Callback, owner: object) -> None:
         self._callback = callback
+        self._owner = owner
 
     def set_size(self, size: int) -> None:
         self._callback.set_size(size)
@@ -113,7 +120,10 @@ class _DeferredBranchCallback:
             path2: str,
             **kwargs: Any,  # noqa: ANN401 - fsspec forwards arbitrary hook options
         ) -> _DeferredAwaitable:
-            return _DeferredAwaitable(partial(wrapped, path1, path2, **kwargs))
+            return _DeferredAwaitable(
+                self._owner,
+                partial(wrapped, path1, path2, **kwargs),
+            )
 
         return deferred
 
@@ -139,7 +149,8 @@ class _InheritedWriteAdapter:
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> _DeferredAwaitable:
         return _DeferredAwaitable(
-            partial(self._filesystem._pipe_file, path, value, **kwargs)  # noqa: SLF001
+            self._filesystem,
+            partial(self._filesystem._pipe_file, path, value, **kwargs),  # noqa: SLF001
         )
 
     def _put_file(
@@ -149,7 +160,8 @@ class _InheritedWriteAdapter:
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> _DeferredAwaitable:
         return _DeferredAwaitable(
-            partial(self._filesystem._put_file, lpath, rpath, **kwargs)  # noqa: SLF001
+            self._filesystem,
+            partial(self._filesystem._put_file, lpath, rpath, **kwargs),  # noqa: SLF001
         )
 
 
@@ -795,7 +807,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
                 lpath,
                 rpath,
                 recursive=recursive,
-                callback=cast("Callback", _DeferredBranchCallback(callback)),
+                callback=cast("Callback", _DeferredBranchCallback(callback, self)),
                 batch_size=batch_size,
                 maxdepth=maxdepth,
                 **kwargs,

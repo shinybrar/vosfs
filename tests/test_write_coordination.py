@@ -198,6 +198,67 @@ async def test_deferred_callback_preserves_caller_branch_override(
     assert observed_children == [callback.child]
 
 
+async def test_cancelled_put_waits_for_callback_prelude_task(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    prelude_started = asyncio.Event()
+    release_prelude = asyncio.Event()
+    child_done = asyncio.Event()
+
+    class PreludeCallback(Callback):
+        def branch_coro(
+            self,
+            function: Callable[..., Awaitable[Any]],
+        ) -> Callable[..., Awaitable[Any]]:
+            async def wrapped(
+                path1: str,
+                path2: str,
+                **kwargs: Any,
+            ) -> Any:
+                prelude_started.set()
+                try:
+                    await release_prelude.wait()
+                    return await function(path1, path2, **kwargs)
+                finally:
+                    child_done.set()
+
+            return wrapped
+
+    async def put_file(
+        _lpath: str,
+        _rpath: str,
+        **_kwargs: Any,
+    ) -> None:
+        pass
+
+    router = respx.Router(base_url=BASE_URL, assert_all_mocked=True)
+    fs = make_fs(router, asynchronous=True)
+    monkeypatch.setattr(fs, "_put_file", put_file)
+    local_path = tmp_path / "data.bin"
+    local_path.write_bytes(b"data")
+    operation_task = asyncio.create_task(
+        fs._put(
+            [str(local_path)],
+            ["/remote/data.bin"],
+            callback=PreludeCallback(),
+            batch_size=1,
+        )
+    )
+    await prelude_started.wait()
+    operation_task.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await operation_task
+        child_done_when_operation_returned = child_done.is_set()
+    finally:
+        release_prelude.set()
+        await child_done.wait()
+        await fs.aclose()
+
+    assert child_done_when_operation_returned
+
+
 @pytest.mark.parametrize(
     "repeat_cancel",
     [False, True],
