@@ -136,6 +136,42 @@ async def test_scope_preserves_initial_cancellation_when_cleanup_is_cancelled() 
     _assert_cancellation_reason(error.value, "initial cancellation")
 
 
+async def test_initial_cancellation_wins_late_descendant_failure() -> None:
+    owner = object()
+    joined = asyncio.Event()
+
+    async def fail_during_cleanup() -> None:
+        assert _write_coordination.current(owner) is not None
+        joined.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            msg = "late cleanup failure"
+            raise RuntimeError(msg) from None
+
+    async def operation() -> None:
+        descendant_task: asyncio.Task[None] | None = None
+        try:
+            async with _write_coordination.scope(owner):
+                descendant_task = asyncio.create_task(fail_during_cleanup())
+                await joined.wait()
+                task = asyncio.current_task()
+                assert task is not None
+                task.cancel("initial cancellation")
+                await asyncio.sleep(0)
+        finally:
+            assert descendant_task is not None
+            assert descendant_task.done()
+
+    operation_task = asyncio.create_task(operation())
+    with pytest.raises(asyncio.CancelledError) as error:
+        await operation_task
+
+    _assert_cancellation_reason(error.value, "initial cancellation")
+    if hasattr(operation_task, "cancelling"):
+        assert operation_task.cancelling() == 1
+
+
 @pytest.mark.skipif(
     not hasattr(asyncio.Task, "uncancel"),
     reason="cancellation-count restoration requires Python 3.11 or newer",
@@ -271,7 +307,7 @@ async def test_scope_retrieves_failures_from_done_descendants_on_cancellation() 
     loop.set_exception_handler(capture_exception)
     cancel_task = asyncio.create_task(cancel_owner())
     try:
-        with pytest.raises(asyncio.CancelledError):
+        with pytest.raises(RuntimeError, match="joined descendant failure"):
             await cancel_scope_with_failed_descendants()
         await cancel_task
         descendant_tasks.clear()

@@ -16,7 +16,6 @@ import errno
 import hashlib
 import os
 from functools import partial
-from glob import has_magic
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast, overload
 from urllib.parse import unquote, urlsplit
@@ -26,11 +25,8 @@ from fsspec.asyn import AsyncFileSystem, sync
 from fsspec.callbacks import DEFAULT_CALLBACK
 from fsspec.compression import compr
 from fsspec.core import get_compression
-from fsspec.implementations.local import LocalFileSystem, make_path_posix, trailing_sep
-from fsspec.utils import other_paths
 
 from vosfs import (
-    _bulk,
     _write_coordination,
     capabilities,
     config,
@@ -44,7 +40,15 @@ from vosfs.transport import ClientPool, build_timeout
 
 if TYPE_CHECKING:
     import io
-    from collections.abc import AsyncIterator, Mapping, Sequence
+    from collections.abc import (
+        AsyncIterator,
+        Awaitable,
+        Callable,
+        Coroutine,
+        Generator,
+        Mapping,
+        Sequence,
+    )
 
     from fsspec.callbacks import Callback
 
@@ -67,6 +71,98 @@ _IDENTITY_ENCODING = {"Accept-Encoding": "identity"}
 _READ_CHUNK = 1 << 20
 _DEFAULT_CONTENT_TYPE = "application/octet-stream"
 _GET_CONTAINER_MARKER = "_vosfs_materialize_get_container"
+
+
+class _DeferredAwaitable:
+    """Create a coroutine only when fsspec schedules this inert awaitable.
+
+    fsspec 2026.6 bounds live tasks but eagerly builds its input awaitables.
+    Keeping these values inert means an early failure leaves no raw coroutine
+    requiring caller-specific close or finalizer behavior.
+    """
+
+    __slots__ = ("_factory",)
+
+    def __init__(self, factory: Callable[[], Coroutine[Any, Any, Any]]) -> None:
+        self._factory = factory
+
+    def __await__(self) -> Generator[Any, None, Any]:
+        return self._factory().__await__()
+
+
+class _DeferredBranchCallback:
+    """Delegate fsspec progress while deferring each branched upload."""
+
+    __slots__ = ("_callback",)
+
+    def __init__(self, callback: Callback) -> None:
+        self._callback = callback
+
+    def set_size(self, size: int) -> None:
+        self._callback.set_size(size)
+
+    def relative_update(self, inc: int = 1) -> None:
+        self._callback.relative_update(inc)
+
+    def branch_coro(
+        self,
+        function: Callable[..., Awaitable[Any]],
+    ) -> Callable[..., _DeferredAwaitable]:
+        """Return fsspec's branching wrapper without creating a coroutine yet."""
+
+        def deferred(
+            path1: str,
+            path2: str,
+            **kwargs: Any,  # noqa: ANN401 - fsspec forwards arbitrary hook options
+        ) -> _DeferredAwaitable:
+            async def run() -> Any:  # noqa: ANN401 - wrapped fsspec hook result
+                with self._callback.branched(path1, path2, **kwargs) as child:
+                    return await function(path1, path2, callback=child, **kwargs)
+
+            return _DeferredAwaitable(run)
+
+        return deferred
+
+
+class _InheritedWriteAdapter:
+    """Let inherited bulk hooks build inert per-file awaitables.
+
+    Direct ``_put_file`` and ``_pipe_file`` remain coroutine functions so
+    fsspec can mirror their synchronous methods. Only inherited bulk
+    coordination sees this adapter.
+    """
+
+    __slots__ = ("_filesystem",)
+
+    def __init__(self, filesystem: VOSpaceFileSystem) -> None:
+        self._filesystem = filesystem
+
+    @property
+    def batch_size(self) -> int | None:
+        return self._filesystem.batch_size
+
+    def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - fsspec hook surface
+        return getattr(self._filesystem, name)
+
+    def _pipe_file(
+        self,
+        path: str,
+        value: bytes,
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> _DeferredAwaitable:
+        return _DeferredAwaitable(
+            partial(self._filesystem._pipe_file, path, value, **kwargs)  # noqa: SLF001
+        )
+
+    def _put_file(
+        self,
+        lpath: str,
+        rpath: str,
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> _DeferredAwaitable:
+        return _DeferredAwaitable(
+            partial(self._filesystem._put_file, lpath, rpath, **kwargs)  # noqa: SLF001
+        )
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -704,44 +800,17 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's upload coordinator with one shared parent-creation scope."""
-        mapped = await self._map_put_paths(lpath, rpath, recursive, maxdepth)
-        if mapped is None:
-            return None
-        local_paths, remote_paths = mapped
-        max_concurrency = _bulk.resolve_batch_size(
-            batch_size,
-            self.batch_size,
-            nofiles=False,
-        )
-        is_dir = {
-            path: os.path.isdir(path)  # noqa: ASYNC240, PTH112 - local mapping
-            for path in local_paths
-        }
-        remote_dirs = [
-            remote
-            for local, remote in zip(local_paths, remote_paths, strict=False)
-            if is_dir[local]
-        ]
-        file_pairs = [
-            (local, remote)
-            for local, remote in zip(local_paths, remote_paths, strict=False)
-            if not is_dir[local]
-        ]
-
         async with _write_coordination.scope(self):
-            await _bulk.run_factories(
-                [partial(self._makedirs, path, exist_ok=True) for path in remote_dirs],
-                max_concurrency=max_concurrency,
-            )
-            callback.set_size(len(file_pairs))
-            factories = []
-            for local, remote in file_pairs:
-                put_file = callback.branch_coro(self._put_file)
-                factories.append(partial(put_file, local, remote, **kwargs))
-            return await _bulk.run_factories(
-                factories,
-                max_concurrency=max_concurrency,
-                on_success=callback.relative_update,
+            adapter = cast("AsyncFileSystem", _InheritedWriteAdapter(self))
+            return await AsyncFileSystem._put(  # noqa: SLF001 - inherited hook seam
+                adapter,
+                lpath,
+                rpath,
+                recursive=recursive,
+                callback=cast("Callback", _DeferredBranchCallback(callback)),
+                batch_size=batch_size,
+                maxdepth=maxdepth,
+                **kwargs,
             )
 
     async def _pipe(
@@ -752,69 +821,15 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's pipe coordinator with one shared parent-creation scope."""
-        if isinstance(path, str):
-            path_map: Mapping[str, bytes] = {path: cast("bytes", value)}
-        else:
-            path_map = path
-        max_concurrency = _bulk.resolve_batch_size(
-            batch_size,
-            self.batch_size,
-            nofiles=True,
-        )
         async with _write_coordination.scope(self):
-            return await _bulk.run_factories(
-                [
-                    partial(self._pipe_file, remote, data, **kwargs)
-                    for remote, data in path_map.items()
-                ],
-                max_concurrency=max_concurrency,
+            adapter = cast("AsyncFileSystem", _InheritedWriteAdapter(self))
+            return await AsyncFileSystem._pipe(  # noqa: SLF001 - inherited hook seam
+                adapter,
+                path,
+                value=value,
+                batch_size=batch_size,
+                **kwargs,
             )
-
-    async def _map_put_paths(
-        self,
-        lpath: Any,  # noqa: ANN401 - fsspec accepts strings, globs, and path lists
-        rpath: Any,  # noqa: ANN401 - paired lists or one destination root
-        recursive: bool,  # noqa: FBT001 - mirrors the fsspec hook
-        maxdepth: int | None,
-    ) -> tuple[list[str], list[str]] | None:
-        """Map local inputs to remote paths as fsspec 2026.6 ``_put`` does."""
-        if isinstance(lpath, list) and isinstance(rpath, list):
-            return lpath, rpath
-
-        source_is_str = isinstance(lpath, str)
-        if source_is_str:
-            lpath = make_path_posix(lpath)
-        local_fs = LocalFileSystem()
-        local_paths = local_fs.expand_path(
-            lpath,
-            recursive=recursive,
-            maxdepth=maxdepth,
-        )
-        if source_is_str and (not recursive or maxdepth is not None):
-            local_paths = [
-                path
-                for path in local_paths
-                if not (trailing_sep(path) or local_fs.isdir(path))
-            ]
-            if not local_paths:
-                return None
-
-        source_is_file = len(local_paths) == 1
-        destination_is_dir = isinstance(rpath, str) and (
-            trailing_sep(rpath) or await self._isdir(rpath)
-        )
-        rpath = self._strip_protocol(rpath)
-        exists = source_is_str and (
-            (has_magic(lpath) and source_is_file)
-            or (not has_magic(lpath) and destination_is_dir and not trailing_sep(lpath))
-        )
-        remote_paths = other_paths(
-            local_paths,
-            rpath,
-            exists=exists,
-            flatten=not source_is_str,
-        )
-        return local_paths, remote_paths
 
     async def _write(
         self,
