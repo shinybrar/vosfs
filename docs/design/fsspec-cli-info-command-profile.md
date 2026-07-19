@@ -93,24 +93,44 @@ The command creates this plain Python dictionary from the normalized row:
 }
 ```
 
-Before rendering, the command recursively copies `Mapping` values to plain
-Python dictionaries while retaining every key/value, and recursively retains
-exact built-in list and tuple shapes. Set and frozenset elements are recursively
-rendered, sorted by those rendered strings, and presented with their native
-`{...}` / `set()` / `frozenset({...})` spelling. Recursive container graphs are
-incompatible results. This presentation-only canonicalization prevents a
-read-only mapping's opaque `repr` and hash-randomized set iteration from
-bypassing nested sorting; it does not reinterpret metadata.
+Before rendering, the command traverses every `Mapping`, list, tuple, set, and
+frozenset, including subclasses, across both mapping keys and values. Mappings
+are copied to plain Python dictionaries, list/tuple subclasses retain their
+base container shape, and every original entry/value is retained. Set and
+frozenset elements are recursively rendered, sorted by those rendered strings,
+and presented with their native `{...}` / `set()` / `frozenset({...})`
+spelling.
+
+A mapping key must canonicalize to a hashable presentation. Its exact
+`pprint.pformat(..., width=80, sort_dicts=True)` spelling must also be unique
+within that mapping. If two distinct source keys produce one spelling, or the
+canonical dictionary has fewer entries than the source mapping, the whole
+result is incompatible; the renderer never silently collapses an entry.
+Structured tuple/frozenset keys therefore remain stable across Python hash
+seeds without being converted to strings.
+
+An identity is recursive only while it is active on the current traversal
+stack. A cycle through a mapping key or value, including an indirect cycle
+through a recognized container subclass, is incompatible. Reusing one acyclic
+container in multiple sibling positions is valid and renders it at each
+position. This presentation-only canonicalization prevents a read-only
+mapping's opaque `repr` and hash-randomized set iteration from bypassing nested
+sorting; it does not reinterpret metadata.
 
 The command then renders with
 `pprint.pformat(value, width=80, sort_dicts=True)`, appends exactly one newline,
-and encodes it as UTF-8. Dictionary keys and set values are therefore ordered by
-Python's stdlib pretty-printer. Other values retain their stdlib Python
-presentation; for example bytes stay bytes, datetimes stay datetimes, and
-tuples stay tuples. Nothing is coerced through a JSON type system. The same
-supported Python value graph and runtime therefore produce the same bytes.
-Backend objects with unstable custom `repr` remain truthfully represented
-backend data, not a cross-process byte-stability claim.
+and encodes it as UTF-8. Dictionary keys use the stdlib pretty-printer's
+ordering; set/frozenset members use the canonical rendered-string ordering
+above. Other values retain their stdlib Python presentation; for example bytes
+stay bytes, datetimes stay datetimes, and tuples stay tuples. Nothing is
+coerced through a JSON type system. A scalar object's successful custom `repr`
+is its truthful value presentation and is outside a cross-process stability
+claim supplied by this command.
+
+An ordinary exception raised while hashing/canonicalizing a key or producing a
+value's `repr` makes the result incompatible before stdout. An escaping
+`BaseException` from either stage is control flow: it reaches source exit and
+the direct caller as the exact original object after same-task cleanup.
 
 All nine normalized scalar fields are present even when their value is `None`.
 `extra` is always present and contains every backend-specific string key/value
@@ -126,7 +146,7 @@ an output failure; the command never retries or writes a partial remainder.
 | Outcome | Behavior |
 | --- | --- |
 | Backend `FileNotFoundError` / ordinary error | Shared stable operand diagnostic; status `1` |
-| Incompatible result | `info: <operand>: incompatible result`; status `1` |
+| Incompatible result, including ordinary render failure | `info: <operand>: incompatible result`; status `1` |
 | Short write / ordinary output error | Shared output diagnostic; status `1` |
 | `BrokenPipeError` | No output-failure diagnostic; status `1` |
 | Source cleanup error | Shared ADR 0003 diagnostic; status `1` |
@@ -146,7 +166,11 @@ Hermetic public-`App` evidence covers:
 - native async `vosfs` over a strict mocked HTTP transport, including `uri`,
   `md5`, `content_type`, and VOSpace `properties` extras; and
 - source-free argv rejection, exact hook count, incompatible results, atomic
-  output, broken pipe, cleanup, and control-flow precedence.
+  output, broken pipe, cleanup, and control-flow precedence;
+- subprocess rendering under distinct `PYTHONHASHSEED` values, including set
+  values and structured frozenset/tuple mapping keys; and
+- mapping-key collisions, key/value cycles, subclass cycles, shared acyclic
+  containers, and ordinary/control-flow `repr` failures.
 
 These tests establish only the named source forms and the locked command seam.
 They are not live OpenCADC evidence, a completeness claim for arbitrary fsspec

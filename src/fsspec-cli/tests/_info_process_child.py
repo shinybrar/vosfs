@@ -26,6 +26,12 @@ class _InfoFileSystem(AsyncFileSystem):
             "properties": MappingProxyType(
                 {"z": (2, 1), "a": {"charlie", "alpha", "bravo"}}
             ),
+            "keyed": MappingProxyType(
+                {
+                    frozenset({"bravo", "alpha"}): "frozenset key",
+                    ("tuple", frozenset({"delta", "charlie"})): "tuple key",
+                }
+            ),
         }
 
 

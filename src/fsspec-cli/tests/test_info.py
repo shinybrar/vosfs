@@ -10,12 +10,18 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 import pytest
 import typer
+from fsspec_cli import App
 from fsspec_cli._info import _preflight
+from typer.main import get_command
 
 from ._support import _invoke_info, _RecordingSource
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _INFO = MappingProxyType(
     {
@@ -47,6 +53,76 @@ _OUTPUT = (
     " 'owner': 1000,\n"
     " 'size': 3}\n"
 )
+
+
+class _HashableMapping(dict[object, object]):
+    __hash__ = object.__hash__
+
+
+class _ContainerList(list[object]):
+    pass
+
+
+class _HashableContainerList(_ContainerList):
+    __hash__ = object.__hash__
+
+
+class _ContainerTuple(tuple[object, ...]):
+    __slots__ = ()
+
+
+class _ContainerSet(set[object]):
+    pass
+
+
+class _ContainerFrozenSet(frozenset[object]):
+    pass
+
+
+class _SamePresentation:
+    def __repr__(self) -> str:
+        return "same-key"
+
+
+class _ReprFailure:
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+    def __repr__(self) -> str:
+        raise self.error
+
+
+def _mapping_cycle() -> object:
+    value = _HashableMapping()
+    value["self"] = value
+    return value
+
+
+def _list_cycle() -> object:
+    value = _ContainerList()
+    value.append(value)
+    return value
+
+
+def _tuple_cycle() -> object:
+    holder = _ContainerList()
+    value = _ContainerTuple((holder,))
+    holder.append(value)
+    return value
+
+
+def _set_cycle() -> object:
+    holder = _HashableContainerList()
+    value = _ContainerSet({holder})
+    holder.append(value)
+    return value
+
+
+def _frozenset_cycle() -> object:
+    holder = _HashableContainerList()
+    value = _ContainerFrozenSet({holder})
+    holder.append(value)
+    return value
 
 
 def test_info_help_matches_locked_usage() -> None:
@@ -91,7 +167,11 @@ def test_info_rendering_is_stable_across_python_hash_seeds() -> None:
     assert (
         outputs
         == [
-            "{'extra': {'properties': {'a': {'alpha', 'bravo', 'charlie'}, "
+            "{'extra': {'keyed': {frozenset({'alpha', 'bravo'}): "
+            "'frozenset key',\n"
+            "                     ('tuple', frozenset({'charlie', 'delta'})): "
+            "'tuple key'},\n"
+            "           'properties': {'a': {'alpha', 'bravo', 'charlie'}, "
             "'z': (2, 1)}},\n"
             " 'group': None,\n"
             " 'kind': 'file',\n"
@@ -179,6 +259,140 @@ def test_info_rejects_a_recursive_extra_value() -> None:
         "",
         "info: memory:/x: incompatible result\n",
     )
+
+
+def test_info_rejects_a_recursive_mapping_key_graph() -> None:
+    key = _HashableMapping()
+    key[key] = "self"
+    source = _RecordingSource(
+        [],
+        info_result={"name": "/x", "type": "file", "keyed": {key: "value"}},
+    )
+
+    result = _invoke_info(["memory:/x"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "info: memory:/x: incompatible result\n",
+    )
+
+
+@pytest.mark.parametrize(
+    "cycle",
+    [_mapping_cycle, _list_cycle, _tuple_cycle, _set_cycle, _frozenset_cycle],
+    ids=["mapping", "list", "tuple", "set", "frozenset"],
+)
+def test_info_rejects_recursive_container_subclasses(
+    cycle: Callable[[], object],
+) -> None:
+    source = _RecordingSource(
+        [],
+        info_result={"name": "/x", "type": "file", "cycle": cycle()},
+    )
+
+    result = _invoke_info(["memory:/x"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "info: memory:/x: incompatible result\n",
+    )
+
+
+def test_info_accepts_a_shared_acyclic_container_subclass() -> None:
+    shared = _ContainerList([{"leaf": 1}])
+    source = _RecordingSource(
+        [],
+        info_result={
+            "name": "/x",
+            "type": "file",
+            "left": shared,
+            "right": shared,
+        },
+    )
+
+    result = _invoke_info(["memory:/x"], sources={"memory": source})
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+    assert "'left': [{'leaf': 1}], 'right': [{'leaf': 1}]" in result.stdout
+
+
+def test_info_rejects_distinct_mapping_keys_with_one_presentation() -> None:
+    first = _SamePresentation()
+    second = _SamePresentation()
+    source = _RecordingSource(
+        [],
+        info_result={
+            "name": "/x",
+            "type": "file",
+            "keyed": {first: 1, second: 2},
+        },
+    )
+
+    result = _invoke_info(["memory:/x"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "info: memory:/x: incompatible result\n",
+    )
+
+
+def test_info_turns_an_ordinary_repr_failure_into_an_atomic_incompatible_result() -> (
+    None
+):
+    error = RuntimeError("repr failed")
+    source = _RecordingSource(
+        [],
+        info_result={"name": "/x", "type": "file", "opaque": _ReprFailure(error)},
+    )
+
+    result = _invoke_info(["memory:/x"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "info: memory:/x: incompatible result\n",
+    )
+    assert source.exit_calls == [(None, None, None)]
+
+
+@pytest.mark.parametrize(
+    "control",
+    [
+        asyncio.CancelledError("repr cancellation"),
+        KeyboardInterrupt("repr interrupt"),
+        SystemExit(29),
+    ],
+)
+def test_info_preserves_repr_control_flow_through_cleanup_and_direct_caller(
+    control: BaseException,
+) -> None:
+    source = _RecordingSource(
+        [],
+        info_result={
+            "name": "/x",
+            "type": "file",
+            "opaque": _ReprFailure(control),
+        },
+    )
+    command = get_command(App({"memory": source}).typer_app)
+
+    with (
+        command.make_context("fs", ["info", "memory:/x"]) as context,
+        pytest.raises(type(control)) as caught,
+    ):
+        command.invoke(context)
+
+    assert caught.value is control
+    assert caught.value.args == control.args
+    exception_type, exception, traceback = source.exit_calls[0]
+    assert exception_type is type(control)
+    assert exception is control
+    assert exception.args == control.args
+    assert traceback is not None
 
 
 def test_info_maps_an_ordinary_backend_failure() -> None:

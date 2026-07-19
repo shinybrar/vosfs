@@ -78,39 +78,68 @@ def _canonical_value(value: object, active: set[int]) -> object:
 
     identity = id(value)
     if identity in active:
-        message = "recursive metadata values are not supported"
+        message = "recursive metadata containers are not supported"
         raise ValueError(message)
     active.add(identity)
     try:
         if isinstance(value, Mapping):
-            canonical: object = {
-                key: _canonical_value(item, active) for key, item in value.items()
-            }
-        elif type(value) is list:
-            canonical = [_canonical_value(item, active) for item in value]
-        elif type(value) is tuple:
-            canonical = tuple(_canonical_value(item, active) for item in value)
-        elif type(value) is set or type(value) is frozenset:
-            members = sorted(
-                pprint.pformat(
-                    _canonical_value(item, active),
-                    width=_PRETTY_WIDTH,
-                    sort_dicts=True,
-                )
-                for item in value
+            canonical: object = _canonical_mapping(
+                cast("Mapping[object, object]", value), active
             )
-            if type(value) is set:
-                spelling = "set()" if not members else f"{{{', '.join(members)}}}"
-            elif not members:
-                spelling = "frozenset()"
-            else:
-                spelling = f"frozenset({{{', '.join(members)}}})"
-            canonical = _StablePresentation(spelling)
+        elif isinstance(value, list):
+            canonical = [_canonical_value(item, active) for item in value]
+        elif isinstance(value, tuple):
+            canonical = tuple(_canonical_value(item, active) for item in value)
+        elif isinstance(value, set):
+            canonical = _canonical_set(cast("set[object]", value), active, frozen=False)
         else:
-            canonical = value
+            canonical = _canonical_set(value, active, frozen=True)
         return canonical
     finally:
         active.remove(identity)
+
+
+def _canonical_mapping(
+    value: Mapping[object, object],
+    active: set[int],
+) -> dict[object, object]:
+    entries: list[tuple[object, object]] = []
+    spellings: set[str] = set()
+    for key, item in value.items():
+        canonical_key = _canonical_value(key, active)
+        hash(canonical_key)
+        spelling = _pretty(canonical_key)
+        if spelling in spellings:
+            message = "distinct mapping keys have the same presentation"
+            raise ValueError(message)
+        spellings.add(spelling)
+        entries.append((canonical_key, _canonical_value(item, active)))
+
+    canonical = dict(entries)
+    if len(canonical) != len(entries):
+        message = "canonical mapping keys are not distinct"
+        raise ValueError(message)
+    return canonical
+
+
+def _canonical_set(
+    value: set[object] | frozenset[object],
+    active: set[int],
+    *,
+    frozen: bool,
+) -> _StablePresentation:
+    members = sorted(_pretty(_canonical_value(item, active)) for item in value)
+    if frozen:
+        spelling = (
+            "frozenset()" if not members else f"frozenset({{{', '.join(members)}}})"
+        )
+    else:
+        spelling = "set()" if not members else f"{{{', '.join(members)}}}"
+    return _StablePresentation(spelling)
+
+
+def _pretty(value: object) -> str:
+    return pprint.pformat(value, width=_PRETTY_WIDTH, sort_dicts=True)
 
 
 def _render_info(row: ListingRow) -> bytes:
@@ -126,11 +155,7 @@ def _render_info(row: ListingRow) -> bytes:
         "link_target": row.link_target,
         "extra": _canonical_value(row.extra, set()),
     }
-    rendered = pprint.pformat(
-        values,
-        width=_PRETTY_WIDTH,
-        sort_dicts=True,
-    )
+    rendered = _pretty(values)
     return f"{rendered}\n".encode()
 
 
