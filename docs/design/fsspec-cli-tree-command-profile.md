@@ -68,9 +68,20 @@ Two pinned hook shapes are supported. Native `AsyncFileSystem._walk` returns an
 async iterator, which the command consumes asynchronously. An
 `AsyncFileSystemWrapper` instance exposes an awaitable `_walk`; the command
 awaits it once, requires the resolved value to be a synchronous iterator, and
-materializes that lazy iterator off the invocation event loop. Any other shape
+materializes that lazy iterator in one invocation-owned worker thread and task
+off the invocation event loop. The synchronous materializer catches every
+`BaseException` and returns a typed value-or-error outcome as data; iterator
+control flow never directly crosses the child-task boundary. Any other shape
 is incompatible. Ordinary invocation, await, or iteration exceptions are
-backend failures; escaping `BaseException` control flow is preserved.
+backend failures; escaping `BaseException` control flow is preserved as the
+exact original object.
+
+The worker task is shielded only while that iterator is active. If the
+invocation task is cancelled or otherwise interrupted, it drains and retrieves
+the worker outcome before re-raising the unchanged outer control flow and
+beginning same-task source cleanup. A source is never exited while its iterator
+is still running. This narrow adapter adds no public runner, background loop,
+timeout, retry, or source-cleanup shield.
 
 The command MUST NOT call public `tree`, `_find`, `_ls`, `_info`, metadata
 hooks, or another synchronous facade. It MUST NOT retry, fall back, branch on

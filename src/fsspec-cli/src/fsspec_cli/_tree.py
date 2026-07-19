@@ -8,7 +8,7 @@ import locale
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeGuard, cast
+from typing import TYPE_CHECKING, TypeAlias, TypeGuard
 
 from ._command import (
     _Failure,
@@ -43,6 +43,19 @@ class _WalkRow:
     root: str
     directories: tuple[str, ...]
     files: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _MaterializedRows:
+    values: list[object]
+
+
+@dataclass(frozen=True)
+class _MaterializationError:
+    error: BaseException
+
+
+_MaterializationOutcome: TypeAlias = _MaterializedRows | _MaterializationError
 
 
 class _TreeCommand(_RawCommand):
@@ -253,10 +266,18 @@ def _render_tree(request: _TreeRequest, rows: Mapping[str, _WalkRow]) -> str:
     return "\n".join(lines) + "\n"
 
 
-async def _materialize_iterator(iterator: Iterator[object]) -> list[object]:
-    worker = asyncio.create_task(asyncio.to_thread(list, iterator))
+def _materialize_sync(iterator: Iterator[object]) -> _MaterializationOutcome:
     try:
-        values = await asyncio.shield(worker)
+        values = list(iterator)
+    except BaseException as error:  # noqa: BLE001 - cross task boundary as data.
+        return _MaterializationError(error)
+    return _MaterializedRows(values)
+
+
+async def _materialize_iterator(iterator: Iterator[object]) -> list[object]:
+    worker = asyncio.create_task(asyncio.to_thread(_materialize_sync, iterator))
+    try:
+        outcome = await asyncio.shield(worker)
     except BaseException:
         while not worker.done():
             with suppress(BaseException):
@@ -264,7 +285,9 @@ async def _materialize_iterator(iterator: Iterator[object]) -> list[object]:
         with suppress(BaseException):
             worker.result()
         raise
-    return cast("list[object]", values)
+    if isinstance(outcome, _MaterializationError):
+        raise outcome.error
+    return outcome.values
 
 
 async def _consume_walk(result: object) -> list[object] | None:

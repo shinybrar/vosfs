@@ -15,6 +15,7 @@ import typer
 from click.utils import strip_ansi
 from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App, AsyncFilesystemSource
+from typer.main import get_command
 from typer.testing import CliRunner, Result
 
 if TYPE_CHECKING:
@@ -615,6 +616,34 @@ def test_tree_cleans_up_then_preserves_walk_control_flow(stage: str) -> None:
     assert caught.value is control
     assert source.lifecycle == ["factory", "enter", "exit"]
     assert source.exit_calls[0][1] is control
+
+
+@pytest.mark.parametrize(
+    "control",
+    [
+        asyncio.CancelledError("iterator cancellation"),
+        KeyboardInterrupt("iterator interrupt"),
+        SystemExit(23),
+    ],
+)
+def test_tree_preserves_exact_sync_iterator_control_flow_through_public_app(
+    control: BaseException,
+) -> None:
+    source = _TreeSource(shape="adapted", iteration_error=control)
+    app = App({"memory": source})
+    command = get_command(app.typer_app)
+
+    with (
+        command.make_context("fs", ["tree", "memory:/docs"]) as context,
+        pytest.raises(type(control)) as caught,
+    ):
+        command.invoke(context)
+
+    assert caught.value is control
+    assert caught.value.args == control.args
+    assert source.lifecycle == ["factory", "enter", "exit"]
+    assert source.exit_calls[0][1] is control
+    assert source.exit_calls[0][1].args == control.args
 
 
 def test_tree_cleans_up_after_output_failure(monkeypatch: pytest.MonkeyPatch) -> None:
