@@ -118,6 +118,43 @@ def test_mv_rejects_mismatched_metadata_token() -> None:
     assert not source.get_file_paths
 
 
+def test_mv_freezes_source_metadata_before_mutation() -> None:
+    source_info: dict[str, object] = {
+        "type": "file",
+        "size": 7,
+        "checksum": "source-token",
+    }
+    source = _source(
+        info_by_path={
+            "/docs/notes.txt": source_info,
+            "/docs/moved.txt": {
+                "type": "file",
+                "size": 7,
+                "checksum": "destination-token",
+            },
+        }
+    )
+
+    def move_and_clear_source_metadata(path1: str, path2: str) -> None:
+        filesystem = source.contexts[0].filesystem
+        filesystem._file_contents[path2] = filesystem._file_contents.pop(path1)
+        source.file_contents[path2] = source.file_contents.pop(path1)
+        filesystem._removed_paths.add(path1)
+        source_info.clear()
+
+    source.mv_hook = move_and_clear_source_metadata
+    result = _invoke(source, "memory:/docs/notes.txt", "memory:/docs/moved.txt")
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "mv: memory:/docs/moved.txt: verification failure; "
+        "destination residue may remain\n",
+    )
+    assert source.file_contents == {"/docs/moved.txt": b"payload"}
+    assert not source.get_file_paths
+
+
 def test_mv_rejects_inherited_async_move_operation() -> None:
     class InheritedMoveFileSystem(_RecordingFileSystem):
         pass
@@ -403,7 +440,7 @@ def test_mv_multiple_files_source_retained_after_later_destination() -> None:
     }
 
 
-def test_mv_multiple_files_cancellation_removes_temps_and_closes_source() -> None:
+def test_mv_multiple_files_cancellation_closes_source_without_downloads() -> None:
     source = _source(
         contents={"/docs/one.txt": b"one", "/docs/two.txt": b"two"},
         directories={"/", "/docs", "/docs/out"},
@@ -667,18 +704,18 @@ def test_mv_rejects_destination_type_mismatch_and_source_residue() -> None:
     assert "/docs/moved.txt" in source.directories
 
 
-@pytest.mark.parametrize("replacement", [b"short", b"invalid"])
-def test_mv_rejects_destination_size_or_content_mismatch(
-    replacement: bytes,
-) -> None:
+def test_mv_rejects_destination_size_mismatch_after_source_removal() -> None:
     source = _source()
 
-    def corrupt(_path1: str, path2: str) -> None:
+    def truncate_and_remove_source(path1: str, path2: str) -> None:
         filesystem = source.contexts[0].filesystem
-        filesystem._file_contents[path2] = replacement
-        source.file_contents[path2] = replacement
+        filesystem._file_contents.pop(path1)
+        source.file_contents.pop(path1)
+        filesystem._file_contents[path2] = b"short"
+        source.file_contents[path2] = b"short"
+        filesystem._removed_paths.add(path1)
 
-    source.mv_hook = corrupt
+    source.mv_hook = truncate_and_remove_source
     result = _invoke(source, "memory:/docs/notes.txt", "memory:/docs/moved.txt")
 
     assert (result.exit_code, result.stdout, result.stderr) == (
@@ -687,10 +724,26 @@ def test_mv_rejects_destination_size_or_content_mismatch(
         "mv: memory:/docs/moved.txt: verification failure; "
         "destination residue may remain\n",
     )
-    assert source.file_contents == {
-        "/docs/notes.txt": b"payload",
-        "/docs/moved.txt": replacement,
-    }
+    assert source.file_contents == {"/docs/moved.txt": b"short"}
+
+
+def test_mv_accepts_same_size_changed_content_without_shared_token() -> None:
+    source = _source()
+
+    def replace_and_remove_source(path1: str, path2: str) -> None:
+        filesystem = source.contexts[0].filesystem
+        filesystem._file_contents.pop(path1)
+        source.file_contents.pop(path1)
+        filesystem._file_contents[path2] = b"invalid"
+        source.file_contents[path2] = b"invalid"
+        filesystem._removed_paths.add(path1)
+
+    source.mv_hook = replace_and_remove_source
+    result = _invoke(source, "memory:/docs/notes.txt", "memory:/docs/moved.txt")
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.file_contents == {"/docs/moved.txt": b"invalid"}
+    assert not source.get_file_paths
 
 
 def test_mv_rejects_source_retained_after_complete_destination() -> None:

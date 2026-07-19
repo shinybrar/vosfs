@@ -1186,6 +1186,125 @@ def test_cp_rejects_when_any_shared_metadata_token_mismatches() -> None:
     assert not [event for event in source.events if event[0] == "get_file"]
 
 
+def test_cp_freezes_source_metadata_before_same_source_mutation() -> None:
+    source_info: dict[str, object] = {
+        "type": "file",
+        "size": 7,
+        "checksum": "source-token",
+    }
+    source = _file_source(
+        info_by_path={"/docs/notes.txt": source_info},
+        post_info_by_path={
+            "/docs/copy.txt": MappingProxyType(
+                {"type": "file", "size": 7, "checksum": "destination-token"}
+            )
+        },
+    )
+
+    def copy_and_clear_source_metadata(path1: str, path2: str) -> None:
+        filesystem = source.contexts[0].filesystem
+        filesystem._file_contents[path2] = filesystem._file_contents[path1]
+        filesystem._pending_cp_verify.add(path2)
+        source.file_contents[path2] = source.file_contents[path1]
+        source_info.clear()
+
+    source.cp_file_hook = copy_and_clear_source_metadata
+    result = _invoke_cp(
+        ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: memory:/docs/copy.txt: verification failure; "
+        "destination residue may remain\n",
+    )
+
+
+def test_cp_freezes_source_metadata_before_cross_source_mutation() -> None:
+    source_info: dict[str, object] = {
+        "type": "file",
+        "size": 7,
+        "checksum": "source-token",
+    }
+    source = _file_source(info_by_path={"/docs/notes.txt": source_info})
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+        post_info_by_path={
+            "/out/copy.txt": MappingProxyType(
+                {"type": "file", "size": 7, "checksum": "destination-token"}
+            )
+        },
+    )
+
+    def upload_and_change_source_metadata(local_path: str, remote_path: str) -> None:
+        filesystem = destination.contexts[0].filesystem
+        content = Path(local_path).read_bytes()
+        filesystem._file_contents[remote_path] = content
+        filesystem._pending_cp_verify.add(remote_path)
+        destination.file_contents[remote_path] = content
+        source_info["checksum"] = "destination-token"
+
+    destination.put_file_by_path = {"/out/copy.txt": upload_and_change_source_metadata}
+    result = _invoke_cp(
+        ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+        sources={"source": source, "destination": destination},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: destination:/out/copy.txt: verification failure; "
+        "destination residue may remain\n",
+    )
+    assert len(source.get_file_paths) == 1
+    assert not [event for event in destination.events if event[0] == "get_file"]
+
+
+class _StringToken(str):
+    __slots__ = ()
+
+
+class _BytesToken(bytes):
+    pass
+
+
+@pytest.mark.parametrize(
+    "token",
+    [_StringToken("source-token"), _BytesToken(b"source-token")],
+    ids=["str-subclass", "bytes-subclass"],
+)
+def test_cp_ignores_str_and_bytes_subclass_tokens_after_mutation(
+    token: str | bytes,
+) -> None:
+    source = _file_source(
+        info_by_path={
+            "/docs/notes.txt": {
+                "type": "file",
+                "size": 7,
+                "checksum": token,
+            }
+        },
+        post_info_by_path={
+            "/docs/copy.txt": MappingProxyType(
+                {"type": "file", "size": 7, "checksum": "destination-token"}
+            )
+        },
+    )
+
+    result = _invoke_cp(
+        ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.file_contents["/docs/copy.txt"] == b"payload"
+    assert not [event for event in source.events if event[0] == "get_file"]
+
+
 def test_cp_reports_post_copy_destination_type_mismatch() -> None:
     source = _file_source(
         post_info_by_path={
@@ -1304,6 +1423,124 @@ def test_cp_cleanup_failure_does_not_mask_verification_failure(
 
 class _ControlFlow(BaseException):
     pass
+
+
+class _SecondaryControlFlow(BaseException):
+    pass
+
+
+@pytest.mark.parametrize(
+    "secondary",
+    [OSError("cleanup-error"), _SecondaryControlFlow("cleanup-control")],
+    ids=["ordinary-cleanup", "control-flow-cleanup"],
+)
+def test_cp_preserves_descriptor_close_control_flow_over_cleanup_failure(
+    monkeypatch,
+    secondary: BaseException,
+) -> None:
+    primary = _ControlFlow("descriptor-close")
+    cleaned: list[str] = []
+    source = _file_source()
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
+
+    def fail_close(_descriptor: int) -> NoReturn:
+        raise primary
+
+    def fail_cleanup(path: str) -> NoReturn:
+        cleaned.append(path)
+        Path(path).unlink(missing_ok=True)
+        raise secondary
+
+    monkeypatch.setattr("fsspec_cli._cp.os.close", fail_close)
+    monkeypatch.setattr("fsspec_cli._cp._remove_temporary", fail_cleanup)
+
+    with pytest.raises(_ControlFlow) as caught:
+        _invoke_cp(
+            ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+            sources={"source": source, "destination": destination},
+        )
+
+    assert caught.value is primary
+    assert len(cleaned) == 1
+    assert not Path(cleaned[0]).exists()
+    assert not source.get_file_paths
+
+
+def test_cp_preserves_staging_download_control_flow_over_cleanup_failure(
+    monkeypatch,
+) -> None:
+    primary = _ControlFlow("staging-download")
+    secondary = _SecondaryControlFlow("cleanup-control")
+    cleaned: list[str] = []
+
+    def fail_download(_local_path: str) -> NoReturn:
+        raise primary
+
+    def fail_cleanup(path: str) -> NoReturn:
+        cleaned.append(path)
+        Path(path).unlink(missing_ok=True)
+        raise secondary
+
+    source = _file_source(get_file_by_path={"/docs/notes.txt": fail_download})
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
+    monkeypatch.setattr("fsspec_cli._cp._remove_temporary", fail_cleanup)
+
+    with pytest.raises(_ControlFlow) as caught:
+        _invoke_cp(
+            ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+            sources={"source": source, "destination": destination},
+        )
+
+    assert caught.value is primary
+    assert cleaned == source.get_file_paths
+    assert len(cleaned) == 1
+    assert not Path(cleaned[0]).exists()
+
+
+@pytest.mark.parametrize("boundary", ["upload", "verification"])
+def test_cp_preserves_post_staging_control_flow_over_cleanup_failure(
+    monkeypatch,
+    boundary: str,
+) -> None:
+    primary = _ControlFlow(boundary)
+    secondary = _SecondaryControlFlow("cleanup-control")
+    cleaned: list[str] = []
+
+    def fail_cleanup(path: str) -> NoReturn:
+        cleaned.append(path)
+        Path(path).unlink(missing_ok=True)
+        raise secondary
+
+    source = _file_source()
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+        put_file_by_path=({"/out/copy.txt": primary} if boundary == "upload" else None),
+        post_info_by_path=(
+            {"/out/copy.txt": primary} if boundary == "verification" else None
+        ),
+    )
+    monkeypatch.setattr("fsspec_cli._cp._remove_temporary", fail_cleanup)
+
+    with pytest.raises(_ControlFlow) as caught:
+        _invoke_cp(
+            ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+            sources={"source": source, "destination": destination},
+        )
+
+    assert caught.value is primary
+    assert cleaned == source.get_file_paths
+    assert len(cleaned) == 1
+    assert not Path(cleaned[0]).exists()
 
 
 @pytest.mark.parametrize(

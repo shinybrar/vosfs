@@ -11,6 +11,7 @@ from ._command import _parse_mapped_operand, _usage_error
 from ._cp import (
     _CpFailure,
     _CpRequest,
+    _freeze_transfer_proof,
     _render_failure,
     _require_directory,
     _require_source_file_size,
@@ -76,6 +77,7 @@ async def _confirmed_mv_file(  # noqa: PLR0911
         return source_failure
     if expected_size is None:
         return _CpFailure(request.source, incompatible="result")
+    proof = _freeze_transfer_proof(source_info, expected_size)
     resolved, failure = await _resolve_destination(
         request.destination, request.source.path, filesystem
     )
@@ -105,8 +107,7 @@ async def _confirmed_mv_file(  # noqa: PLR0911
         filesystem,
         request.source.path,
         resolved,
-        source_info,
-        expected_size,
+        proof,
         request.destination,
         require_source_absent=True,
     )

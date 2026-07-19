@@ -24,6 +24,8 @@ source and destination once, in operand order, before backend I/O or output.
 Source `_info` must report `type == "file"` and non-negative integer `size`.
 Destination resolution, existing-parent requirement, replacement rules, and
 diagnostics match [verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md).
+Expected size and recognized source tokens are frozen into an immutable proof
+immediately after that validation, before destination resolution or mutation.
 
 Command creates one secure local source staging temporary, downloads source
 through `_get_file`, closes it, uploads through destination `_put_file(...,

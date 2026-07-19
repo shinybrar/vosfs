@@ -100,6 +100,10 @@ Production code MUST await `_cp_file(source_path, resolved_destination)` exactly
 once. It MUST NOT call public synchronous facades, retries, alternate-operation
 fallbacks, concurrency, or transport replay.
 
+Immediately after validating source `_info`, command freezes the expected size
+and recognized source tokens into an immutable proof. Destination resolution and
+mutation cannot change that proof through a backend-owned mutable mapping.
+
 Success requires the destination to be source-reported `type == "file"` and to
 report the expected byte count from the pre-copy source `_info`. Verification
 recognizes exact `str` or `bytes` values under `ETag` / `etag`, `md5`,

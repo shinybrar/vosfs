@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -56,6 +57,12 @@ class _CpFailure:
     category: str | None = None
     uncertain: bool = False
     residue: bool = False
+
+
+@dataclass(frozen=True)
+class _TransferProof:
+    expected_size: int
+    tokens: tuple[tuple[str, frozenset[str | bytes]], ...]
 
 
 def _preflight(
@@ -231,16 +238,19 @@ async def _stage_remote(
     try:
         os.close(descriptor)
     except Exception as error:  # noqa: BLE001 - local staging descriptor boundary.
-        _remove_temporary(temporary)
+        _discard_temporary(temporary)
         return None, error
+    except BaseException:
+        _discard_temporary(temporary)
+        raise
 
     try:
         await filesystem._get_file(remote, temporary)  # noqa: SLF001
     except Exception as error:  # noqa: BLE001 - staging download boundary.
-        _remove_temporary(temporary)
+        _discard_temporary(temporary)
         return None, error
     except BaseException:
-        _remove_temporary(temporary)
+        _discard_temporary(temporary)
         raise
     return temporary, None
 
@@ -253,6 +263,11 @@ def _remove_temporary(path: str) -> Exception | None:
     return None
 
 
+def _discard_temporary(path: str) -> None:
+    with suppress(BaseException):
+        _remove_temporary(path)
+
+
 def _verification_tokens(info: object) -> dict[str, frozenset[str | bytes]]:
     if not isinstance(info, Mapping):
         return {}
@@ -261,21 +276,33 @@ def _verification_tokens(info: object) -> dict[str, frozenset[str | bytes]]:
         values = frozenset(
             value
             for alias in aliases
-            if isinstance((value := info.get(alias)), (str, bytes))
+            if (type(value := info.get(alias)) is str or type(value) is bytes)
         )
         if values:
             tokens[normalized] = values
     return tokens
 
 
-def _shared_verification_tokens_match(
+def _freeze_transfer_proof(
     source_info: object,
+    expected_size: int,
+) -> _TransferProof:
+    return _TransferProof(
+        expected_size=expected_size,
+        tokens=tuple(_verification_tokens(source_info).items()),
+    )
+
+
+def _shared_verification_tokens_match(
+    proof: _TransferProof,
     destination_info: object,
 ) -> bool:
-    source_tokens = _verification_tokens(source_info)
     destination_tokens = _verification_tokens(destination_info)
-    shared = source_tokens.keys() & destination_tokens.keys()
-    return all(source_tokens[field] == destination_tokens[field] for field in shared)
+    return all(
+        destination_tokens[field] == source_values
+        for field, source_values in proof.tokens
+        if field in destination_tokens
+    )
 
 
 async def _verify_transfer(  # noqa: PLR0913 - one explicit transfer-proof boundary.
@@ -283,8 +310,7 @@ async def _verify_transfer(  # noqa: PLR0913 - one explicit transfer-proof bound
     destination_filesystem: AsyncFileSystem,
     source_path: str,
     destination_path: str,
-    source_info: object,
-    expected_size: int,
+    proof: _TransferProof,
     destination: _MappedOperand,
     *,
     require_source_absent: bool,
@@ -304,8 +330,8 @@ async def _verify_transfer(  # noqa: PLR0913 - one explicit transfer-proof bound
     verified_size = _require_file_size(destination_info)
     if (
         verified_size is None
-        or verified_size != expected_size
-        or not _shared_verification_tokens_match(source_info, destination_info)
+        or verified_size != proof.expected_size
+        or not _shared_verification_tokens_match(proof, destination_info)
     ):
         return _CpFailure(
             destination,
@@ -350,6 +376,7 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - exp
         return source_failure
     if expected_size is None:
         return _CpFailure(request.source, incompatible="result")
+    proof = _freeze_transfer_proof(source_info, expected_size)
 
     resolved, resolution_failure = await _resolve_destination(
         request.destination,
@@ -412,13 +439,12 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - exp
                 destination_filesystem,
                 request.source.path,
                 resolved,
-                source_info,
-                expected_size,
+                proof,
                 request.destination,
                 require_source_absent=False,
             )
     except BaseException:
-        _remove_temporary(temporary)
+        _discard_temporary(temporary)
         raise
 
     cleanup_error = _remove_temporary(temporary)
@@ -450,6 +476,7 @@ async def _confirmed_cp_file(  # noqa: PLR0911 - explicit copy outcomes.
         return source_failure
     if expected_size is None:
         return _CpFailure(request.source, incompatible="result")
+    proof = _freeze_transfer_proof(source_info, expected_size)
 
     resolved, resolution_failure = await _resolve_destination(
         request.destination,
@@ -477,8 +504,7 @@ async def _confirmed_cp_file(  # noqa: PLR0911 - explicit copy outcomes.
         filesystem,
         request.source.path,
         resolved,
-        source_info,
-        expected_size,
+        proof,
         request.destination,
         require_source_absent=False,
     )

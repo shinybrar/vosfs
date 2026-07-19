@@ -59,6 +59,10 @@ by configured source form. Public synchronous `mv`, copy-then-delete,
 cross-source staging, and inherited or non-awaitable move defaults are
 excluded.
 
+Immediately after validating source `_info`, command freezes the expected size
+and recognized source tokens into an immutable proof. Destination resolution
+and `_mv` cannot change that proof through a backend-owned mutable mapping.
+
 After `_mv`, success requires:
 
 1. destination is `type == "file"` with original size;
