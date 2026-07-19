@@ -13,13 +13,11 @@ from ._command import (
     _binary_stdout,
     _Failure,
     _MappedOperand,
+    _preflight_single_mapped_operand,
     _RawCommand,
     _render_failure,
     _render_output_failure,
     _write_binary,
-)
-from ._command import (
-    _preflight_single_mapped_operand as _preflight,
 )
 from ._listing import ListingRow, to_listing
 from ._sources import _SourceInvocation
@@ -31,6 +29,7 @@ if TYPE_CHECKING:
 
     from ._app import AsyncFilesystemSource
 
+_preflight = _preflight_single_mapped_operand
 _PRETTY_WIDTH = 80
 
 

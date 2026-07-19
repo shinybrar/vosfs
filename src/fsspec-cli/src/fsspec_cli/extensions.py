@@ -52,7 +52,10 @@ async def _run_sign(
 ) -> None:
     operand = _preflight_single_mapped_operand(command, raw_arguments, sources)
     await _run_single_operand_text(
-        command, operand, sources, lambda filesystem: _sign(operand, filesystem)
+        command,
+        operand,
+        sources,
+        lambda filesystem: _sign(operand, filesystem),
     )
 
 
