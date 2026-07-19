@@ -66,6 +66,7 @@ python app.py fs ls data:/
 | `test` | Silent `-e`, `-d`, or `-f` predicate with shell-style status |
 | `head`, `tail` | Exact leading or trailing bytes via `-c N` |
 | `tree` | Unicode recursive tree; optional `--maxdepth N` |
+| `info` | One normalized metadata dictionary plus backend-specific `extra` values |
 | `cat` | Concatenate mapped files (and stdin `-`) to stdout |
 | `cp` | Verified same-source, cross-source, and multi-source file copy (no `-R`) |
 | `mv` | Same-source file move, single or multi-file into a directory |
@@ -90,6 +91,13 @@ read metadata internally. `find` does not provide predicates, globbing, or
 recursive unless `--maxdepth N` bounds it; remote sources may perform one
 listing request for every reached directory. One top-level `_walk` invocation
 does not mean one remote request.
+
+`info [--] name:/path` awaits one backend `_info` call and pretty-prints every
+normalized metadata field plus backend-specific values under `extra`. Sparse
+fields remain `None`; bytes, datetimes, tuples, and mappings keep their Python
+representation instead of being forced through JSON. The existing `stat`
+command remains the stricter reduced BSD/macOS-shaped, Local-rich view and is
+behaviorally unchanged.
 
 `head -c N` and `tail -c N` make bounded `_cat_file` hook requests, but that
 does not promise a ranged physical transfer. Backend implementations may read a

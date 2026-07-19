@@ -1,10 +1,10 @@
 """Shared scaffolding for mapped-source command modules.
 
 Every mapped-operand command (``ls``, ``du``, ``find``, ``size``, ``test``,
-``head``, ``tail``, ``tree``, ``cat``, ``cp``, ``mv``, ``mkdir``, ``rmdir``, ``rm``,
-``unlink``, and ``stat``) parses its own raw ``argv`` and renders stable
-diagnostics. This
-module is the single home for the pieces they share: raw-argument capture, the
+``head``, ``tail``, ``tree``, ``info``, ``cat``, ``cp``, ``mv``, ``mkdir``,
+``rmdir``, ``rm``, ``unlink``, and ``stat``) parses its own raw ``argv`` and
+renders stable diagnostics. This module is the single home for the pieces they
+share: raw-argument capture, the
 malformed-help shield, mapped operands, usage errors, binary stdout, and the
 single-operand buffered-text lifecycle.
 """

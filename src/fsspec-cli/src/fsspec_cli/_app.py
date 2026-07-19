@@ -20,6 +20,7 @@ from ._dirname import _run_dirname
 from ._du import _DuCommand, _run_du
 from ._find import _FindCommand, _run_find
 from ._head_tail import _HeadCommand, _run_head, _run_tail, _TailCommand
+from ._info import _InfoCommand, _run_info
 from ._ls import _run_ls
 from ._mkdir import _run_mkdir
 from ._mv import _run_mv
@@ -70,6 +71,7 @@ _ASYNC_COMMANDS: tuple[tuple[str, str, _AsyncRunner, type[TyperCommand]], ...] =
     ("head", "Display leading bytes", _run_head, _HeadCommand),
     ("tail", "Display trailing bytes", _run_tail, _TailCommand),
     ("tree", "Display a recursive directory tree", _run_tree, _TreeCommand),
+    ("info", "Display normalized file information", _run_info, _InfoCommand),
     ("cp", "Copy a file (no recursion)", _run_cp, _RawCommand),
     ("mv", "Move or rename files", _run_mv, _RawCommand),
     ("mkdir", "Create directories", _run_mkdir, _RawCommand),

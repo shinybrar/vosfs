@@ -233,6 +233,10 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Recursive tree](fsspec-cli-tree-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | — |
 | [Recursive tree](fsspec-cli-tree-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | — |
 | [Recursive tree](fsspec-cli-tree-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | — |
+| [Normalized `info`](fsspec-cli-info-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | Hermetic `test_info_command_matrix.py` on this change; no live or cross-backend completeness claim |
+| [Normalized `info`](fsspec-cli-info-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | Hermetic `test_info_command_matrix.py` on this change; no live or cross-backend completeness claim |
+| [Normalized `info`](fsspec-cli-info-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | Strict mocked transport in `test_info_command_matrix.py`; not live OpenCADC evidence |
+| [`info` option/operand rejection](fsspec-cli-info-command-profile.md#2-invocation-and-source-free-preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | Hermetic `test_info.py` on this change |
 | [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
 | [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
 | [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |

@@ -105,6 +105,16 @@ def _invoke_stat(
     return CliRunner().invoke(App(sources).typer_app, ["stat", *arguments])
 
 
+def _invoke_info(
+    arguments: list[str],
+    *,
+    sources: dict[str, AsyncFilesystemSource] | None = None,
+) -> Result:
+    if sources is None:
+        sources = {"memory": _source_must_not_run}
+    return CliRunner().invoke(App(sources).typer_app, ["info", *arguments])
+
+
 class _RecordingFileSystem(AsyncFileSystem):
     cachable = False
 
