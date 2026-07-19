@@ -51,11 +51,9 @@ async def _run_sign(
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
     operand = _preflight_single_mapped_operand(command, raw_arguments, sources)
-
-    async def operation(filesystem: AsyncFileSystem) -> str | _Failure:
-        return await _sign(operand, filesystem)
-
-    await _run_single_operand_text(command, operand, sources, operation)
+    await _run_single_operand_text(
+        command, operand, sources, lambda filesystem: _sign(operand, filesystem)
+    )
 
 
 class _SignExtension:
