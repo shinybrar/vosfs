@@ -7,10 +7,11 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from functools import partial
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
+from typing import Any, Protocol, TypeAlias
 
 import typer
 from fsspec import AbstractFileSystem
+from typer.core import TyperCommand
 
 from ._basename import _run_basename
 from ._cat import _run_cat
@@ -33,9 +34,6 @@ from ._test import _run_test, _TestCommand
 from ._tree import _run_tree, _TreeCommand
 from ._unlink import _run_unlink
 
-if TYPE_CHECKING:
-    from typer.core import TyperCommand
-
 AsyncFilesystemSource: TypeAlias = Callable[
     [], AbstractAsyncContextManager[AbstractFileSystem]
 ]
@@ -56,6 +54,7 @@ _AsyncRunner: TypeAlias = Callable[
     [str, tuple[str, ...], Mapping[str, AsyncFilesystemSource]],
     Coroutine[Any, Any, None],
 ]
+_AsyncCommand: TypeAlias = tuple[str, str, _AsyncRunner, type[TyperCommand]]
 
 _COMMAND_CONTEXT = {
     "allow_extra_args": True,
@@ -68,7 +67,7 @@ _SOURCE_FREE_COMMANDS: tuple[tuple[str, str, _SourceFreeRunner], ...] = (
     ("dirname", "Strip the last component from a path", _run_dirname),
 )
 # Commands that acquire mapped sources and run on the invocation event loop.
-_ASYNC_COMMANDS: tuple[tuple[str, str, _AsyncRunner, type[TyperCommand]], ...] = (
+_ASYNC_COMMANDS: tuple[_AsyncCommand, ...] = (
     ("ls", "List directory contents", _run_ls, _RawCommand),
     (
         "ll",
@@ -124,6 +123,25 @@ def _ensure_no_active_event_loop(command: str) -> None:
     raise typer.Exit(1)
 
 
+def _register_async_command(
+    typer_app: typer.Typer,
+    sources: Mapping[str, AsyncFilesystemSource],
+    command: _AsyncCommand,
+) -> None:
+    name, help_text, runner, command_cls = command
+
+    @typer_app.command(
+        name,
+        cls=command_cls,
+        help=help_text,
+        context_settings=_COMMAND_CONTEXT,
+    )
+    def handler(ctx: typer.Context) -> None:
+        raw_arguments = _raw_arguments(ctx)
+        _ensure_no_active_event_loop(name)
+        asyncio.run(runner(name, raw_arguments, sources))
+
+
 class App:
     """Embedded core commands plus explicitly selected extensions."""
 
@@ -155,8 +173,12 @@ class App:
 
         for name, help_text, source_free_runner in _SOURCE_FREE_COMMANDS:
             self._register_source_free(name, help_text, source_free_runner)
-        for name, help_text, async_runner, command_cls in _ASYNC_COMMANDS:
-            self._register_async(name, help_text, async_runner, command_cls)
+        for command in _ASYNC_COMMANDS:
+            _register_async_command(
+                self.typer_app,
+                self._sources,
+                command,
+            )
 
     def _register_source_free(
         self,
@@ -172,21 +194,3 @@ class App:
         )
         def handler(ctx: typer.Context) -> None:
             runner(name, _raw_arguments(ctx))
-
-    def _register_async(
-        self,
-        name: str,
-        help_text: str,
-        runner: _AsyncRunner,
-        command_cls: type[TyperCommand],
-    ) -> None:
-        @self.typer_app.command(
-            name,
-            cls=command_cls,
-            help=help_text,
-            context_settings=_COMMAND_CONTEXT,
-        )
-        def handler(ctx: typer.Context) -> None:
-            raw_arguments = _raw_arguments(ctx)
-            _ensure_no_active_event_loop(name)
-            asyncio.run(runner(name, raw_arguments, self._sources))

@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Final
 
-import typer  # noqa: TC002 - Typer evaluates callback annotations at runtime.
-
-from ._app import _COMMAND_CONTEXT, _ensure_no_active_event_loop
+from ._app import _register_async_command
 from ._command import (
     _Failure,
     _MappedOperand,
     _parse_mapped_operand,
-    _raw_arguments,
     _RawCommand,
     _run_single_operand_text,
     _usage_error,
@@ -22,6 +18,7 @@ from ._diagnostics import _render_diagnostic_value
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping
 
+    import typer
     from fsspec.asyn import AsyncFileSystem
     from typer._click import Context
     from typer._click.formatting import HelpFormatter
@@ -91,16 +88,16 @@ class _SignExtension:
         typer_app: typer.Typer,
         sources: Mapping[str, AsyncFilesystemSource],
     ) -> None:
-        @typer_app.command(
-            "sign",
-            cls=_SignCommand,
-            help="Create a backend-signed URL",
-            context_settings=_COMMAND_CONTEXT,
+        _register_async_command(
+            typer_app,
+            sources,
+            (
+                "sign",
+                "Create a backend-signed URL",
+                _run_sign,
+                _SignCommand,
+            ),
         )
-        def handler(ctx: typer.Context) -> None:
-            raw_arguments = _raw_arguments(ctx)
-            _ensure_no_active_event_loop("sign")
-            asyncio.run(_run_sign("sign", raw_arguments, sources))
 
 
 sign: Final = _SignExtension()
