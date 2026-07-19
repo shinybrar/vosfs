@@ -31,6 +31,12 @@ command. Long listing is separately admitted under its own
 [earlier rejection profile](fsspec-cli-ls-long-rejection-profile.md) is
 historical rationale only.
 
+The separately profiled [`info` command](fsspec-cli-info-command-profile.md)
+is the backend-neutral raw normalized-dictionary view: it accepts one operand,
+keeps sparse fields as `None`, and exposes backend-specific values under
+`extra`. Its addition does not change this command's multi-operand argv,
+Local-rich compatibility requirement, fixed rendering, or failure behavior.
+
 ## Post-profile async constraint
 
 Production CLI orchestration and filesystem calls remain async-only. Source
