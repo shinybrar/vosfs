@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from functools import partial
-from typing import TYPE_CHECKING, Any, TypeAlias
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
 import typer
 from fsspec import AbstractFileSystem
@@ -38,6 +39,18 @@ if TYPE_CHECKING:
 AsyncFilesystemSource: TypeAlias = Callable[
     [], AbstractAsyncContextManager[AbstractFileSystem]
 ]
+
+
+class CommandExtension(Protocol):
+    """One opt-in command registration against snapshotted sources."""
+
+    def register(
+        self,
+        typer_app: typer.Typer,
+        sources: Mapping[str, AsyncFilesystemSource],
+    ) -> None: ...
+
+
 _SourceFreeRunner: TypeAlias = Callable[[str, tuple[str, ...]], None]
 _AsyncRunner: TypeAlias = Callable[
     [str, tuple[str, ...], Mapping[str, AsyncFilesystemSource]],
@@ -112,13 +125,18 @@ def _ensure_no_active_event_loop(command: str) -> None:
 
 
 class App:
-    """An embedded command application backed by named filesystem sources."""
+    """Embedded core commands plus explicitly selected extensions."""
 
     typer_app: typer.Typer
 
-    def __init__(self, sources: Mapping[str, AsyncFilesystemSource]) -> None:
-        """Snapshot configured sources for this application."""
-        self._sources = dict(sources)
+    def __init__(
+        self,
+        sources: Mapping[str, AsyncFilesystemSource],
+        *,
+        extensions: Sequence[CommandExtension] = (),
+    ) -> None:
+        """Snapshot sources and register the requested command surface."""
+        self._sources = MappingProxyType(dict(sources))
         if not self._sources:
             msg = "at least one async filesystem source is required"
             raise ValueError(msg)
@@ -127,6 +145,8 @@ class App:
 
         self.typer_app = typer.Typer(add_completion=False)
         self._register_commands()
+        for extension in extensions:
+            extension.register(self.typer_app, self._sources)
 
     def _register_commands(self) -> None:
         @self.typer_app.callback()
