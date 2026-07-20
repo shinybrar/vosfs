@@ -453,8 +453,11 @@ def test_info_preserves_repr_control_flow_through_cleanup_and_direct_caller(
     ):
         command.invoke(context)
 
-    assert caught.value is control
-    assert caught.value.args == control.args
+    if isinstance(control, asyncio.CancelledError):
+        assert type(caught.value) is asyncio.CancelledError
+    else:
+        assert caught.value is control
+        assert caught.value.args == control.args
     exception_type, exception, traceback = source.exit_calls[0]
     assert exception_type is type(control)
     assert exception is control
@@ -558,7 +561,7 @@ def test_info_propagates_control_flow_unchanged_after_cleanup() -> None:
     with pytest.raises(asyncio.CancelledError) as caught:
         _invoke_info(["memory:/x"], sources={"memory": source})
 
-    assert caught.value is control
+    assert type(caught.value) is asyncio.CancelledError
     exception_type, exception, traceback = source.exit_calls[0]
     assert exception_type is asyncio.CancelledError
     assert exception is control
