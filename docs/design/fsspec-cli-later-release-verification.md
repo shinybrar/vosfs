@@ -1,5 +1,8 @@
 # Later `fsspec-cli` GitHub Release verification (#147)
 
+> **Historical, non-normative.** This verification records retired release
+> evidence and defines no current CI or release requirement.
+
 <!-- pyml disable line-length -->
 
 Status: **Baseline `0.1.0` / `0.1.1` published with wheel+sdist; later `0.2.0`

@@ -6,7 +6,7 @@ import asyncio
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import NoReturn
 
 import pytest
@@ -1526,7 +1526,7 @@ def test_cp_preserves_descriptor_close_control_flow_over_cleanup_failure(
         Path(path).unlink(missing_ok=True)
         raise secondary
 
-    monkeypatch.setattr("fsspec_cli._cp.os.close", fail_close)
+    monkeypatch.setattr("fsspec_cli._cp.os", SimpleNamespace(close=fail_close))
     monkeypatch.setattr("fsspec_cli._cp._remove_temporary", fail_cleanup)
 
     with pytest.raises(_ControlFlow) as caught:

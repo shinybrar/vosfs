@@ -196,7 +196,7 @@ fewer bytes than requested is an output failure.
 ## 7. Downstream ownership
 
 - [Tested command matrix contract](fsspec-cli-tested-command-matrix.md) owns
-  matrix statuses, versions, and hermetic-versus-live evidence rules.
+  matrix statuses, versions, and deterministic evidence rules.
 - [Binary stdin and `-` sequencing](fsspec-cli-cat-stdin-command-profile.md)
   owns stdin admission, dash sequencing, and operand-free reads without
   changing mapped-file staging rules in this profile.

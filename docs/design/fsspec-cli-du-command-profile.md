@@ -148,4 +148,4 @@ being help, exact `--help`, the `--` terminator, one `_du` call with the correct
 rejection, backend diagnostics, output failure, and invocation-owned cleanup.
 
 This ticket records its new matrix rows as `unverified` until immutable
-qualifying evidence exists. It makes no live OpenCADC claim.
+qualifying evidence exists. Evidence remains limited to the named source forms.

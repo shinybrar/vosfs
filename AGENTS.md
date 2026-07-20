@@ -25,8 +25,5 @@ or databases; "running" the products means exercising the libraries.
   in `CONTRIBUTING.md`; run those exact commands rather than re-deriving them.
 - Offline tests (`uv run pytest`, `uv run --package fsspec-cli pytest
   src/fsspec-cli/tests`) are deterministic and need no network or credentials.
-- Live OpenCADC integration tests (`uv run pytest --no-cov -m integration`) are
-  deselected by default and require CADC credentials plus network; they are only
-  expected to run in the trusted `main`/dispatch CI job.
 - `uv run zensical build --strict --clean` builds docs to `site/`; do not commit
   `site/` or `dist/` (both are gitignored).

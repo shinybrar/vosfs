@@ -1,13 +1,12 @@
 """Opt-in, project-owned HTTPX transport recorder for sanitized fixtures.
 
-Recording is disabled by default and in normal CI (contract section 15.3). When
+Recording is disabled by default and in normal CI (contract section 15.2). When
 enabled, the recorder wraps a real HTTPX transport, captures request/response
 pairs, and sanitizes them before they may be persisted: Authorization,
 Proxy-Authorization, Cookie, and Set-Cookie values; certificate and
 username/password material; pre-authorized tokens embedded in URLs; and other
-volatile or personal values. Sanitized fixtures are regression evidence, never
-a substitute for the live release gate, and must be manually reviewed before
-they are committed.
+volatile or personal values. Sanitized fixtures are regression evidence, not
+release evidence, and must be manually reviewed before they are committed.
 """
 
 from __future__ import annotations

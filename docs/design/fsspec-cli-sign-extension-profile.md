@@ -95,4 +95,4 @@ evidence; immutable evidence remains `unverified` until CI records a commit.
 | s3fs, gcsfs, and other signing backends | not exercised | `unverified` | — |
 
 The matrix is documentation and test evidence only. Production code never
-loads it. No generic fsspec, s3fs, gcsfs, or live OpenCADC claim follows.
+loads it. Evidence remains limited to the named source forms.
