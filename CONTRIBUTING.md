@@ -82,10 +82,12 @@ If a hook changes files, review the changes, stage them, and run the gate again.
 The pull request must pass the same required CI checks before merge.
 
 Pull-request CI validates code, tests, Markdown, and the strict Zensical build.
-After successful `main` CI, Release Please dispatches the validated commit to
-the Pages workflow, which publishes it as `dev`. When Release Please creates a
-tag, a separate docs dispatch publishes that exact tag and points `latest` to
-it. Publication supplements PR validation; it never replaces or weakens it.
+Every push to `main` runs Release Please once and dispatches that exact commit
+to the Pages workflow as `dev`. A package release is published by the single
+retryable publisher for its exact tag and SHA. Only successful `vosfs`
+publication dispatches versioned documentation and updates `latest`;
+`fsspec-cli` publication never does. Publication supplements PR validation; it
+never replaces or weakens it.
 
 ## Commit messages
 
