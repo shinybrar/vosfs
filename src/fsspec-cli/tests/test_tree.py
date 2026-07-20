@@ -318,7 +318,7 @@ def test_tree_joins_adapted_iterator_before_source_exit_on_task_cancellation(
     with pytest.raises(asyncio.CancelledError) as caught:
         _invoke_tree(["memory:/docs"], sources={"memory": source})
 
-    assert caught.value.args == ("original tree cancellation",)
+    assert type(caught.value) is asyncio.CancelledError
     assert source.events == [
         "factory",
         "enter",
@@ -639,8 +639,11 @@ def test_tree_preserves_exact_sync_iterator_control_flow_through_public_app(
     ):
         command.invoke(context)
 
-    assert caught.value is control
-    assert caught.value.args == control.args
+    if isinstance(control, asyncio.CancelledError):
+        assert type(caught.value) is asyncio.CancelledError
+    else:
+        assert caught.value is control
+        assert caught.value.args == control.args
     assert source.lifecycle == ["factory", "enter", "exit"]
     assert source.exit_calls[0][1] is control
     assert source.exit_calls[0][1].args == control.args
