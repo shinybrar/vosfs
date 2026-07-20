@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 import pytest
 import typer
 from fsspec_cli import App
-from fsspec_cli._info import _preflight
+from fsspec_cli._command import _preflight_single_mapped_operand
 from typer.main import get_command
 
 from ._support import _invoke_info, _RecordingSource
@@ -565,9 +565,9 @@ def test_info_propagates_control_flow_unchanged_after_cleanup() -> None:
     assert traceback is not None
 
 
-def test_info_preflight_escapes_the_concrete_command_label(capsys) -> None:
+def test_single_mapped_operand_preflight_escapes_the_command_label(capsys) -> None:
     with pytest.raises(typer.Exit) as caught:
-        _preflight("future\\command\0\r\n", ("bad",), {"memory"})
+        _preflight_single_mapped_operand("future\\command\0\r\n", ("bad",), {"memory"})
 
     assert caught.value.exit_code == 2
     assert capsys.readouterr().err == (
