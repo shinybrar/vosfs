@@ -21,6 +21,7 @@ def test_release_runs_once_on_each_main_push() -> None:
     workflow = _RELEASE.read_text()
 
     assert "on:\n  push:\n    branches: [main]\n" in workflow
+    assert "\nconcurrency:" not in workflow
     assert "workflow_run:" not in workflow
     assert "workflow_dispatch:" not in workflow
     assert "Verify CI validated current main" not in workflow
@@ -78,8 +79,12 @@ def test_publisher_builds_and_replaces_exactly_two_assets_on_rerun() -> None:
 
     assert workflow.count('uv build --no-sources --package "$PACKAGE"') == 1
     assert "GITHUB_RUN_ATTEMPT" not in workflow
-    assert '[[ "${#DISTRIBUTIONS[@]}" -ne 2 ]]' in workflow
-    assert '[[ "$WHEEL_COUNT" -eq 1 && "$SDIST_COUNT" -eq 1 ]]' in workflow
+    assert "shopt -s nullglob" in workflow
+    assert "WHEELS=(dist/*.whl)" in workflow
+    assert "SDISTS=(dist/*.tar.gz)" in workflow
+    assert 'DISTRIBUTIONS=("${WHEELS[@]}" "${SDISTS[@]}")' in workflow
+    assert '[[ "${#WHEELS[@]}" -ne 1 || "${#SDISTS[@]}" -ne 1 ]]' in workflow
+    assert "find dist" not in workflow
     assert "unexpected release asset" in workflow
     assert (
         'gh release upload "$RELEASE_TAG" "${DISTRIBUTIONS[@]}" --clobber' in workflow
@@ -128,8 +133,21 @@ def test_release_docs_follow_only_successful_vosfs_publication() -> None:
 
 def test_pages_accepts_only_causal_repository_dispatch_payloads() -> None:
     workflow = _PAGES.read_text()
+    checkout = _step(
+        workflow,
+        "Check out documentation source",
+        "Verify documentation source",
+    )
+    publish = _step(workflow, "Publish documentation")
+    dev_publish = publish.split("          else\n", 1)[1]
 
     assert "types: [docs-publish]" in workflow
+    assert (
+        "group: pages-${{ github.event.client_payload.target }}-"
+        "${{ github.event.client_payload.tag_name || "
+        "github.event.client_payload.sha }}" in workflow
+    )
+    assert "cancel-in-progress: false" in workflow
     assert "workflow_dispatch:" not in workflow
     assert "inputs." not in workflow
     assert "EVENT_NAME" not in workflow
@@ -139,7 +157,15 @@ def test_pages_accepts_only_causal_repository_dispatch_payloads() -> None:
     assert workflow.count('[[ "$VALIDATED_SHA" =~ ^[0-9a-f]{40}$ ]]') == 2
     assert '[[ -z "$RELEASE_TAG" ]]' in workflow
     assert "release tag must be an exact vX.Y.Z tag" in workflow
-    assert 'git merge-base --is-ancestor "$VALIDATED_SHA" origin/main' in workflow
+    assert "persist-credentials: true" in checkout
+    assert workflow.count('test "$VALIDATED_SHA" = "$(git rev-parse origin/main)"') == 2
+    assert 'git merge-base --is-ancestor "$VALIDATED_SHA" origin/main' not in workflow
+    assert "VALIDATED_SHA: ${{ github.event.client_payload.sha }}" in publish
+    assert (
+        dev_publish.index("git fetch --no-tags origin main:")
+        < dev_publish.index('test "$VALIDATED_SHA" = "$(git rev-parse origin/main)"')
+        < dev_publish.index("uv run --locked mike deploy")
+    )
     assert "releases/tags/$RELEASE_TAG" in workflow
     assert ".draft == false" in workflow
     assert 'git rev-parse "$RELEASE_TAG^{commit}"' in workflow

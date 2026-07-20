@@ -82,25 +82,14 @@ jobs:
           set -euo pipefail
           uv build --no-sources --package "$PACKAGE"
 
-          mapfile -t DISTRIBUTIONS < <(find dist -maxdepth 1 -type f -print | sort)
-          if [[ "${#DISTRIBUTIONS[@]}" -ne 2 ]]; then
+          shopt -s nullglob
+          WHEELS=(dist/*.whl)
+          SDISTS=(dist/*.tar.gz)
+          if [[ "${#WHEELS[@]}" -ne 1 || "${#SDISTS[@]}" -ne 1 ]]; then
             echo "build must produce exactly one wheel and one sdist" >&2
             exit 1
           fi
-
-          WHEEL_COUNT=0
-          SDIST_COUNT=0
-          for distribution in "${DISTRIBUTIONS[@]}"; do
-            case "$distribution" in
-              *.whl) WHEEL_COUNT=$((WHEEL_COUNT + 1)) ;;
-              *.tar.gz) SDIST_COUNT=$((SDIST_COUNT + 1)) ;;
-              *) echo "unexpected built distribution: $distribution" >&2; exit 1 ;;
-            esac
-          done
-          if ! [[ "$WHEEL_COUNT" -eq 1 && "$SDIST_COUNT" -eq 1 ]]; then
-            echo "build must produce exactly one wheel and one sdist" >&2
-            exit 1
-          fi
+          DISTRIBUTIONS=("${WHEELS[@]}" "${SDISTS[@]}")
 
           mapfile -t EXPECTED_ASSETS < <(
             printf '%s\n' "${DISTRIBUTIONS[@]##*/}" | sort
