@@ -1,5 +1,9 @@
 # `vosfs` v0.3.0 integration and cassette test plan
 
+> **Historical, non-normative.** Issue
+> [#242](https://github.com/shinybrar/vosfs/issues/242) retired this live-testing
+> plan. It defines no current CI, release, or contributor requirement.
+
 <!-- pyml disable line-length -->
 
 Researched: 2026-07-10

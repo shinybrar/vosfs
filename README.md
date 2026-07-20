@@ -58,8 +58,8 @@ capability matrix — is the capability contract in
 
 The [vosfs documentation](https://shinybrar.github.io/vosfs/) contains the User
 Guide, credential details, scientific-stack examples, and public API reference.
-See [CONTRIBUTING.md](CONTRIBUTING.md) to work on the project or run the live
-OpenCADC integration gate. Public documentation source lives under `docs/user/`;
+See [CONTRIBUTING.md](CONTRIBUTING.md) to work on the project. Public
+documentation source lives under `docs/user/`;
 validate it locally with:
 
 ```bash

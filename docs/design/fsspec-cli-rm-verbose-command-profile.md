@@ -57,5 +57,4 @@ short writes, broken pipe, non-broken output errors, diagnostic failure,
 cancellation, cleanup failure, and source-free unsupported combinations,
 zero-operand, root/final-dot, and malformed-mapping paths. Adapted async Local
 and Memory plus native async `vosfs` run through `App(sources).typer_app`.
-Installed-wheel CI runs the same tests outside the workspace. Live OpenCADC
-evidence is not required in v1.
+Installed-wheel CI runs the same tests outside the workspace.

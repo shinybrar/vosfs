@@ -67,26 +67,16 @@ dev = [
     "zarr>=3 ; python_full_version >= '3.11'",
     "zensical>=0.0.50",
 ]
-live = [
-    "cadcutils>=1.6.2",
-]
-
 [tool.pytest]
 addopts = [
     "-ra",
     "--strict-config",
     "--strict-markers",
-    "-m",
-    "not integration",
     "--cov=vosfs",
     "--cov-report=term-missing",
 ]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-markers = [
-    "integration: tests that require a live VOSpace service",
-]
-
 [tool.coverage.run]
 branch = true
 source = ["vosfs"]

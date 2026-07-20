@@ -147,5 +147,5 @@ native async `vosfs` through the production `App` seam. Source-free rejection
 tests prove unsupported options complete during command preflight without
 entering a source.
 
-Live OpenCADC evidence is not required for this profile in v1; native `vosfs`
-hermetic evidence does not broaden into a general service guarantee.
+Native `vosfs` hermetic evidence does not broaden into a general service
+guarantee.

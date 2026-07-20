@@ -141,5 +141,5 @@ seam across:
 Focused tests additionally lock option grouping, `h` not being help, the `ll`
 alias, file operands using only `_info`, one detailed `_ls` per directory,
 hidden selection, malformed detail rejection, failure continuation, output
-atomicity, multi-operand grouping, and unchanged bare-`ls` behavior. No live
-OpenCADC observation is claimed by this ticket.
+atomicity, multi-operand grouping, and unchanged bare-`ls` behavior. Evidence
+remains limited to the named source forms.
