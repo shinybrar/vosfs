@@ -6,60 +6,53 @@ One Release Please action manages both packages in this repository. The shared
 versions. `separate-pull-requests: true` gives each package its own release pull
 request and schedule.
 
-The `Release` workflow runs after successful `CI` on the current `main` commit.
-It invokes Release Please once with the shared config and manifest. Root outputs
-such as `release_created`, `tag_name`, and `sha` belong to `vosfs`. The
-path-prefixed outputs `src/fsspec-cli--release_created`,
-`src/fsspec-cli--tag_name`, and `src/fsspec-cli--sha` belong to `fsspec-cli`.
+Every push to `main` runs the `Release` workflow directly. It invokes Release
+Please once with `RELEASE_PLEASE_TOKEN`, allowing generated release pull
+requests to run normal CI and review. Root outputs such as `release_created`,
+`tag_name`, and `sha` belong to `vosfs`. Path-prefixed outputs such as
+`src/fsspec-cli--release_created`, `src/fsspec-cli--tag_name`, and
+`src/fsspec-cli--sha` belong to `fsspec-cli`.
 
-The root package excludes the component tree (`src/fsspec-cli`), all of `docs/`,
-and the `.superpowers/` agent scratch directory from its commit analysis, so
-component-only work and documentation changes never propose a `vosfs` release.
-Release Please matches each `exclude-paths` entry as a directory prefix, not a
-glob or a single file, so entries must be bare directories (for example
-`src/fsspec-cli`, never `src/fsspec-cli/**`); a commit drops out only when every
-file it touches lives under an excluded directory. The component
-package is scoped to `src/fsspec-cli`, so it already ignores everything outside
-that directory, including `docs/`. Documentation is published on its own path:
-every validated `main` commit refreshes the `dev` site, and a `vosfs` release
-tag publishes that versioned site. The component package owns its version,
-changelog, and `fsspec-cli-vX.Y.Z` tag lineage. `.release-please-manifest.json` records the last
-released version of each package. Both packages use ordinary SemVer bumping: a
-breaking change bumps the major version and a feature bumps the minor version,
-even before `1.0.0`. Both entries create draft GitHub releases with
-`force-tag-creation`, so the Git tag exists immediately for the publication
-workflow and for previous-release discovery instead of waiting for the draft to
-be published.
+The root package excludes the component tree (`src/fsspec-cli`), all of
+`docs/`, and the `.superpowers/` agent scratch directory from its commit
+analysis. Component-only work and documentation changes therefore do not
+propose a `vosfs` release. The component package is scoped to
+`src/fsspec-cli`, so it already ignores everything outside that directory.
+Never hand-edit versioned changelog entries or couple an `fsspec-cli` cut to a
+`vosfs` version.
 
-If a draft exists but the matching `fsspec-cli-vX.Y.Z` tag is absent, the
-Publish workflow fails at checkout and does not resume that failed cut. Recover
-by creating the annotated tag at the release merge commit, building only the
-`fsspec-cli` wheel and sdist from that commit, attaching those assets to the
-draft, and undrafting. See
-`docs/design/fsspec-cli-later-release-verification.md` for the #147 baseline
-recovery record. Never hand-edit versioned changelog entries or couple an
-`fsspec-cli` cut to a vosfs version.
+Both packages use ordinary SemVer bumping and tagged draft GitHub Releases.
+`force-tag-creation` ensures the exact tag exists for publication and previous
+release discovery. The component package also uses a Release Please extra-file
+update to keep its package metadata and the shared `uv.lock` entry at the same
+version.
 
 ## Publication
 
-Release Please creates a tagged draft for the package whose release pull
-request was merged. The single `Release` workflow dispatches the matching
-package build:
+When Release Please creates a component release, `Release` sends one
+`package-release` repository event containing that package's allowlisted name,
+exact tag, and full commit SHA. The single `Publish Package` workflow accepts
+only `vosfs` and `fsspec-cli`. It verifies the package-specific tag form, full
+SHA, tag-to-commit equality, and matching GitHub Release before building only
+that package with `uv build --no-sources --package`.
 
-- `release-build` builds and publishes the `vosfs` wheel and source
-  distribution from an exact `vX.Y.Z` tag;
-- `fsspec-cli-release-build` builds and publishes only the `fsspec-cli` wheel
-  and source distribution from an exact `fsspec-cli-vX.Y.Z` tag.
+The publisher requires exactly one wheel and one source distribution. Existing
+assets may contain only those expected names. Draft and mutable releases replace
+both assets with `--clobber`; the workflow verifies the final asset set exactly,
+then publishes a draft. A rerun of an already-published immutable release
+verifies the same two expected assets without attempting a forbidden mutation.
+Rerunning the same workflow run is the only recovery path and remains safe after
+a partial upload, publication, or failed documentation dispatch. A different
+tag, SHA, package, or unexpected asset fails validation.
 
-Neither route publishes to a package registry. Only a `vosfs` release dispatches
-versioned documentation; `fsspec-cli` releases do not affect documentation.
-
-The component package uses Release Please extra-file updates for the shared
-root `uv.lock`. Its release pull request therefore keeps package metadata and
-the workspace lock entry at the same version without coupling the two package
-schedules.
+Every `main` push separately dispatches `dev` documentation for its exact
+`github.sha`. Versioned documentation is causally downstream of successful
+`vosfs` publication: only the completed `vosfs` publisher dispatches the exact
+`vX.Y.Z` tag and SHA to Pages. `fsspec-cli` publication never dispatches
+versioned documentation. Pages accepts repository dispatches only; it has no
+manual release path.
 
 Every generated release pull request remains subject to CI, review, and
-squash-merge gates. Do not hand-format generated changelog entries. Release
-Please owns `CHANGELOG.md` for `vosfs` and `src/fsspec-cli/CHANGELOG.md` for the
-command library from Conventional Commit titles.
+squash-merge gates. Release Please owns `CHANGELOG.md` for `vosfs` and
+`src/fsspec-cli/CHANGELOG.md` for the embedded command library from Conventional
+Commit titles.

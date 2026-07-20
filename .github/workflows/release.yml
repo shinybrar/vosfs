@@ -1,9 +1,7 @@
 name: Release
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [main]
 
 permissions:
@@ -15,28 +13,13 @@ concurrency:
 
 jobs:
   orchestrate:
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main'
     permissions:
       contents: write
       issues: write
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
-      - name: Verify CI validated current main
-        id: validated
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
-          if [[ "$main_sha" != "$VALIDATED_SHA" ]]; then
-            echo "CI validated $VALIDATED_SHA, but main is now $main_sha" >&2
-            exit 1
-          fi
-
-      - name: Open or update the release pull request
+      - name: Open or update release pull requests
         id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         with:
@@ -45,7 +28,7 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      - name: Dispatch code publication
+      - name: Dispatch vosfs package publication
         if: steps.release.outputs.release_created == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -53,11 +36,12 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
         run: |
           gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" \
-            -f event_type=release-build \
+            -f event_type=package-release \
+            -f "client_payload[package]=vosfs" \
             -f "client_payload[tag_name]=$RELEASE_TAG" \
             -f "client_payload[sha]=$RELEASE_SHA"
 
-      - name: Dispatch fsspec-cli publication
+      - name: Dispatch fsspec-cli package publication
         if: steps.release.outputs['src/fsspec-cli--release_created'] == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -65,30 +49,17 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs['src/fsspec-cli--tag_name'] }}
         run: |
           gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" \
-            -f event_type=fsspec-cli-release-build \
+            -f event_type=package-release \
+            -f "client_payload[package]=fsspec-cli" \
             -f "client_payload[tag_name]=$RELEASE_TAG" \
             -f "client_payload[sha]=$RELEASE_SHA"
 
       - name: Dispatch dev documentation
-        if: ${{ always() && steps.validated.outcome == 'success' }}
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-          VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" \
             -f event_type=docs-publish \
             -f "client_payload[target]=dev" \
-            -f "client_payload[sha]=$VALIDATED_SHA"
-
-      - name: Dispatch release documentation
-        if: ${{ always() && steps.release.outputs.release_created == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ steps.release.outputs.sha }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
-        run: |
-          gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" \
-            -f event_type=docs-publish \
-            -f "client_payload[target]=release" \
-            -f "client_payload[tag_name]=$RELEASE_TAG" \
-            -f "client_payload[sha]=$RELEASE_SHA"
+            -f "client_payload[sha]=${{ github.sha }}"
