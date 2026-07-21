@@ -330,7 +330,9 @@ Native operations and the client-derived behaviors composed from them.
 
     `mv` · `move` · `rename`
 
-    Non-atomic, no overwrite.
+    DataNode/ContainerNode: non-atomic copy/recreate then delete, no overwrite.
+
+    LinkNode: unsupported; raises `NotImplementedError` before mutation.
 
 -   :material-fingerprint:{ .lg .middle } __Identity & metadata__
 

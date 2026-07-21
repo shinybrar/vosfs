@@ -173,9 +173,11 @@ One live run MUST prove all of the following:
 9. Prove a missing node maps to `FileNotFoundError`, a duplicate exclusive
    create maps to `FileExistsError`, and a non-empty container cannot be
    removed non-recursively.
-10. Exercise client-derived copy, move, and recursive removal. Copy and move
-   MUST preserve bytes; move MUST leave the source absent; recursive removal
-   MUST traverse and DELETE leaves-first without invoking asynchronous UWS.
+10. Exercise client-derived copy, DataNode/ContainerNode move, unsupported
+    LinkNode move, and recursive removal. Copy and supported move MUST preserve
+    bytes; supported move MUST leave the source absent. LinkNode move MUST raise
+    `NotImplementedError` before mutation. Recursive removal MUST traverse and
+    DELETE leaves-first without invoking asynchronous UWS.
 11. Round-trip the filesystem through pickle and fsspec JSON in a fresh
     process, then perform a real metadata read and byte read with reconstructed
     clients.
@@ -281,7 +283,8 @@ The required cassette scenarios are:
 3. synchronous push negotiation followed by whole-file PUT;
 4. synchronous pull negotiation followed by whole-file GET;
 5. overwrite, zero-byte file, and whole-object slice fallback;
-6. client-derived copy, move, and leaves-first recursive delete;
+6. client-derived copy and DataNode/ContainerNode move, unsupported LinkNode
+   move, and leaves-first recursive delete;
 7. not-found, conflict, non-empty-directory, malformed XML, and bounded error
    responses; and
 8. same-origin, cross-origin, and pre-authorized endpoint credential routing.
@@ -304,7 +307,7 @@ The exact downstream acceptance set is:
 
 | Consumer | Required behavior |
 | --- | --- |
-| fsspec | Run the reusable abstract `open`, `pipe`, `copy`, `get`, and `put` suites plus dedicated `mv` tests through their supported seams. The current hermetic baseline is 502 passed and six skipped; the abstract subset is 131 passed and the same six `fil?1` copy/get/put skips because the existing path grammar reserves `?` as a query delimiter. |
+| fsspec | Run the reusable abstract `open`, `pipe`, `copy`, `get`, and `put` suites plus dedicated `mv` tests through their supported seams. The current hermetic baseline collects 542 tests: 536 passed and six skipped. The abstract subset is 131 passed and the same six `fil?1` copy/get/put skips because the existing path grammar reserves `?` as a query delimiter. |
 | pandas | Write a DataFrame with `to_csv("vos://...")`, reconstruct the filesystem in a fresh process, and read it with `read_csv`; assert columns, dtypes used by the fixture, row order, and values. |
 | NumPy | Round-trip `.npy` and `.npz` data through `fs.open`, and read a text array through a file object. Direct arbitrary-URL dispatch and remote `mmap_mode` remain outside the claim. |
 | Dask | Write and read CSV with `blocksize=None` through a fresh process/worker boundary; assert fsspec serialization and partition contents. No distributed range-read claim is made. |

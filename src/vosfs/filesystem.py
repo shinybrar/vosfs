@@ -1354,11 +1354,13 @@ class VOSpaceFileSystem(AsyncFileSystem):
         maxdepth: int | None = None,
         **kwargs: Any,  # noqa: ANN401 - fsspec signature
     ) -> None:
-        """Move a path, requiring an absent destination (non-atomic, no overwrite).
+        """Move a DataNode or ContainerNode; reject a LinkNode before mutation.
 
-        The source is copied (or recreated) and deleted only after the
-        destination genuinely exists; a failed source deletion may leave both
-        paths. A directory move always recurses so the whole tree is recreated.
+        Supported moves require an absent destination. The source is copied or
+        recreated and deleted only after the destination genuinely exists; a
+        failed source deletion may leave both paths. A directory move always
+        recurses so the whole tree is recreated. A LinkNode raises
+        ``NotImplementedError`` after source resolution and before mutation.
         """
         source = self._strip_protocol(path1)
         destination = self._strip_protocol(path2)

@@ -463,11 +463,14 @@ S3-compatible storage ([s3fs Discussion #896](https://github.com/fsspec/s3fs/dis
 ([core source](https://github.com/fsspec/filesystem_spec/blob/1253ee2d2eb291d8e1274b80881a2659c6afbe76/fsspec/spec.py#L925-L1059)). Cross-filesystem rsync also loses options or cannot distinguish two instances of the same protocol with different credentials
 ([filesystem_spec #1856](https://github.com/fsspec/filesystem_spec/issues/1856)).
 
-**For `vosfs`:** current copy is negotiated GET-to-PUT relay and move is
-copy/recreate then delete. Keep byte-only metadata claim, absent-destination
-rule, non-atomicity, and completed/failed path reporting. Source must remain if
-destination creation or verification fails; a failed source delete may leave
-both. Never infer cross-service orchestration from matching `vos://` protocol.
+**For `vosfs`:** current copy is a negotiated GET-to-PUT relay. DataNode and
+ContainerNode move is copy/recreate then delete; LinkNode move is unsupported
+and raises `NotImplementedError` after source metadata resolution but before
+mutation. Keep the byte-only metadata claim, absent-destination rule,
+non-atomicity, and completed/failed path reporting for supported moves. Source
+must remain if destination creation or verification fails; a failed source
+delete may leave both. Never infer cross-service orchestration from matching
+`vos://` protocol.
 
 ### 15. Error translation is public compatibility
 
