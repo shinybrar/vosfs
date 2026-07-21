@@ -26,6 +26,7 @@ def test_strip_protocol_normalizes_on_the_class() -> None:
     assert VOSpaceFileSystem._strip_protocol("vos:///a/b") == "/a/b"
     assert VOSpaceFileSystem._strip_protocol("a/b") == "/a/b"
     assert VOSpaceFileSystem._strip_protocol("vos://") == "/"
+    assert type(VOSpaceFileSystem._strip_protocol("/plain")) is str
 
 
 def test_endpoint_trailing_slash_normalized() -> None:
