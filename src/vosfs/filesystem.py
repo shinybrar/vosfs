@@ -19,10 +19,10 @@ import os
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast, overload
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
 
 import httpx
-from fsspec.asyn import AsyncFileSystem, sync
+from fsspec.asyn import AsyncFileSystem, _get_batch_size, _run_coros_in_chunks, sync
 from fsspec.callbacks import DEFAULT_CALLBACK
 from fsspec.compression import compr
 from fsspec.core import get_compression
@@ -483,20 +483,50 @@ class VOSpaceFileSystem(AsyncFileSystem):
 
         The document is parsed once for both the node and its children.
         """
-        node, children = nodes.parse_container(await self._get_node_document(path))
-        self._note_authority(node.uri)
-        if node.node_type != "container":
-            return [nodes.to_info(node, path)]
-        entries = [self._child_info(path, child) for child in children]
-        self.dircache[path] = entries
+        try:
+            node, children = nodes.parse_container(await self._get_node_document(path))
+            self._note_authority(node.uri)
+            if node.node_type != "container":
+                entries = [nodes.to_info(node, path)]
+            else:
+                entries = [self._child_info(path, child) for child in children]
+                self.dircache[path] = entries
+        except BaseException:
+            self.dircache.pop(path, None)
+            raise
         return entries
 
     def _child_info(self, parent: str, child: Node) -> dict[str, Any]:
         """Build the info dict for a listing child under ``parent``."""
-        name = _child_name(child.uri)
-        child_path = f"/{name}" if parent == "/" else f"{parent}/{name}"
-        self._note_authority(child.uri)
+        child_path = self._listing_child_path(parent, child.uri)
         return nodes.to_info(child, child_path)
+
+    def _listing_child_path(self, parent: str, uri: str) -> str:
+        """Validate and return one server-listed immediate child path."""
+        parts = urlsplit(uri)
+        if (
+            parts.scheme != "vos"
+            or not parts.netloc
+            or parts.username
+            or parts.password
+            or parts.query
+            or parts.fragment
+            or not parts.path.startswith("/")
+            or parts.path.endswith("/")
+            or "//" in parts.path
+        ):
+            msg = f"listed child URI is not canonical: {uri!r}"
+            raise errors.VOSpaceError(msg)
+        self._note_authority(uri)
+        try:
+            child_path = paths.strip_protocol(parts.path)
+        except ValueError as exc:
+            msg = f"listed child URI is not canonical: {uri!r}"
+            raise errors.VOSpaceError(msg) from exc
+        if child_path == "/" or paths.parent(child_path) != parent:
+            msg = f"listed child is not an immediate descendant of {parent}: {uri!r}"
+            raise errors.VOSpaceError(msg)
+        return child_path
 
     async def _modified(self, path: str) -> datetime.datetime:
         """Return the OpenCADC modification date for ``path``."""
@@ -543,7 +573,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         location = negotiate.validate_redirect(
             post.headers.get("location"),
             base=sync_url,
-            sending_bearer=self._credential.method == "token",
+            sending_bearer=False,
         )
         seen: set[str] = set()
         for _redirect_count in range(1, 6):
@@ -551,6 +581,18 @@ class VOSpaceFileSystem(AsyncFileSystem):
                 msg = "synchronous-transfer redirect loop"
                 raise errors.VOSpaceError(msg)
             seen.add(location)
+            if negotiate.is_direct_byte_endpoint(location):
+                return negotiate.NegotiatedEndpoint(
+                    location, capabilities.ANONYMOUS_METHOD
+                )
+            location = negotiate.validate_redirect(
+                location,
+                base=location,
+                sending_bearer=(
+                    self._credential.method == "token"
+                    and _same_origin(location, self.endpoint_url)
+                ),
+            )
             details = await self._send_to_service(
                 "GET", location, headers=nodes.XML_HEADERS
             )
@@ -565,7 +607,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
             location = negotiate.validate_redirect(
                 details.headers.get("location"),
                 base=location,
-                sending_bearer=self._credential.method == "token",
+                sending_bearer=False,
             )
         msg = "synchronous-transfer negotiation returned more than five redirects"
         raise errors.VOSpaceError(msg)
@@ -741,13 +783,13 @@ class VOSpaceFileSystem(AsyncFileSystem):
         data = await self._read_whole(self._strip_protocol(path))
         return data[start:end]
 
-    async def _cat_ranges(  # noqa: PLR0913 - fsspec hook signature
+    async def _cat_ranges(  # noqa: C901, PLR0913 - validation plus fsspec hook signature
         self,
         paths: list[str],
         starts: int | Sequence[int | None] | None,
         ends: int | Sequence[int | None] | None,
         max_gap: int | None = None,  # noqa: ARG002 - accepted for fsspec compatibility
-        batch_size: int | None = None,  # noqa: ARG002 - accepted for fsspec compatibility
+        batch_size: int | None = None,
         on_error: str = "return",
         **_kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[bytes | BaseException]:
@@ -756,23 +798,74 @@ class VOSpaceFileSystem(AsyncFileSystem):
         A scalar ``starts``/``ends`` is broadcast to every path, matching
         fsspec's ``cat_ranges`` contract.
         """
-        start_list = _broadcast(starts, len(paths))
-        end_list = _broadcast(ends, len(paths))
-        stripped = [self._strip_protocol(rpath) for rpath in paths]
-        cache: dict[str, bytes | BaseException] = {}
-        for stripped_path in dict.fromkeys(stripped):
-            try:
-                cache[stripped_path] = await self._read_whole(stripped_path)
-            except Exception as exc:  # noqa: PERF203 - per-object on_error handling
-                if on_error == "raise":
-                    raise
-                cache[stripped_path] = exc
-        results: list[bytes | BaseException] = []
-        for stripped_path, start, end in zip(
-            stripped, start_list, end_list, strict=True
+        count = len(paths)
+        start_list = _broadcast(starts, count)
+        end_list = _broadcast(ends, count)
+        if len(start_list) != count or len(end_list) != count:
+            msg = "paths, starts, and ends must have the same length"
+            raise ValueError(msg)
+        if on_error not in ("return", "raise"):
+            msg = "on_error must be 'return' or 'raise'"
+            raise ValueError(msg)
+        effective_batch_size = batch_size if batch_size is not None else self.batch_size
+        if (
+            effective_batch_size is not None
+            and effective_batch_size != -1
+            and effective_batch_size <= 0
         ):
-            whole = cache[stripped_path]
-            results.append(whole[start:end] if isinstance(whole, bytes) else whole)
+            msg = "batch_size must be a positive integer or -1"
+            raise ValueError(msg)
+        if count == 0:
+            return []
+
+        stripped = [self._strip_protocol(rpath) for rpath in paths]
+        grouped: dict[str, list[tuple[int, int | None, int | None]]] = {}
+        for index, (stripped_path, start, end) in enumerate(
+            zip(stripped, start_list, end_list, strict=True)
+        ):
+            grouped.setdefault(stripped_path, []).append((index, start, end))
+
+        async def stage_object(
+            stripped_path: str,
+            ranges: list[tuple[int, int | None, int | None]],
+        ) -> list[tuple[int, bytes]]:
+            temp_path = staging.new_temp_path()
+            try:
+                await self._get_file(stripped_path, temp_path)
+                with Path(temp_path).open("rb") as local:  # noqa: ASYNC230
+                    size = os.fstat(local.fileno()).st_size
+                    values: list[tuple[int, bytes]] = []
+                    for index, start, end in ranges:
+                        first, stop, _step = slice(start, end).indices(size)
+                        local.seek(first)
+                        values.append((index, local.read(max(0, stop - first))))
+                    return values
+            finally:
+                with contextlib.suppress(OSError):
+                    Path(temp_path).unlink()  # noqa: ASYNC240
+
+        grouped_items = list(grouped.items())
+        chunk_size = effective_batch_size or _get_batch_size()
+        if chunk_size == -1:
+            chunk_size = len(grouped_items)
+        object_results: list[Any] = []
+        for offset in range(0, len(grouped_items), chunk_size):
+            chunk = grouped_items[offset : offset + chunk_size]
+            object_results.extend(
+                await _run_coros_in_chunks(
+                    [stage_object(path, ranges) for path, ranges in chunk],
+                    batch_size=chunk_size,
+                    return_exceptions=on_error == "return",
+                )
+            )
+        results: list[bytes | BaseException] = [b""] * count
+        for ranges, outcome in zip(grouped.values(), object_results, strict=True):
+            if isinstance(outcome, BaseException):
+                for index, _start, _end in ranges:
+                    results[index] = outcome
+            else:
+                for index, value in outcome:
+                    results[index] = value
         return results
 
     def open(
@@ -849,8 +942,13 @@ class VOSpaceFileSystem(AsyncFileSystem):
             raise NotImplementedError(msg)
         if "r" in mode:
             temp_path = staging.new_temp_path()
-            self.get_file(path, temp_path)
-            return staging.StagedReadFile(temp_path)
+            try:
+                self.get_file(path, temp_path)
+                return staging.StagedReadFile(temp_path)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    Path(temp_path).unlink()
+                raise
         if "w" in mode or "x" in mode:
             if "x" in mode and self.exists(path):
                 msg = f"path already exists: {path}"
@@ -1035,11 +1133,13 @@ class VOSpaceFileSystem(AsyncFileSystem):
             wire_type=current_node.wire_type,
         )
         url = bindings.require_nodes() + paths.encode_url_path(path)
-        response = await self._send_to_service(
-            "POST", url, content=document, headers=nodes.XML_HEADERS
-        )
-        self._raise_for_status(response, path=path, allowed=(_HTTP_OK,))
-        self._invalidate(path)
+        try:
+            response = await self._send_to_service(
+                "POST", url, content=document, headers=nodes.XML_HEADERS
+            )
+            self._raise_for_status(response, path=path, allowed=(_HTTP_OK,))
+        finally:
+            self._invalidate(path)
 
     async def _create_container(self, path: str) -> None:
         """PUT one ContainerNode at ``path``."""
@@ -1047,21 +1147,27 @@ class VOSpaceFileSystem(AsyncFileSystem):
         authority = await self._require_authority()
         document = nodes.build_container_document(f"vos://{authority}{path}")
         url = bindings.require_nodes() + paths.encode_url_path(path)
-        response = await self._send_to_service(
-            "PUT", url, content=document, headers=nodes.XML_HEADERS
-        )
-        self._raise_for_status(response, path=path, allowed=(_HTTP_OK, _HTTP_CREATED))
-        self._invalidate(path)
+        try:
+            response = await self._send_to_service(
+                "PUT", url, content=document, headers=nodes.XML_HEADERS
+            )
+            self._raise_for_status(
+                response, path=path, allowed=(_HTTP_OK, _HTTP_CREATED)
+            )
+        finally:
+            self._invalidate(path)
 
     async def _delete_node(self, path: str) -> None:
         """DELETE the node at ``path``."""
         bindings = await self._get_bindings()
         url = bindings.require_nodes() + paths.encode_url_path(path)
-        response = await self._send_to_service("DELETE", url)
-        self._raise_for_status(
-            response, path=path, allowed=(_HTTP_OK, _HTTP_NO_CONTENT)
-        )
-        self._invalidate(path)
+        try:
+            response = await self._send_to_service("DELETE", url)
+            self._raise_for_status(
+                response, path=path, allowed=(_HTTP_OK, _HTTP_NO_CONTENT)
+            )
+        finally:
+            self._invalidate(path)
 
     async def _mkdir(
         self,
@@ -1181,13 +1287,30 @@ class VOSpaceFileSystem(AsyncFileSystem):
 
     async def _rm_tree(self, path: str) -> None:
         """Delete a container and its descendants leaves-first, client-side."""
-        for child in await self._ls(path, detail=True):
+        completed: list[str] = []
+        await self._rm_subtree(path, completed)
+
+    async def _rm_subtree(self, path: str, completed: list[str]) -> None:
+        """Delete one validated subtree and retain confirmed partial progress."""
+        try:
+            children = await self._ls(path, detail=True)
+        except Exception as exc:
+            raise _recursive_removal_error(path, completed, exc) from exc
+        for child in children:
             child_path = child["name"]
             if child["type"] == "directory":
-                await self._rm_tree(child_path)
+                await self._rm_subtree(child_path, completed)
             else:
-                await self._delete_node(child_path)
-        await self._delete_node(path)
+                await self._rm_delete(child_path, completed)
+        await self._rm_delete(path, completed)
+
+    async def _rm_delete(self, path: str, completed: list[str]) -> None:
+        """Delete one recursive-removal node and record only confirmed success."""
+        try:
+            await self._delete_node(path)
+        except Exception as exc:
+            raise _recursive_removal_error(path, completed, exc) from exc
+        completed.append(path)
 
     async def _cp_file(self, path1: str, path2: str, **_kwargs: Any) -> None:  # noqa: ANN401
         """Copy one object with a bounded read-to-write relay (bytes only).
@@ -1272,6 +1395,13 @@ class VOSpaceFileSystem(AsyncFileSystem):
         for entry in stale:
             self.dircache.pop(entry, None)
 
+    def invalidate_cache(self, path: str | None = None) -> None:
+        """Clear all directory state, or one path, its subtree, and parent."""
+        if path is None:
+            self.dircache.clear()
+        else:
+            self._invalidate(self._strip_protocol(path))
+
     async def aclose(self) -> None:
         """Close every realized HTTP client and evict the instance (idempotent).
 
@@ -1327,14 +1457,23 @@ def _authority_of(uri: str) -> str:
     return rest.split("/", 1)[0]
 
 
-def _child_name(uri: str) -> str:
-    """Return the decoded final segment of a child node URI."""
-    return unquote(uri.rstrip("/").rsplit("/", 1)[-1])
-
-
 def _parse_datetime(value: str) -> datetime.datetime:
     """Parse an ISO 8601 modification date, tolerating a trailing ``Z``."""
     return datetime.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+
+
+def _recursive_removal_error(
+    path: str, completed: list[str], cause: Exception
+) -> errors.VOSpaceError:
+    """Return a partial-completion error for a recursive removal failure."""
+    return errors.VOSpaceError(
+        f"recursive removal failed at {path}: {cause}",
+        status=getattr(cause, "status", None),
+        fault=getattr(cause, "fault", None),
+        retry_after=getattr(cause, "retry_after", None),
+        completed=list(completed),
+        failed=[path],
+    )
 
 
 def _ancestors_top_down(path: str) -> list[str]:

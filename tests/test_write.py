@@ -116,6 +116,31 @@ async def test_put_file_round_trip(router: respx.Router, tmp_path: Path) -> None
     await fs.aclose()
 
 
+async def test_direct_byte_endpoint_303_is_put_once_without_credentials(
+    router: respx.Router,
+) -> None:
+    mock_capabilities(router)
+    router.get(NODES_URL).mock(return_value=httpx.Response(200, content=ROOT_CONTAINER))
+    endpoint = "https://staging.canfar.net/arc/files/preauth:TESTTOKEN/out.bin"
+    router.post(SYNC_URL).mock(
+        return_value=httpx.Response(303, headers={"Location": endpoint})
+    )
+    seen: list[tuple[str | None, bytes]] = []
+
+    def byte_put(request: httpx.Request) -> httpx.Response:
+        seen.append((request.headers.get("authorization"), request.content))
+        return httpx.Response(201)
+
+    direct = router.put(endpoint).mock(side_effect=byte_put)
+    fs = make_fs(router, asynchronous=True, token="service-token")
+
+    await fs._pipe_file("/out.bin", b"payload")
+
+    assert direct.call_count == 1
+    assert seen == [(None, b"payload")]
+    await fs.aclose()
+
+
 def test_open_wb_uploads_on_close(router: respx.Router) -> None:
     files: dict[str, bytes] = {}
     mock_transfers(router, files)

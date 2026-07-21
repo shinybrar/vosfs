@@ -1,5 +1,7 @@
 """Tests for the read contract (section 8)."""
 
+import asyncio
+import tempfile
 from pathlib import Path
 
 import httpx
@@ -69,6 +71,111 @@ async def test_cat_ranges_groups_multiple_objects(router: respx.Router) -> None:
     fs = make_fs(router, asynchronous=True)
     result = await fs._cat_ranges(["/a", "/b", "/a"], [0, 1, 2], [2, 3, 4])
     assert result == [b"aa", b"bb", b"aa"]
+    await fs.aclose()
+
+
+@pytest.mark.parametrize(
+    ("call_batch_size", "filesystem_batch_size", "expected_active"),
+    [(2, None, 2), (-1, None, 3), (None, -1, 3)],
+)
+async def test_cat_ranges_bounds_active_staged_objects(  # noqa: PLR0913 - parametrized public seam
+    router: respx.Router,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    call_batch_size: int | None,
+    filesystem_batch_size: int | None,
+    expected_active: int,
+) -> None:
+    active = 0
+    maximum_active = 0
+    maximum_temps = 0
+    release = asyncio.Event()
+
+    def temp_count() -> int:
+        return sum(path.name.startswith("vosfs-") for path in tmp_path.iterdir())
+
+    class BlockingStream(httpx.AsyncByteStream):
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        async def __aiter__(self):
+            nonlocal active, maximum_active, maximum_temps
+            active += 1
+            maximum_active = max(maximum_active, active)
+            maximum_temps = max(maximum_temps, temp_count())
+            if active == expected_active:
+                release.set()
+            await release.wait()
+            try:
+                yield self.content
+            finally:
+                active -= 1
+
+    router.route(url__regex=rf"^{BASE_URL}/files").mock(
+        side_effect=lambda request: httpx.Response(
+            200,
+            stream=BlockingStream(request.url.params["p"].encode() * 4),
+        )
+    )
+    mock_transfers(router, {"/a": b"", "/b": b"", "/c": b""})
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    fs = make_fs(router, asynchronous=True, batch_size=filesystem_batch_size)
+
+    result = await asyncio.wait_for(
+        fs._cat_ranges(
+            ["/a", "/b", "/c", "/a"],
+            [0, 0, 0, 1],
+            [2, 2, 2, 3],
+            batch_size=call_batch_size,
+        ),
+        timeout=1,
+    )
+
+    assert result == [b"/a", b"/b", b"/c", b"a/"]
+    assert maximum_active == expected_active
+    assert maximum_temps == expected_active
+    assert temp_count() == 0
+    await fs.aclose()
+
+
+async def test_cat_ranges_rejects_invalid_batch_size_before_io(
+    router: respx.Router,
+) -> None:
+    fs = make_fs(router, asynchronous=True)
+    with pytest.raises(ValueError, match="batch_size"):
+        await fs._cat_ranges(["/a"], [0], [1], batch_size=0)
+    assert len(router.calls) == 0
+    await fs.aclose()
+
+
+async def test_cat_ranges_honors_invalid_filesystem_batch_size_before_io(
+    router: respx.Router,
+) -> None:
+    fs = make_fs(router, asynchronous=True, batch_size=0)
+    with pytest.raises(ValueError, match="batch_size"):
+        await fs._cat_ranges(["/a"], [0], [1])
+    assert len(router.calls) == 0
+    await fs.aclose()
+
+
+@pytest.mark.parametrize("on_error", ["ignore", "omit"])
+async def test_cat_ranges_rejects_invalid_on_error_before_io(
+    router: respx.Router, on_error: str
+) -> None:
+    fs = make_fs(router, asynchronous=True)
+    with pytest.raises(ValueError, match="on_error"):
+        await fs._cat_ranges(["/a"], [0], [1], on_error=on_error)
+    assert len(router.calls) == 0
+    await fs.aclose()
+
+
+async def test_cat_ranges_rejects_cardinality_mismatch_before_io(
+    router: respx.Router,
+) -> None:
+    fs = make_fs(router, asynchronous=True)
+    with pytest.raises(ValueError, match="same length"):
+        await fs._cat_ranges(["/a", "/b"], [0], [1, 2])
+    assert len(router.calls) == 0
     await fs.aclose()
 
 
@@ -175,28 +282,57 @@ def test_cat_head_tail(router: respx.Router) -> None:
     fs.close()
 
 
-def test_direct_byte_endpoint_303_is_unsupported(router: respx.Router) -> None:
-    # A 303 whose Location is a direct byte endpoint (non-XML) is not yet
-    # negotiated (issue #63): distinguishing it from transfer details without
-    # consuming a possibly single-use or large endpoint needs a streaming
-    # discriminator validated against representative response shapes. Until
-    # then it surfaces as a transfer-details parse error rather than being used.
-    import re
-
+def test_direct_byte_endpoint_303_is_consumed_once_without_credentials(
+    router: respx.Router,
+) -> None:
     from conftest import NODES_URL, ROOT_CONTAINER, SYNC_URL, mock_capabilities
 
     mock_capabilities(router)
     router.get(NODES_URL).mock(return_value=httpx.Response(200, content=ROOT_CONTAINER))
-    endpoint = f"{BASE_URL}/files/preauth:TESTTOKEN/d.bin"
-    router.post(SYNC_URL).mock(
+    endpoint = "http://download.test/files/preauth:TESTTOKEN/d.bin"
+    post = router.post(SYNC_URL).mock(
         return_value=httpx.Response(303, headers={"Location": endpoint})
     )
-    router.route(url__regex=rf"^{re.escape(BASE_URL)}/files").mock(
-        return_value=httpx.Response(200, content=b"not-xml-payload")
-    )
+    seen_auth: list[str | None] = []
+
+    class DirectBytes(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            yield b"direct-bytes"
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    stream = DirectBytes()
+
+    def byte_get(request: httpx.Request) -> httpx.Response:
+        seen_auth.append(request.headers.get("authorization"))
+        return httpx.Response(200, stream=stream)
+
+    direct = router.get(endpoint).mock(side_effect=byte_get)
+    fs = make_fs(router, token="service-token")
+    assert fs.cat_file("/d.bin") == b"direct-bytes"
+    assert post.call_count == 1
+    assert direct.call_count == 1
+    assert seen_auth == [None]
+    assert stream.closed
+    fs.close()
+
+
+def test_failed_staged_read_removes_temporary_file(
+    router: respx.Router,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_transfers(router, {})
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     fs = make_fs(router)
-    with pytest.raises(ValueError, match="XML"):
-        fs.cat_file("/d.bin")
+
+    with pytest.raises(FileNotFoundError):
+        fs.open("/missing", "rb")
+
+    assert list(tmp_path.glob("vosfs-*")) == []
     fs.close()
 
 
