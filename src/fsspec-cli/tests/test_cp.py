@@ -65,6 +65,24 @@ def test_cp_copies_one_file_without_stdout() -> None:
     assert not [event for event in events if event[0] == "get_file"]
 
 
+def test_cp_reuses_destination_directory_info_for_same_source_parent() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _file_source(events, directories={"/", "/docs", "/target"})
+
+    result = _invoke_cp(
+        ["memory:/docs/notes.txt", "memory:/target"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [event[2] for event in events if event[0] == "info"] == [
+        "/docs/notes.txt",
+        "/target",
+        "/target/notes.txt",
+        "/target/notes.txt",
+    ]
+
+
 def test_cp_copies_multiple_files_into_existing_directory_in_argv_order() -> None:
     source = _file_source(
         file_contents={
@@ -89,6 +107,40 @@ def test_cp_copies_multiple_files_into_existing_directory_in_argv_order() -> Non
     assert [event[2:4] for event in source.events if event[0] == "cp_file"] == [
         ("/docs/first.txt", "/target/first.txt"),
         ("/docs/second.txt", "/target/second.txt"),
+    ]
+
+
+def test_cp_reuses_destination_directory_info_for_multi_source_parents() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _file_source(
+        events,
+        file_contents={
+            "/docs/first.txt": b"first",
+            "/docs/second.txt": b"second",
+        },
+        directories={"/", "/docs", "/target"},
+    )
+
+    result = _invoke_cp(
+        [
+            "memory:/docs/first.txt",
+            "memory:/docs/second.txt",
+            "memory:/target",
+        ],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [event[2] for event in events if event[0] == "info"] == [
+        "/target",
+        "/docs/first.txt",
+        "/target",
+        "/target/first.txt",
+        "/target/first.txt",
+        "/docs/second.txt",
+        "/target",
+        "/target/second.txt",
+        "/target/second.txt",
     ]
 
 
@@ -555,6 +607,26 @@ def test_cp_copies_payload_between_distinct_configured_sources(payload: bytes) -
     assert [event[0] for event in source.events].count("get_file") == 1
     assert [event[0] for event in destination.events].count("put_file") == 1
     assert [event[0] for event in destination.events].count("get_file") == 0
+
+
+def test_cp_reuses_destination_directory_info_for_cross_source_parent() -> None:
+    source = _file_source()
+    destination = _file_source(
+        source_path="/other.txt",
+        directories={"/", "/target"},
+    )
+
+    result = _invoke_cp(
+        ["source:/docs/notes.txt", "destination:/target"],
+        sources={"source": source, "destination": destination},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [event[2] for event in destination.events if event[0] == "info"] == [
+        "/target",
+        "/target/notes.txt",
+        "/target/notes.txt",
+    ]
 
 
 def test_cp_rejects_cross_source_same_path_on_shared_backend_before_mutation() -> None:

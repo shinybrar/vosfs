@@ -167,6 +167,7 @@ async def _resolve_destination(  # noqa: C901, PLR0911, PLR0912 - explicit targe
     source_path: str,
     filesystem: AsyncFileSystem,
 ) -> tuple[str, _CpFailure | None]:
+    known_directory: str | None = None
     try:
         dest_info = await filesystem._info(destination.path)  # noqa: SLF001
     except FileNotFoundError:
@@ -180,6 +181,7 @@ async def _resolve_destination(  # noqa: C901, PLR0911, PLR0912 - explicit targe
             return destination.path, _CpFailure(destination, incompatible="result")
         dest_type = dest_info["type"]
         if dest_type == "directory":
+            known_directory = destination.path
             resolved = _join_under(destination.path, _lexical_basename(source_path))
         elif dest_type == "file":
             resolved = destination.path
@@ -204,6 +206,8 @@ async def _resolve_destination(  # noqa: C901, PLR0911, PLR0912 - explicit targe
                 return resolved, _CpFailure(destination, incompatible="result")
 
     parent = _parent_path(resolved)
+    if parent == known_directory:
+        return resolved, None
     try:
         parent_info = await filesystem._info(parent)  # noqa: SLF001
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
