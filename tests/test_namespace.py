@@ -578,6 +578,25 @@ async def test_mv_file_same_data_path_is_noop(router: respx.Router) -> None:
     await fs.aclose()
 
 
+@pytest.mark.parametrize("destination", ["/src", "/src/dest"])
+async def test_mv_file_rejects_container_before_mutation(
+    router: respx.Router,
+    destination: str,
+) -> None:
+    sim = VOSpaceSim().add_container("/src").add_file("/src/a", b"a")
+    fs = _fs(router, sim)
+
+    with pytest.raises(IsADirectoryError, match="source is a container"):
+        await fs._mv_file("/src", destination)
+
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "container"
+    assert sim.blobs["/src/a"] == b"a"
+    assert destination == "/src" or destination not in sim.nodes
+    assert sim.delete_requests == []
+    await fs.aclose()
+
+
 async def test_mv_file_rejects_existing_data_destination_before_mutation(
     router: respx.Router,
 ) -> None:

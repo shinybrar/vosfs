@@ -1488,6 +1488,8 @@ class VOSpaceFileSystem(AsyncFileSystem):
         if source_info.get("islink"):
             msg = "moving a LinkNode is unsupported"
             raise NotImplementedError(msg)
+        if source_info["type"] == "directory":
+            raise IsADirectoryError(errno.EISDIR, "move source is a container", source)
         if source == destination:
             return
         if await self._exists(destination):
