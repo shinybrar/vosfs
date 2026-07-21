@@ -793,12 +793,6 @@ class VOSpaceFileSystem(AsyncFileSystem):
         assume_literal: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
     ) -> list[str]:
         """Keep fsspec-expanded paths from being percent-decoded again."""
-        if assume_literal:
-            path = (
-                paths.mark_normalized(path)
-                if isinstance(path, str)
-                else [paths.mark_normalized(item) for item in path]
-            )
         expanded = await super()._expand_path(
             path,
             recursive=recursive,

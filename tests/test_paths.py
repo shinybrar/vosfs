@@ -122,3 +122,13 @@ def test_encoded_separator_in_decoded_name_is_addressable() -> None:
     once = paths.strip_protocol("vos://dir/data%252fpart")
     assert once == "/dir/data%2fpart"
     assert paths.encode_url_path(once) == "/dir/data%252fpart"
+
+
+@pytest.mark.parametrize("bad", ["/dir/bad%2Fname", "/dir/bad?name"])
+def test_public_assume_literal_still_validates_raw_paths(bad: str) -> None:
+    from vosfs import VOSpaceFileSystem
+
+    fs = VOSpaceFileSystem("https://example.invalid", skip_instance_cache=True)
+    with pytest.raises(ValueError):  # noqa: PT011 - profile boundary, not message text
+        fs.expand_path([bad], assume_literal=True)
+    fs.close()
