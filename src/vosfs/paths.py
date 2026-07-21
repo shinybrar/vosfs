@@ -8,6 +8,7 @@ not a service or VOSpace authority.
 
 from __future__ import annotations
 
+import operator
 from typing import SupportsIndex
 from urllib.parse import quote, unquote, unquote_to_bytes
 
@@ -39,24 +40,76 @@ class _NormalizedPath(str):
         count: SupportsIndex = -1,
     ) -> str:
         """Preserve provenance only for structurally safe remapping text."""
-        value = super().replace(old, new, count)
+        replacement_limit = operator.index(count)
+        value = super().replace(old, new, replacement_limit)
         if value == self:
             return self
-        hazards = ("\x00", "?", "#", "%", "\\", ":")
-        if any(value.count(marker) > self.count(marker) for marker in hazards):
-            return value
-        lowered = value.lower()
-        original_lowered = self.lower()
-        if any(
-            lowered.count(encoded) > original_lowered.count(encoded)
-            for encoded in _ENCODED_SEPARATORS
-        ):
+        origins = _replacement_origins(self, old, new, replacement_limit)
+        if _introduces_hazard(self, value, origins):
             return value
         if not value.startswith("/") or any(
             segment in (".", "..") for segment in value.split("/")
         ):
             return value
         return _NormalizedPath(value)
+
+
+def _replacement_origins(
+    original: str,
+    old: str,
+    new: str,
+    count: int,
+) -> list[int | None]:
+    """Map replacement-result characters to their original character positions."""
+    origins: list[int | None] = []
+    if old == "":
+        insertions = len(original) + 1 if count < 0 else min(count, len(original) + 1)
+        for index in range(len(original)):
+            if index < insertions:
+                origins.extend([None] * len(new))
+            origins.append(index)
+        if len(original) < insertions:
+            origins.extend([None] * len(new))
+        return origins
+
+    cursor = 0
+    replacements = 0
+    while count < 0 or replacements < count:
+        position = original.find(old, cursor)
+        if position < 0:
+            break
+        origins.extend(range(cursor, position))
+        origins.extend([None] * len(new))
+        cursor = position + len(old)
+        replacements += 1
+    origins.extend(range(cursor, len(original)))
+    return origins
+
+
+def _introduces_hazard(
+    original: str,
+    result: str,
+    origins: list[int | None],
+) -> bool:
+    """Return whether a hazardous result token was inserted or newly composed."""
+    for index, character in enumerate(result):
+        origin = origins[index]
+        if character in ("\x00", "?", "#", "%", "\\", ":") and (
+            origin is None or original[origin] != character
+        ):
+            return True
+        if (
+            character == "%"
+            and len(result) >= index + 3
+            and all(
+                digit in "0123456789abcdefABCDEF"
+                for digit in result[index + 1 : index + 3]
+            )
+        ):
+            escape_origins = origins[index : index + 3]
+            if origin is None or escape_origins != [origin, origin + 1, origin + 2]:
+                return True
+    return False
 
 
 def strip_protocol(path: str) -> str:

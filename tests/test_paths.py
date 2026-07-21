@@ -205,3 +205,18 @@ def test_safe_replace_retains_existing_literal_separator(
 
     assert paths.is_normalized(remapped)
     assert remapped == expected
+
+
+def test_replace_drops_recomposed_separator_when_hazard_count_is_unchanged() -> None:
+    from vosfs import VOSpaceFileSystem
+
+    normalized = paths.strip_protocol("vos://alpha%252F/beta%252-F")
+
+    tainted = normalized.replace("F/beta%2-", "", 1)
+
+    assert tainted == "/alpha%2F"
+    assert not paths.is_normalized(tainted)
+    fs = VOSpaceFileSystem("https://example.invalid", skip_instance_cache=True)
+    with pytest.raises(ValueError):  # noqa: PT011 - profile boundary, not message text
+        fs.expand_path([tainted], assume_literal=True)
+    fs.close()
