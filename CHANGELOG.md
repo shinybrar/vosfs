@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0](https://github.com/shinybrar/vosfs/compare/v0.4.0...v0.5.0) (2026-07-21)
+
+
+### Features
+
+* **fsspec-cli:** complete backend-specific extension seam ([#240](https://github.com/shinybrar/vosfs/issues/240)) ([a9ace0f](https://github.com/shinybrar/vosfs/commit/a9ace0f5f630eb32dde5b9f2fde3c1f3b1e2a897))
+* **vosfs:** complete OpenCADC profile hardening ([#279](https://github.com/shinybrar/vosfs/issues/279)) ([df0a65d](https://github.com/shinybrar/vosfs/commit/df0a65d0559cab1eff9b544d5c7927417f87ea07))
+* **vosfs:** support recursive get ([#224](https://github.com/shinybrar/vosfs/issues/224)) ([dd856e8](https://github.com/shinybrar/vosfs/commit/dd856e818852f540e3c39969df1aabfce9d2b3d4))
+* **vosfs:** wire private node updates ([#220](https://github.com/shinybrar/vosfs/issues/220)) ([f78ba7e](https://github.com/shinybrar/vosfs/commit/f78ba7e5b6b4019e7961e90577f4f4d25f218ffc)), closes [#113](https://github.com/shinybrar/vosfs/issues/113)
+
+
+### Bug Fixes
+
+* **ci:** unwedge Windows hangs in cat subprocess tests ([440a6f2](https://github.com/shinybrar/vosfs/commit/440a6f25547b9290bd0ba86e197ee61408d73857))
+* **vosfs:** discard aborted text writes ([#217](https://github.com/shinybrar/vosfs/issues/217)) ([b1e1270](https://github.com/shinybrar/vosfs/commit/b1e12702e5dea187213479f0eacc2bf937b0d52f))
+* **vosfs:** graceful degradation when no transfer binding is advertised ([#212](https://github.com/shinybrar/vosfs/issues/212)) ([#214](https://github.com/shinybrar/vosfs/issues/214)) ([44095f8](https://github.com/shinybrar/vosfs/commit/44095f8dbaca69acab44f4c0c0ec0456f2388160))
+* **vosfs:** integrate coordinated write hardening ([#264](https://github.com/shinybrar/vosfs/issues/264)) ([82ec596](https://github.com/shinybrar/vosfs/commit/82ec5962f8d9dbe9388625acd912d23058dc144a))
+
 ## [0.4.0](https://github.com/shinybrar/vosfs/compare/v0.3.3...v0.4.0) (2026-07-17)
 
 > **Note:** This release changed no `vosfs` package source. Every feature below

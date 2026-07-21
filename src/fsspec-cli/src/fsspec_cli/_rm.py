@@ -14,6 +14,7 @@ from ._command import (
     _parse_mapped_operand,
     _render_output_failure,
     _usage_error,
+    _write_binary,
 )
 from ._diagnostics import _render_diagnostic_value
 from ._rmdir import _remove_empty_directory, _RmdirFailure
@@ -107,10 +108,7 @@ def _preflight(  # noqa: C901 - locked option and operand diagnostics.
 def _write_verbose_line(spelling: str) -> None:
     chunk = f"{spelling}\n".encode()
     stdout = _binary_stdout()
-    written = stdout.write(chunk)
-    if written != len(chunk):
-        message = "short write"
-        raise OSError(message)
+    _write_binary(stdout, chunk)
     stdout.flush()
 
 
