@@ -300,12 +300,14 @@ def test_native_vosfs_head_and_tail_profiles_observe_truthful_whole_gets() -> No
     assert transports[0].requests == [
         ("GET", "/arc/capabilities"),
         ("GET", "/arc/nodes"),
+        ("GET", "/arc/nodes/blob.bin"),
         ("POST", "/arc/synctrans"),
         ("GET", "/arc/details"),
         ("GET", "/arc/files/blob.bin"),
     ]
     assert transports[1].requests == [
         ("GET", "/arc/capabilities"),
+        ("GET", "/arc/nodes/blob.bin"),
         ("GET", "/arc/nodes/blob.bin"),
         ("POST", "/arc/synctrans"),
         ("GET", "/arc/details"),

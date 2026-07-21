@@ -688,8 +688,21 @@ class VOSpaceFileSystem(AsyncFileSystem):
 
     # -- reading bytes -------------------------------------------------------
 
+    async def _validate_read_target(self, path: str) -> None:
+        """Reject external LinkNodes before synchronous transfer negotiation."""
+        authority = await self._require_authority()
+        node = self._parse_and_note(await self._get_node_document(path))
+        if node.node_type != "link":
+            return
+        target = urlsplit(cast("str", node.target))
+        if target.scheme != "vos" or target.netloc != authority:
+            msg = f"external LinkNode byte reads are unsupported: {node.target!r}"
+            raise NotImplementedError(msg)
+
     async def _open_read_stream(self, path: str) -> httpx.Response:
         """Negotiate a read and return the open, streaming byte response."""
+        (await self._get_bindings()).require_sync()
+        await self._validate_read_target(path)
         endpoint = await self._negotiate(
             path,
             direction=negotiate.DIRECTION_PULL,

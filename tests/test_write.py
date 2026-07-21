@@ -24,14 +24,6 @@ from conftest import (
 )
 from vospace_sim import VOSpaceSim
 
-DATA_NODE = (
-    b'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
-    b'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-    b'xsi:type="vos:DataNode" uri="vos://example.test!vault/f">'
-    b"<vos:properties>"
-    b'<vos:property uri="ivo://ivoa.net/vospace/core#length">1</vos:property>'
-    b"</vos:properties></vos:node>"
-)
 _ENDPOINT = "https://staging.canfar.net/arc/files/put-target"
 
 
@@ -356,10 +348,7 @@ async def test_pipe_create_new_path(router: respx.Router) -> None:
 
 
 async def test_pipe_create_existing_path(router: respx.Router) -> None:
-    mock_transfers(router, {})
-    router.get(f"{NODES_URL}/f").mock(
-        return_value=httpx.Response(200, content=DATA_NODE)
-    )
+    mock_transfers(router, {"/f": b"existing"})
     fs = make_fs(router, asynchronous=True)
     with pytest.raises(FileExistsError):
         await fs._pipe_file("/f", b"nope", mode="create")
@@ -367,10 +356,7 @@ async def test_pipe_create_existing_path(router: respx.Router) -> None:
 
 
 def test_open_xb_existing_path(router: respx.Router) -> None:
-    mock_transfers(router, {})
-    router.get(f"{NODES_URL}/f").mock(
-        return_value=httpx.Response(200, content=DATA_NODE)
-    )
+    mock_transfers(router, {"/f": b"existing"})
     fs = make_fs(router)
     with pytest.raises(FileExistsError):
         fs.open("/f", "xb")

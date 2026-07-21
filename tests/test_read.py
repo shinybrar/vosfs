@@ -8,6 +8,7 @@ import httpx
 import pytest
 import respx
 from conftest import BASE_URL, make_fs, mock_transfers
+from vospace_sim import VOSpaceSim
 
 
 async def test_get_file_streams_to_disk(router: respx.Router, tmp_path: Path) -> None:
@@ -33,6 +34,61 @@ async def test_cat_file_whole(router: respx.Router) -> None:
     fs = make_fs(router, asynchronous=True)
     assert await fs._cat_file("/f") == b"abcdef"
     await fs.aclose()
+
+
+@pytest.mark.parametrize("operation", ["cat_file", "get_file", "open"])
+def test_internal_link_byte_reads(
+    router: respx.Router, tmp_path: Path, operation: str
+) -> None:
+    sim = (
+        VOSpaceSim()
+        .add_file("/target", b"linked bytes")
+        .add_link("/link", "vos://example.test!vault/target")
+    )
+    sim.install(router)
+    fs = make_fs(router)
+
+    if operation == "cat_file":
+        assert fs.cat_file("/link") == b"linked bytes"
+    elif operation == "get_file":
+        local = tmp_path / "linked.bin"
+        fs.get_file("/link", local)
+        assert local.read_bytes() == b"linked bytes"
+    else:
+        with fs.open("/link", "rb") as handle:
+            assert handle.read() == b"linked bytes"
+
+    fs.close()
+
+
+@pytest.mark.parametrize("operation", ["cat_file", "get_file", "open"])
+def test_external_link_byte_reads_are_rejected_before_transfer(
+    router: respx.Router, tmp_path: Path, operation: str
+) -> None:
+    sim = VOSpaceSim().add_link("/link", "vos://external.example!vault/target")
+    sim.install(router)
+    fs = make_fs(router, token="service-token")
+
+    def attempt_read() -> None:
+        if operation == "cat_file":
+            fs.cat_file("/link")
+        elif operation == "get_file":
+            fs.get_file("/link", tmp_path / "external.bin")
+        else:
+            with fs.open("/link", "rb"):
+                pass
+
+    with pytest.raises(NotImplementedError, match="external LinkNode"):
+        attempt_read()
+
+    assert sim.byte_requests == []
+    assert not any(call.request.url.path == "/arc/synctrans" for call in router.calls)
+    external_calls = [
+        call for call in router.calls if call.request.url.host != "staging.canfar.net"
+    ]
+    assert external_calls == []
+    assert list(tmp_path.iterdir()) == []
+    fs.close()
 
 
 @pytest.mark.parametrize(
@@ -285,10 +341,27 @@ def test_cat_head_tail(router: respx.Router) -> None:
 def test_direct_byte_endpoint_303_is_consumed_once_without_credentials(
     router: respx.Router,
 ) -> None:
-    from conftest import NODES_URL, ROOT_CONTAINER, SYNC_URL, mock_capabilities
+    from conftest import (
+        AUTHORITY,
+        NODES_URL,
+        ROOT_CONTAINER,
+        SYNC_URL,
+        mock_capabilities,
+    )
 
     mock_capabilities(router)
     router.get(NODES_URL).mock(return_value=httpx.Response(200, content=ROOT_CONTAINER))
+    router.get(f"{NODES_URL}/d.bin").mock(
+        return_value=httpx.Response(
+            200,
+            content=(
+                f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+                f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+                f'xsi:type="vos:DataNode" uri="vos://{AUTHORITY}/d.bin">'
+                "<vos:properties/></vos:node>"
+            ).encode(),
+        )
+    )
     endpoint = "http://download.test/files/preauth:TESTTOKEN/d.bin"
     post = router.post(SYNC_URL).mock(
         return_value=httpx.Response(303, headers={"Location": endpoint})
