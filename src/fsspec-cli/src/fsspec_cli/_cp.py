@@ -124,6 +124,8 @@ def _parent_path(path: str) -> str:
 
 
 def _join_under(directory: str, name: str) -> str:
+    if name == "/":
+        name = ""
     if directory in {"/", ""}:
         return f"/{name}"
     return f"{directory.rstrip('/')}/{name}"
