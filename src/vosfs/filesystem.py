@@ -483,12 +483,17 @@ class VOSpaceFileSystem(AsyncFileSystem):
 
         The document is parsed once for both the node and its children.
         """
-        node, children = nodes.parse_container(await self._get_node_document(path))
-        self._note_authority(node.uri)
-        if node.node_type != "container":
-            return [nodes.to_info(node, path)]
-        entries = [self._child_info(path, child) for child in children]
-        self.dircache[path] = entries
+        try:
+            node, children = nodes.parse_container(await self._get_node_document(path))
+            self._note_authority(node.uri)
+            if node.node_type != "container":
+                entries = [nodes.to_info(node, path)]
+            else:
+                entries = [self._child_info(path, child) for child in children]
+                self.dircache[path] = entries
+        except BaseException:
+            self.dircache.pop(path, None)
+            raise
         return entries
 
     def _child_info(self, parent: str, child: Node) -> dict[str, Any]:
@@ -568,7 +573,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         location = negotiate.validate_redirect(
             post.headers.get("location"),
             base=sync_url,
-            sending_bearer=self._credential.method == "token",
+            sending_bearer=False,
         )
         seen: set[str] = set()
         for _redirect_count in range(1, 6):
@@ -580,6 +585,14 @@ class VOSpaceFileSystem(AsyncFileSystem):
                 return negotiate.NegotiatedEndpoint(
                     location, capabilities.ANONYMOUS_METHOD
                 )
+            location = negotiate.validate_redirect(
+                location,
+                base=location,
+                sending_bearer=(
+                    self._credential.method == "token"
+                    and _same_origin(location, self.endpoint_url)
+                ),
+            )
             details = await self._send_to_service(
                 "GET", location, headers=nodes.XML_HEADERS
             )
@@ -594,7 +607,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
             location = negotiate.validate_redirect(
                 details.headers.get("location"),
                 base=location,
-                sending_bearer=self._credential.method == "token",
+                sending_bearer=False,
             )
         msg = "synchronous-transfer negotiation returned more than five redirects"
         raise errors.VOSpaceError(msg)
@@ -795,8 +808,12 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = "on_error must be 'return' or 'raise'"
             raise ValueError(msg)
         effective_batch_size = batch_size if batch_size is not None else self.batch_size
-        if effective_batch_size is not None and effective_batch_size <= 0:
-            msg = "batch_size must be a positive integer"
+        if (
+            effective_batch_size is not None
+            and effective_batch_size != -1
+            and effective_batch_size <= 0
+        ):
+            msg = "batch_size must be a positive integer or -1"
             raise ValueError(msg)
         if count == 0:
             return []

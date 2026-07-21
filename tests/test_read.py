@@ -74,8 +74,17 @@ async def test_cat_ranges_groups_multiple_objects(router: respx.Router) -> None:
     await fs.aclose()
 
 
-async def test_cat_ranges_bounds_active_staged_objects(
-    router: respx.Router, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("call_batch_size", "filesystem_batch_size", "expected_active"),
+    [(2, None, 2), (-1, None, 3), (None, -1, 3)],
+)
+async def test_cat_ranges_bounds_active_staged_objects(  # noqa: PLR0913 - parametrized public seam
+    router: respx.Router,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    call_batch_size: int | None,
+    filesystem_batch_size: int | None,
+    expected_active: int,
 ) -> None:
     active = 0
     maximum_active = 0
@@ -94,7 +103,7 @@ async def test_cat_ranges_bounds_active_staged_objects(
             active += 1
             maximum_active = max(maximum_active, active)
             maximum_temps = max(maximum_temps, temp_count())
-            if active == 2:
+            if active == expected_active:
                 release.set()
             await release.wait()
             try:
@@ -110,32 +119,31 @@ async def test_cat_ranges_bounds_active_staged_objects(
     )
     mock_transfers(router, {"/a": b"", "/b": b"", "/c": b""})
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-    fs = make_fs(router, asynchronous=True)
+    fs = make_fs(router, asynchronous=True, batch_size=filesystem_batch_size)
 
     result = await asyncio.wait_for(
         fs._cat_ranges(
             ["/a", "/b", "/c", "/a"],
             [0, 0, 0, 1],
             [2, 2, 2, 3],
-            batch_size=2,
+            batch_size=call_batch_size,
         ),
         timeout=1,
     )
 
     assert result == [b"/a", b"/b", b"/c", b"a/"]
-    assert maximum_active == 2
-    assert maximum_temps == 2
+    assert maximum_active == expected_active
+    assert maximum_temps == expected_active
     assert temp_count() == 0
     await fs.aclose()
 
 
-@pytest.mark.parametrize("batch_size", [0, -1])
 async def test_cat_ranges_rejects_invalid_batch_size_before_io(
-    router: respx.Router, batch_size: int
+    router: respx.Router,
 ) -> None:
     fs = make_fs(router, asynchronous=True)
     with pytest.raises(ValueError, match="batch_size"):
-        await fs._cat_ranges(["/a"], [0], [1], batch_size=batch_size)
+        await fs._cat_ranges(["/a"], [0], [1], batch_size=0)
     assert len(router.calls) == 0
     await fs.aclose()
 
@@ -277,14 +285,12 @@ def test_cat_head_tail(router: respx.Router) -> None:
 def test_direct_byte_endpoint_303_is_consumed_once_without_credentials(
     router: respx.Router,
 ) -> None:
-    import re
-
     from conftest import NODES_URL, ROOT_CONTAINER, SYNC_URL, mock_capabilities
 
     mock_capabilities(router)
     router.get(NODES_URL).mock(return_value=httpx.Response(200, content=ROOT_CONTAINER))
-    endpoint = f"{BASE_URL}/files/preauth:TESTTOKEN/d.bin"
-    router.post(SYNC_URL).mock(
+    endpoint = "http://download.test/files/preauth:TESTTOKEN/d.bin"
+    post = router.post(SYNC_URL).mock(
         return_value=httpx.Response(303, headers={"Location": endpoint})
     )
     seen_auth: list[str | None] = []
@@ -304,11 +310,10 @@ def test_direct_byte_endpoint_303_is_consumed_once_without_credentials(
         seen_auth.append(request.headers.get("authorization"))
         return httpx.Response(200, stream=stream)
 
-    direct = router.route(url__regex=rf"^{re.escape(BASE_URL)}/files").mock(
-        side_effect=byte_get
-    )
+    direct = router.get(endpoint).mock(side_effect=byte_get)
     fs = make_fs(router, token="service-token")
     assert fs.cat_file("/d.bin") == b"direct-bytes"
+    assert post.call_count == 1
     assert direct.call_count == 1
     assert seen_auth == [None]
     assert stream.closed

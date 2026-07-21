@@ -460,7 +460,7 @@ async def test_uncertain_node_mutation_invalidates_cached_state(
     await fs.aclose()
 
 
-async def test_incomplete_listing_refresh_preserves_complete_cached_entry(
+async def test_incomplete_listing_refresh_evicts_stale_cached_entry(
     router: respx.Router,
 ) -> None:
     malformed = f"""<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
@@ -483,7 +483,7 @@ async def test_incomplete_listing_refresh_preserves_complete_cached_entry(
     with pytest.raises(OSError, match="immediate descendant"):
         await fs._fetch_listing("/tree")
 
-    assert fs.dircache["/tree"] == complete
+    assert "/tree" not in fs.dircache
     await fs.aclose()
 
 
