@@ -777,9 +777,11 @@ def test_recursive_move_keeps_source_when_one_child_copy_fails(
     )
     fs = make_fs(router)
 
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(errors.VOSpaceError, match="copy failed") as excinfo:
         fs.mv("/src", "/dest", recursive=True)
 
+    assert excinfo.value.completed == ["/dest", "/dest/a"]
+    assert excinfo.value.failed == ["/dest/b"]
     assert deleted == []
     assert files["/src/a"] == b"a"
     fs.close()
@@ -805,14 +807,84 @@ def test_recursive_move_keeps_source_when_copy_omits_one_child(
 
     monkeypatch.setattr(fs, "copy", incomplete_copy)
 
-    with pytest.raises(errors.VOSpaceError, match="incomplete"):
+    with pytest.raises(errors.VOSpaceError, match="incomplete") as excinfo:
         fs.mv("/src", "/dest", recursive=True)
 
+    assert excinfo.value.completed == ["/dest", "/dest/a"]
+    assert excinfo.value.failed == ["/dest/b"]
     assert sim.nodes["/dest"] == "container"
     assert sim.blobs["/dest/a"] == b"a"
     assert "/dest/b" not in sim.nodes
     assert sim.blobs["/src/a"] == b"a"
     assert sim.blobs["/src/b"] == b"b"
+    assert sim.delete_requests == []
+    fs.close()
+
+
+def test_recursive_move_maxdepth_retains_excluded_descendants(
+    router: respx.Router,
+) -> None:
+    sim = (
+        VOSpaceSim()
+        .add_container("/src")
+        .add_file("/src/top", b"top")
+        .add_container("/src/sub")
+        .add_file("/src/sub/deep", b"deep")
+    )
+    sim.install(router)
+    fs = make_fs(router)
+
+    fs.mv("/src", "/dest", recursive=True, maxdepth=1)
+
+    assert sim.blobs["/dest/top"] == b"top"
+    assert sim.nodes["/dest/sub"] == "container"
+    assert "/dest/sub/deep" not in sim.nodes
+    assert sim.blobs["/src/sub/deep"] == b"deep"
+    assert sim.nodes["/src"] == "container"
+    assert sim.nodes["/src/sub"] == "container"
+    assert "/src/top" not in sim.nodes
+    assert sim.delete_requests == ["/src/top"]
+    fs.close()
+
+
+def test_move_rejects_destination_within_source_before_mutation(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_container("/src").add_file("/src/a", b"a")
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(ValueError, match="within the source"):
+        fs.mv("/src", "/src/dest", recursive=True)
+
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.blobs["/src/a"] == b"a"
+    assert "/src/dest" not in sim.nodes
+    assert sim.delete_requests == []
+    fs.close()
+
+
+def test_recursive_move_rejects_child_link_before_mutation(
+    router: respx.Router,
+) -> None:
+    target = f"vos://{AUTHORITY}/target"
+    sim = (
+        VOSpaceSim()
+        .add_file("/target", b"target")
+        .add_container("/src")
+        .add_file("/src/a", b"a")
+        .add_link("/src/link", target)
+    )
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(NotImplementedError, match="moving a LinkNode"):
+        fs.mv("/src", "/dest", recursive=True)
+
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src/link"] == "link"
+    assert sim.blobs["/src/a"] == b"a"
+    assert "/dest" not in sim.nodes
     assert sim.delete_requests == []
     fs.close()
 

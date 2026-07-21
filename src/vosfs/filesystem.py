@@ -1585,9 +1585,9 @@ class VOSpaceFileSystem(AsyncFileSystem):
             raise NotImplementedError(msg)
         if source == destination:
             return
-        if self.exists(destination):
-            msg = f"move destination already exists: {destination}"
-            raise FileExistsError(msg)
+        if source == "/" or destination.startswith(f"{source}/"):
+            msg = f"move destination is within the source: {destination}"
+            raise ValueError(msg)
         recursive = recursive or source_info["type"] == "directory"
         source_paths = self.expand_path(
             source,
@@ -1595,20 +1595,67 @@ class VOSpaceFileSystem(AsyncFileSystem):
             maxdepth=maxdepth,
         )
         source_manifest = [(path, self.info(path)) for path in source_paths]
+        if any(info.get("islink") for _, info in source_manifest):
+            msg = "moving a LinkNode is unsupported"
+            raise NotImplementedError(msg)
+        if self.exists(destination):
+            msg = f"move destination already exists: {destination}"
+            raise FileExistsError(msg)
         destination_paths = [
             paths.mark_normalized(path)
             for path in other_paths(source_paths, destination)
         ]
         kwargs["on_error"] = "raise"
-        self.copy(
-            source_paths,
+        try:
+            self.copy(
+                source_paths,
+                destination_paths,
+                recursive=recursive,
+                maxdepth=maxdepth,
+                **kwargs,
+            )
+        except Exception as exc:
+            completed, failed = self._verify_move_destinations(
+                source_manifest,
+                destination_paths,
+            )
+            self._invalidate(destination)
+            msg = f"move copy failed ({len(completed)} completed, {len(failed)} failed)"
+            raise errors.VOSpaceError(
+                msg,
+                completed=completed,
+                failed=failed,
+            ) from exc
+        completed, failed = self._verify_move_destinations(
+            source_manifest,
             destination_paths,
-            recursive=recursive,
-            maxdepth=maxdepth,
-            **kwargs,
         )
-        incomplete = 0
-        first_failure = ""
+        if failed:
+            self._invalidate(destination)
+            msg = (
+                f"move copy is incomplete ({len(completed)} completed, "
+                f"{len(failed)} failed); source is kept"
+            )
+            raise errors.VOSpaceError(
+                msg,
+                completed=completed,
+                failed=failed,
+            )
+        self._remove_moved_sources(
+            source_manifest,
+            allow_nonempty=maxdepth is not None,
+        )
+        self._invalidate(source)
+        self._invalidate(destination)
+
+    def _verify_move_destinations(
+        self,
+        source_manifest: list[tuple[str, dict[str, Any]]],
+        destination_paths: list[str],
+    ) -> tuple[list[str], list[str]]:
+        """Return destination paths whose type and file size did or did not verify."""
+        completed: list[str] = []
+        failed: list[str] = []
         for (_, expected), copied_path in zip(
             source_manifest,
             destination_paths,
@@ -1616,26 +1663,44 @@ class VOSpaceFileSystem(AsyncFileSystem):
         ):
             try:
                 copied = self.info(copied_path)
-            except FileNotFoundError:
+            except OSError:
                 copied = None
             type_matches = copied is not None and copied["type"] == expected["type"]
             size_matches = type_matches and (
                 expected["type"] == "directory" or copied["size"] == expected["size"]
             )
-            if not size_matches:
-                incomplete += 1
-                if not first_failure:
-                    first_failure = copied_path
-        if incomplete:
-            msg = (
-                f"move copy is incomplete at {first_failure} "
-                f"({incomplete} destination entries failed verification); "
-                "source is kept"
-            )
-            raise errors.VOSpaceError(msg)
-        self.rm(source, recursive=recursive)
-        self._invalidate(source)
-        self._invalidate(destination)
+            (completed if size_matches else failed).append(copied_path)
+        return completed, failed
+
+    def _remove_moved_sources(
+        self,
+        source_manifest: list[tuple[str, dict[str, Any]]],
+        *,
+        allow_nonempty: bool,
+    ) -> None:
+        """Remove verified moved entries leaves-first, retaining bounded descendants."""
+        completed: list[str] = []
+        for path, _ in sorted(
+            source_manifest,
+            key=lambda item: item[0].count("/"),
+            reverse=True,
+        ):
+            try:
+                self.rm(path, recursive=False)
+            except OSError as exc:
+                if allow_nonempty and exc.errno == errno.ENOTEMPTY:
+                    continue
+                self._invalidate(path)
+                msg = (
+                    "move source deletion failed "
+                    f"({len(completed)} completed, 1 failed)"
+                )
+                raise errors.VOSpaceError(
+                    msg,
+                    completed=completed,
+                    failed=[path],
+                ) from exc
+            completed.append(path)
 
     def _invalidate(self, path: str) -> None:
         """Invalidate the directory cache for ``path``, its subtree, and parent.
