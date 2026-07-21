@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable, Sequence
     from types import TracebackType
     from typing import Any
 
@@ -36,6 +36,26 @@ def unlink_temp_path(path: str) -> None:
     """Best-effort unlink one operation-owned temporary file."""
     with contextlib.suppress(OSError):
         Path(path).unlink()
+
+
+async def read_ranges(
+    download: Callable[[str], Awaitable[None]],
+    ranges: Sequence[tuple[int, int | None, int | None]],
+) -> list[tuple[int, bytes]]:
+    """Download one object once and return its indexed local byte slices."""
+    path = new_temp_path()
+    try:
+        await download(path)
+        with Path(path).open("rb") as local:  # noqa: ASYNC230 - disk-backed staging
+            size = os.fstat(local.fileno()).st_size
+            values: list[tuple[int, bytes]] = []
+            for index, start, end in ranges:
+                first, stop, _step = slice(start, end).indices(size)
+                local.seek(first)
+                values.append((index, local.read(max(0, stop - first))))
+            return values
+    finally:
+        unlink_temp_path(path)
 
 
 class StagedReadFile(io.BufferedReader):

@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, cast, overload
 from urllib.parse import urlsplit
 
 import httpx
-from fsspec.asyn import AsyncFileSystem, _get_batch_size, _run_coros_in_chunks, sync
+from fsspec.asyn import AsyncFileSystem, _run_coros_in_chunks, sync
 from fsspec.callbacks import DEFAULT_CALLBACK
 from fsspec.compression import compr
 from fsspec.core import get_compression
@@ -787,7 +787,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         data = await self._read_whole(self._strip_protocol(path))
         return data[start:end]
 
-    async def _cat_ranges(  # noqa: C901, PLR0913 - validation plus fsspec hook signature
+    async def _cat_ranges(  # noqa: PLR0913 - fsspec hook signature
         self,
         paths: list[str],
         starts: int | Sequence[int | None] | None,
@@ -829,45 +829,18 @@ class VOSpaceFileSystem(AsyncFileSystem):
         ):
             grouped.setdefault(stripped_path, []).append((index, start, end))
 
-        async def stage_object(
-            stripped_path: str,
-            ranges: list[tuple[int, int | None, int | None]],
-        ) -> list[tuple[int, bytes]]:
-            await self._preflight_read_target(stripped_path)
-            temp_path = staging.new_temp_path()
-            try:
-                await self._download_file(
-                    stripped_path,
-                    temp_path,
-                    target_validated=True,
-                )
-                with Path(temp_path).open("rb") as local:  # noqa: ASYNC230
-                    size = os.fstat(local.fileno()).st_size
-                    values: list[tuple[int, bytes]] = []
-                    for index, start, end in ranges:
-                        first, stop, _step = slice(start, end).indices(size)
-                        local.seek(first)
-                        values.append((index, local.read(max(0, stop - first))))
-                    return values
-            finally:
-                staging.unlink_temp_path(temp_path)
-
         grouped_items = list(grouped.items())
-        chunk_size = effective_batch_size or _get_batch_size()
-        if chunk_size == -1:
-            chunk_size = len(grouped_items)
-        object_results: list[list[tuple[int, bytes]] | BaseException] = []
-        for offset in range(0, len(grouped_items), chunk_size):
-            chunk = grouped_items[offset : offset + chunk_size]
-            chunk_results = cast(
-                "list[list[tuple[int, bytes]] | BaseException]",
-                await _run_coros_in_chunks(
-                    [stage_object(path, ranges) for path, ranges in chunk],
-                    batch_size=chunk_size,
-                    return_exceptions=on_error == "return",
-                ),
-            )
-            object_results.extend(chunk_results)
+        object_results = cast(
+            "list[list[tuple[int, bytes]] | BaseException]",
+            await _run_coros_in_chunks(
+                [
+                    self._read_staged_ranges(path, ranges)
+                    for path, ranges in grouped_items
+                ],
+                batch_size=effective_batch_size,
+                return_exceptions=on_error == "return",
+            ),
+        )
         results: list[bytes | BaseException] = [b""] * count
         for ranges, outcome in zip(grouped.values(), object_results, strict=True):
             if isinstance(outcome, BaseException):
@@ -877,6 +850,19 @@ class VOSpaceFileSystem(AsyncFileSystem):
                 for index, value in outcome:
                     results[index] = value
         return results
+
+    async def _read_staged_ranges(
+        self,
+        path: str,
+        ranges: Sequence[tuple[int, int | None, int | None]],
+    ) -> list[tuple[int, bytes]]:
+        """Read grouped byte ranges through one staged whole-object download."""
+        await self._preflight_read_target(path)
+
+        async def download(temp_path: str) -> None:
+            await self._download_file(path, temp_path, target_validated=True)
+
+        return await staging.read_ranges(download, ranges)
 
     def open(
         self,
