@@ -42,8 +42,15 @@ class _NormalizedPath(str):
         value = super().replace(old, new, count)
         if value == self:
             return self
-        unsafe = ("\x00", "?", "#", "%", "\\", ":")
-        if any(marker in new for marker in unsafe):
+        hazards = ("\x00", "?", "#", "%", "\\", ":")
+        if any(value.count(marker) > self.count(marker) for marker in hazards):
+            return value
+        lowered = value.lower()
+        original_lowered = self.lower()
+        if any(
+            lowered.count(encoded) > original_lowered.count(encoded)
+            for encoded in _ENCODED_SEPARATORS
+        ):
             return value
         if not value.startswith("/") or any(
             segment in (".", "..") for segment in value.split("/")

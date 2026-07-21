@@ -162,3 +162,46 @@ def test_noop_replacing_normalized_path_preserves_provenance() -> None:
 
     assert paths.is_normalized(unchanged)
     assert unchanged == normalized
+
+
+@pytest.mark.parametrize(
+    ("raw", "composed"),
+    [
+        ("vos://root/x%252-F", "/root/x%2F"),
+        ("vos://root/x%255-C", "/root/x%5C"),
+    ],
+)
+def test_replacing_normalized_path_drops_newly_composed_separator(
+    raw: str,
+    composed: str,
+) -> None:
+    from vosfs import VOSpaceFileSystem
+
+    normalized = paths.strip_protocol(raw)
+    tainted = normalized.replace("-", "")
+
+    assert tainted == composed
+    assert not paths.is_normalized(tainted)
+    fs = VOSpaceFileSystem("https://example.invalid", skip_instance_cache=True)
+    with pytest.raises(ValueError):  # noqa: PT011 - profile boundary, not message text
+        fs.expand_path([tainted], assume_literal=True)
+    fs.close()
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("vos://root/x%252F", "/destination/x%2F"),
+        ("vos://root/x%255C", "/destination/x%5C"),
+    ],
+)
+def test_safe_replace_retains_existing_literal_separator(
+    raw: str,
+    expected: str,
+) -> None:
+    normalized = paths.strip_protocol(raw)
+
+    remapped = normalized.replace("/root", "/destination")
+
+    assert paths.is_normalized(remapped)
+    assert remapped == expected
