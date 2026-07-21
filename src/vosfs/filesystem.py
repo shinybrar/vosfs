@@ -1346,6 +1346,22 @@ class VOSpaceFileSystem(AsyncFileSystem):
             with contextlib.suppress(OSError):
                 Path(temp_path).unlink()  # noqa: ASYNC240 - local-disk cleanup, not remote I/O
 
+    async def _mv_file(self, path1: str, path2: str) -> None:
+        """Move one DataNode; reject a LinkNode before copy or delete."""
+        source = self._strip_protocol(path1)
+        destination = self._strip_protocol(path2)
+        source_info = await self._info(source)
+        if source_info.get("islink"):
+            msg = "moving a LinkNode is unsupported"
+            raise NotImplementedError(msg)
+        if source == destination:
+            return
+        if await self._exists(destination):
+            msg = f"move destination already exists: {destination}"
+            raise FileExistsError(msg)
+        await self._cp_file(source, destination)
+        await self._rm_file(source)
+
     def mv(
         self,
         path1: str,
@@ -1354,20 +1370,26 @@ class VOSpaceFileSystem(AsyncFileSystem):
         maxdepth: int | None = None,
         **kwargs: Any,  # noqa: ANN401 - fsspec signature
     ) -> None:
-        """Move a path, requiring an absent destination (non-atomic, no overwrite).
+        """Move a DataNode or ContainerNode; reject a LinkNode before mutation.
 
-        The source is copied (or recreated) and deleted only after the
-        destination genuinely exists; a failed source deletion may leave both
-        paths. A directory move always recurses so the whole tree is recreated.
+        Supported moves require an absent destination. The source is copied or
+        recreated and deleted only after the destination genuinely exists; a
+        failed source deletion may leave both paths. A directory move always
+        recurses so the whole tree is recreated. A LinkNode raises
+        ``NotImplementedError`` after source resolution and before mutation.
         """
         source = self._strip_protocol(path1)
         destination = self._strip_protocol(path2)
+        source_info = self.info(source)
+        if source_info.get("islink"):
+            msg = "moving a LinkNode is unsupported"
+            raise NotImplementedError(msg)
         if source == destination:
             return
         if self.exists(destination):
             msg = f"move destination already exists: {destination}"
             raise FileExistsError(msg)
-        recursive = recursive or self.isdir(source)
+        recursive = recursive or source_info["type"] == "directory"
         self.copy(source, destination, recursive=recursive, maxdepth=maxdepth, **kwargs)
         if not self.exists(destination):
             msg = f"move did not create the destination: {destination}; source is kept"

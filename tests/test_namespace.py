@@ -379,6 +379,84 @@ def test_recursive_copy_creates_tree(router: respx.Router) -> None:
 # --- move -----------------------------------------------------------------------
 
 
+async def test_mv_file_copies_then_deletes_data(router: respx.Router) -> None:
+    sim = VOSpaceSim().add_file("/src", b"moved")
+    fs = _fs(router, sim)
+
+    await fs._mv_file("/src", "/dst")
+
+    assert sim.blobs["/dst"] == b"moved"
+    assert "/src" not in sim.nodes
+    await fs.aclose()
+
+
+async def test_mv_file_same_data_path_is_noop(router: respx.Router) -> None:
+    sim = VOSpaceSim().add_file("/src", b"source")
+    fs = _fs(router, sim)
+
+    await fs._mv_file("/src", "/src")
+
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "data"
+    assert sim.blobs["/src"] == b"source"
+    assert sim.delete_requests == []
+    await fs.aclose()
+
+
+async def test_mv_file_rejects_existing_data_destination_before_mutation(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_file("/src", b"source").add_file("/dst", b"existing")
+    fs = _fs(router, sim)
+
+    with pytest.raises(FileExistsError, match="move destination already exists"):
+        await fs._mv_file("/src", "/dst")
+
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "data"
+    assert sim.blobs["/src"] == b"source"
+    assert sim.nodes["/dst"] == "data"
+    assert sim.blobs["/dst"] == b"existing"
+    assert sim.delete_requests == []
+    await fs.aclose()
+
+
+@pytest.mark.parametrize("destination_state", ["absent", "existing", "same"])
+async def test_mv_file_rejects_link_before_mutation(
+    router: respx.Router,
+    destination_state: str,
+) -> None:
+    target = f"vos://{AUTHORITY}/target"
+    sim = VOSpaceSim().add_file("/target", b"target").add_link("/src", target)
+    destination = "/src" if destination_state == "same" else "/dst"
+    if destination_state == "existing":
+        sim.add_file(destination, b"existing")
+    fs = _fs(router, sim)
+
+    with pytest.raises(NotImplementedError, match="moving a LinkNode"):
+        await fs._mv_file("/src", destination)
+
+    node_requests = [
+        call.request
+        for call in router.calls
+        if str(call.request.url).startswith(NODES_URL)
+    ]
+    assert ("GET", f"{NODES_URL}/src") in [
+        (request.method, str(request.url)) for request in node_requests
+    ]
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "link"
+    assert sim.targets["/src"] == target
+    if destination_state == "absent":
+        assert destination not in sim.nodes
+        assert destination not in sim.blobs
+    elif destination_state == "existing":
+        assert sim.nodes[destination] == "data"
+        assert sim.blobs[destination] == b"existing"
+    assert sim.delete_requests == []
+    await fs.aclose()
+
+
 def test_move_requires_absent_destination(router: respx.Router) -> None:
     sim = VOSpaceSim().add_file("/src", b"x").add_file("/dst", b"exists")
     sim.install(router)
@@ -395,6 +473,89 @@ def test_move_copies_then_deletes_source(router: respx.Router) -> None:
     fs.mv("/src", "/dst")
     assert sim.blobs["/dst"] == b"moved"
     assert "/src" not in sim.nodes
+    fs.close()
+
+
+def test_move_rejects_link_before_mutation(router: respx.Router) -> None:
+    target = f"vos://{AUTHORITY}/target"
+    sim = VOSpaceSim().add_file("/target", b"target").add_link("/src", target)
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(NotImplementedError, match="moving a LinkNode"):
+        fs.mv("/src", "/dst")
+
+    node_requests = [
+        call.request
+        for call in router.calls
+        if str(call.request.url).startswith(NODES_URL)
+    ]
+    assert ("GET", f"{NODES_URL}/src") in [
+        (request.method, str(request.url)) for request in node_requests
+    ]
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "link"
+    assert sim.targets["/src"] == target
+    assert "/dst" not in sim.nodes
+    assert "/dst" not in sim.blobs
+    assert sim.delete_requests == []
+    fs.close()
+
+
+def test_move_rejects_link_before_existing_destination_check(
+    router: respx.Router,
+) -> None:
+    target = f"vos://{AUTHORITY}/target"
+    sim = (
+        VOSpaceSim()
+        .add_file("/target", b"target")
+        .add_link("/src", target)
+        .add_file("/dst", b"existing")
+    )
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(NotImplementedError, match="moving a LinkNode"):
+        fs.mv("/src", "/dst")
+
+    node_requests = [
+        call.request
+        for call in router.calls
+        if str(call.request.url).startswith(NODES_URL)
+    ]
+    assert ("GET", f"{NODES_URL}/src") in [
+        (request.method, str(request.url)) for request in node_requests
+    ]
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "link"
+    assert sim.targets["/src"] == target
+    assert sim.nodes["/dst"] == "data"
+    assert sim.blobs["/dst"] == b"existing"
+    assert sim.delete_requests == []
+    fs.close()
+
+
+def test_move_rejects_link_before_same_path_noop(router: respx.Router) -> None:
+    target = f"vos://{AUTHORITY}/target"
+    sim = VOSpaceSim().add_file("/target", b"target").add_link("/src", target)
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(NotImplementedError, match="moving a LinkNode"):
+        fs.mv("/src", "/src")
+
+    node_requests = [
+        call.request
+        for call in router.calls
+        if str(call.request.url).startswith(NODES_URL)
+    ]
+    assert ("GET", f"{NODES_URL}/src") in [
+        (request.method, str(request.url)) for request in node_requests
+    ]
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "link"
+    assert sim.targets["/src"] == target
+    assert sim.delete_requests == []
     fs.close()
 
 

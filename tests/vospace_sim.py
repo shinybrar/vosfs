@@ -48,6 +48,7 @@ class VOSpaceSim:
         self.wire_types: dict[str, str] = {}
         self.authorities: dict[str, str] = {}
         self.blobs: dict[str, bytes] = {}
+        self.targets: dict[str, str] = {}
         self.properties: dict[str, dict[str, str]] = {}
         self.node_update_requests: list[httpx.Request] = []
         self.node_update_status = 200
@@ -75,6 +76,13 @@ class VOSpaceSim:
         )
         return self
 
+    def add_link(self, path: str, target: str) -> VOSpaceSim:
+        """Seed a LinkNode and return self for chaining."""
+        self._transition_node(path, wire_type="LinkNode")
+        self.nodes[path] = "link"
+        self.targets[path] = target
+        return self
+
     def with_authority(self, path: str, authority: str) -> VOSpaceSim:
         """Override one node URI authority and return self for chaining."""
         self.authorities[path] = authority
@@ -94,6 +102,7 @@ class VOSpaceSim:
             self.wire_types.pop(path, None)
             self.authorities.pop(path, None)
             self.blobs.pop(path, None)
+            self.targets.pop(path, None)
             self.properties.pop(path, None)
             return
         properties = self.properties.get(path) if preserve_identity else None
@@ -108,6 +117,7 @@ class VOSpaceSim:
             self.blobs.pop(path, None)
         else:
             self.blobs[path] = content
+        self.targets.pop(path, None)
         self.properties[path] = dict(properties or {})
 
     def install(self, router: respx.Router) -> None:
@@ -194,6 +204,12 @@ class VOSpaceSim:
         return self._data_element(path)
 
     def _data_element(self, path: str) -> str:
+        if self.nodes[path] == "link":
+            target = escape(self.targets[path])
+            return (
+                f'<vos:node {_NS} xsi:type="vos:LinkNode" uri="{self._uri(path)}">'
+                f"<vos:target>{target}</vos:target></vos:node>"
+            )
         length = len(self.blobs.get(path, b""))
         length_uri = "ivo://ivoa.net/vospace/core#length"
         wire_type = self.wire_types[path]

@@ -109,8 +109,8 @@ until a source-owned complete-result contract exists.
 | `rmdir` | **D** | List and require an empty ContainerNode, then DELETE. The emptiness check and delete are non-atomic. Non-empty raises `OSError`. |
 | `cp_file` / `_cp_file` | **D** | Negotiated whole-object GET-to-PUT relay; no native `copyNode`. Overwrite an existing DataNode. Preserve bytes, not server-only properties; copying an internal LinkNode materializes its target bytes as a DataNode. |
 | `copy`, `cp` / `_copy` | **D** | fsspec list/glob/recursive expansion over the relay; create containers as needed and honour `maxdepth`. There is no atomic recursive copy. |
-| `_mv_file` | **D** | Require an absent destination, copy the DataNode bytes or recreate the LinkNode, then DELETE the source only after destination success. A failed source delete can leave both paths. |
-| `mv`, `move`, `rename` | **D** | Coordinate recursive copy then leaves-first source removal for containers. The move is non-atomic, reports partial completion, and never invokes `/transfers`. |
+| `_mv_file` | **D / U** | Resolve source metadata first. For a DataNode, require an absent destination, copy its bytes, then DELETE the source only after destination success; a failed source delete can leave both paths. For a LinkNode, raise `NotImplementedError` before destination checks, same-path no-op, copy, delete, rollback, or cleanup mutation. |
+| `mv`, `move`, `rename` | **D / U** | Coordinate recursive copy then leaves-first source removal for DataNodes and ContainerNodes. Resolve LinkNode source metadata, then raise `NotImplementedError` before copy or delete mutation. The supported move path is non-atomic, reports partial completion, and never invokes `/transfers`. |
 | move with overwrite; cross-service move | **U** | Reject an existing destination and cross-filesystem orchestration. |
 | `touch(truncate=True)` | **N** | Whole PUT of zero bytes, creating or truncating the DataNode. |
 | `touch(truncate=False)` | **U** | Cavern has no content-preserving timestamp-touch primitive. |
@@ -161,7 +161,7 @@ v0.3.0 is compatible only when all **N** and **D** rows above pass against an `o
 
 This matrix is the complete v0.3.0 fsspec/scientific-stack capability boundary. Broader VOSpace portability, true ranged reads, conditional writes, append/update, native copy, cross-service transfer, block caching, and FUSE are future contracts.
 
-At the 2026-07-21 reconciliation, the hermetic suite collected 508 tests: 502
+At the 2026-07-21 reconciliation, the hermetic suite collected 548 tests: 542
 passed and six skipped. The reusable fsspec 2026.6.0 subset collected 137 cases:
 131 supported cases passed and the same six question-mark glob rows skipped
 with the path-grammar reason above. Copy, get, and put each contribute the same

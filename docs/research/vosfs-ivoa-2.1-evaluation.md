@@ -23,13 +23,13 @@ blanket IVOA conformance.
 
 | # | Finding | Class | REC anchor | vosfs anchor |
 |---|---|---|---|---|
-| F1 | `mv` of a LinkNode materializes target bytes (copy semantics) instead of recreating the link — contradicts TRD §6; the TRD clause is currently *unimplementable* (no link-create primitive) | CORRECTNESS-FIX | §3 node types; §5 moveNode | filesystem.py:838-865, 804-836; trd.md:249 |
+| F1 | Resolved: `mv` of a LinkNode is unsupported and raises `NotImplementedError` after source resolution but before mutation; the prior byte-materializing behavior and link-recreation promise are superseded. | CORRECTNESS-FIX (resolved) | §3 node types; §5 moveNode | filesystem.py:1349-1399; trd.md:262-264 |
 | F2 | `mtime`/`modified` read only from `#date`; IVOA canonical modification property is `#mtime` | FIDELITY (borderline correctness for `modified`) | §3.2 props | nodes.py:41,312; filesystem.py:301-308 |
 | F3 | Fault vocabulary `_KNOWN_FAULTS` incomplete vs IVOA 2.1 | FIDELITY | §5 faults | errors.py:162-172 |
 | F4 | `#MD5` and `#contenttype` promoted as first-class fields are OpenCADC extensions, **not** IVOA-standard property URIs | FIDELITY (document) | §3.2 props | nodes.py:40,42 |
 | F5 | Async `/transfers`, `copyNode`, views, `/protocols`, `/properties`, search, pagination, structured views, permission/property writes | DELIBERATE-EXCLUSION | §5, §6, §8 | trd.md:197-208, 610-628 |
-| F6 | Native server-side move via `/transfers` (atomic `mv`) | ROADMAP | §5 moveNode | filesystem.py:838-865 |
-| F7 | LinkNode creation (`symlink`, link-preserving move) | ROADMAP | §3 LinkNode | nodes.py (no link writer); trd.md:251-252 |
+| F6 | Native server-side move via `/transfers` (atomic `mv`) | ROADMAP | §5 moveNode | filesystem.py:1349-1399; trd.md:216,617 |
+| F7 | LinkNode creation (`symlink`, link-preserving move) | ROADMAP | §3 LinkNode | nodes.py (no link writer); trd.md:262-267,625 |
 | F8 | `xsi:type` QName prefix trusted un-resolved; update deny-list omits IVOA server-computed timestamps | FIDELITY / hardening | §3 xsi:type; §3.2 props | nodes.py:320-353, 69-84 |
 | F9 | Protocol IDs, direction keywords, security-method IDs, capability standard-IDs, XML namespace/version — **all correct & complete for scope** | FIDELITY (pass) | §3.5/§3.6/§8 | negotiate.py:26-27; capabilities.py:21-29; nodes.py:33-34,45 |
 | F10 | `/pkg` bulk download; `/async-delete`; public property-update API | ROADMAP | (OpenCADC ext.) | trd.md:200-208 |
@@ -182,42 +182,25 @@ reading is intentional and documented (errors.py:255-260). No change needed.
 
 ## 3. Correctness gaps (in scope now)
 
-### F1 — `mv` of a LinkNode does not recreate the link (highest-value)
+### F1 — LinkNode move is explicitly unsupported (resolved)
 
-**TRD §6 (trd.md:249):** *"Client-derived move recreates the LinkNode at the
-destination before deleting the source."* **TRD §6 (trd.md:248):** *"Copying a
-LinkNode materializes its target bytes as a DataNode."* So the contract
-*distinguishes* copy (materialize bytes) from move (preserve the link).
+As originally evaluated, TRD §6 promised that client-derived move recreated a
+LinkNode, while the implementation instead relayed the target bytes into a new
+DataNode and then deleted the source link. That behavior was a correctness gap:
+the repository had no LinkNode creation primitive, so the promise could not be
+implemented.
 
-**Implementation:** `mv` (filesystem.py:838-865) computes
-`recursive = recursive or self.isdir(source)`; a LinkNode is `type="other"`, so
-`isdir` is false and `mv` calls `self.copy(...)` → fsspec `_copy` →
-`_cp_file` (filesystem.py:804-836). `_cp_file` treats a non-directory source as
-bytes and runs the GET→PUT relay, producing a **DataNode** at the destination
-(the server resolves the internal link's bytes during `pullFromVoSpace`). It
-then deletes the source link. **Result: a moved LinkNode becomes a DataNode of
-the target's bytes — copy semantics, not the link-recreation the TRD promises.**
+That defect and promise are superseded. Current `mv` resolves source metadata
+before destination handling and raises `NotImplementedError` for a LinkNode
+before copy, delete, rollback, or cleanup mutation. This applies when the
+destination is absent, exists, or is the source path itself. Copying a LinkNode
+continues to materialize its target bytes as a DataNode.
 
-Crucially, the TRD clause is **unimplementable as written**: link creation is
-"Unsupported" (trd.md:252, "public link creation … are unsupported") and there
-is no link-writer in nodes.py. So the contract asserts behavior the codebase
-cannot perform.
-
-The matching research doc repeats the unimplementable description
-(vosfs-v030-fsspec-matrix.md:110, "`_mv_file` … recreate the LinkNode").
-
-**Why CORRECTNESS-FIX (in scope now):** the fix is a *contract/spec
-reconciliation* — exactly what this analysis feeds. Pick one:
-
-- (a) reword TRD §6 so a link move materializes bytes like copy (matches
-  current, tested code); **or**
-- (b) reword TRD §6 so `mv` of a LinkNode raises `NotImplementedError` (honest:
-  link-preservation is impossible without link creation).
-
-Recreating the link is a **roadmap** item (F7/#63), not a v0.3.0 fix.
-IVOA relevance: LinkNode is an IVOA §3 node type and moveNode is an IVOA §5
-operation; the divergence is in how vosfs handles an IVOA node type under move.
-Ties to **#63 (LinkNode)**.
+The resolution selected the previously recommended unsupported behavior rather
+than byte-materializing move semantics. LinkNode creation and link-preserving
+move remain outside the current profile after #202 was closed as not planned.
+IVOA relevance remains: LinkNode is an IVOA §3 node type and moveNode is an IVOA
+§5 operation. Ties to **#63 (LinkNode)** and its implementation ticket #260.
 
 ### (No other functional correctness gap found)
 
@@ -251,7 +234,7 @@ point.
 | Paginated / sorted listing | Yes (trd.md:204) | **Impossible** — OpenCADC declares pagination unsupported and *throws*; `sort`/`order` throw | fsspec-matrix.md:37; supported-api.md:84 |
 | Structured/Unstructured views | Yes (trd.md:240-242) | No — OpenCADC normalizes to base DataNode | supported-api.md:101 |
 | Permission / generic property writes | Yes (trd.md:251,255-258) | Partial primitive already exists (private POST) → **F10/#65** | supported-api.md:86 |
-| LinkNode creation | Yes (trd.md:252) | Possible — OpenCADC supports it → **F7 roadmap/#63** | supported-api.md:100 |
+| LinkNode creation | Yes (trd.md:266-267,625) | Possible — OpenCADC supports it → **F7 roadmap/#63** | supported-api.md:100 |
 | `/pkg` package download | Yes (trd.md:202) | Possible — OpenCADC supports → **F10 roadmap** | supported-api.md:70 |
 | `/async-delete`, `/async-setprops` | Yes (trd.md:200) | Possible but async UWS → **F10 roadmap** | supported-api.md:68-69 |
 
@@ -269,8 +252,8 @@ implementation gates** (trd.md:626-628), and OpenCADC server support.
 
 | Item | Value | Server support | New contract needs | Issue link |
 |---|---|---|---|---|
-| **F6** Native async move via `/transfers` | Atomic `mv`; removes the client copy+delete window (filesystem.py:860-864 leaves both paths on partial failure) | OpenCADC **implements** same-service move (supported-api.md:92) | Async UWS phase-start/poll/abort lifecycle (all currently trd.md:208 excluded) | new; complements move semantics |
-| **F7** LinkNode creation | Real `symlink`; satisfies TRD §6 link-recreation clause (resolves F1 option-c) | OpenCADC supports LinkNode create (supported-api.md:100) | `build_link_document` writer + PUT LinkNode + external/internal target policy | **extends #63** |
+| **F6** Native async move via `/transfers` | Atomic `mv`; removes the client copy+delete window (filesystem.py:1349-1399) | OpenCADC **implements** same-service move (supported-api.md:92) | Async UWS phase-start/poll/abort lifecycle (trd.md:216,617 excludes it) | new; complements move semantics |
+| **F7** LinkNode creation | Could enable real `symlink` and link-preserving move under a future capability contract. | OpenCADC supports LinkNode create (supported-api.md:100) | `build_link_document` writer + PUT LinkNode + external/internal target policy | **extends #63** |
 | **F10a** Public node-update / property-write API | Exposes the *already-present* private POST primitive (nodes.py:255-281) for titles/descriptions | OpenCADC POST update supported (supported-api.md:86) | Public method + allowed-property policy surface | **extends #65** |
 | **F10b** `/pkg` bulk download | Efficient recursive `get` of a container as TAR/ZIP | OpenCADC supports (supported-api.md:70) | Package-view transfer + stream contract | new |
 | **F10c** `/async-delete` recursive rm | Fewer round-trips than client leaves-first walk | OpenCADC supports (supported-api.md:68) | Async UWS lifecycle | new |
@@ -308,13 +291,13 @@ implementation gates** (trd.md:626-628), and OpenCADC server support.
 
 | Rank | Finding | Class | One-line rationale | Issue |
 |---|---|---|---|---|
-| 1 | **F1** `mv`(LinkNode) materializes bytes; TRD §6 link-recreation clause is unimplementable | CORRECTNESS-FIX | Contract asserts behavior the code can't do — reword to match tested copy-semantics or raise `NotImplementedError` | **#63** |
+| 1 | **F1** LinkNode move rejection | CORRECTNESS-FIX (resolved) | Source metadata is resolved and `NotImplementedError` is raised before mutation. | **#63 / #260** |
 | 2 | **F2** source `mtime`/`modified` from `#mtime` then fall back to `#date` | FIDELITY | Aligns with the IVOA-canonical modification property at zero behavior change in-profile | — |
 | 3 | **F3** complete `_KNOWN_FAULTS` (TypeNotSupported, LinkFound, ViewNotSupported, ProtocolNotSupported, InvalidToken, InvalidData, InternalFault) | FIDELITY | Zero-cost, in-scope diagnostic fidelity on `VOSpaceError.fault` | **#113** |
 | 4 | **F4** label `#MD5`/`#contenttype` as OpenCADC extensions in the spec | FIDELITY (doc) | Prevents mis-reading OpenCADC URIs as IVOA-standard core properties | — |
 | 5 | **F5** document each exclusion with its *server-side* reason too | DELIBERATE-EXCLUSION | Proves exclusions are conscious + often doubly-safe (server throws/404s) | — |
 | 6 | **F6** native async server-side move | ROADMAP | Only path to atomic `mv`; OpenCADC already implements move | new (rel. #65) |
-| 7 | **F7** LinkNode creation primitive | ROADMAP | Enables real `symlink` and satisfies the F1 §6 clause properly | **extends #63** |
+| 7 | **F7** LinkNode creation primitive | ROADMAP | Could enable real `symlink` and link-preserving move under a future contract. | **extends #63** |
 | 8 | **F8** xsi:type resolution + timestamp deny-list hardening | FIDELITY/hardening | Cheap defense-in-depth on parse + private update primitive | **#113 + #65** |
 
 ---
@@ -327,13 +310,10 @@ namespace/version all match IVOA 2.1 exactly for the operations it implements
 (§2.3-2.7). The exclusions are genuinely conscious and mostly reinforced by
 OpenCADC's own limits (§4).
 
-The **single most important correctness gap is F1**: the TRD promises that a
-client-derived move "recreates the LinkNode at the destination"
-(trd.md:249), but the implementation has no link-creation primitive (link
-creation is Unsupported, trd.md:252), so `mv` of a LinkNode instead materializes
-the target's bytes into a DataNode via the copy relay (filesystem.py:838-865 →
-804-836). The contract therefore describes unimplementable behavior; the
-in-scope fix is to reconcile TRD §6 with the code (materialize-bytes or
-`NotImplementedError`), and proper link-recreation becomes a roadmap item under
-**#63**. Everything else is fidelity polish (F2-F4, F8), exclusion
-documentation (F5), or roadmap (F6-F7-F10).
+The **single most important correctness gap, F1, is resolved**: the TRD and
+implementation now classify LinkNode move as unsupported and raise
+`NotImplementedError` after source resolution but before mutation. Copying a
+LinkNode still materializes target bytes, while LinkNode creation and
+link-preserving move remain outside the current profile. Everything else is
+fidelity polish (F2-F4, F8), exclusion documentation (F5), or roadmap
+(F6-F7-F10).

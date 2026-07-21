@@ -46,7 +46,8 @@ finally:
 | `cat_file`, `get`, `open("rb")` | Whole-object staged reads |
 | `pipe_file`, `put`, `open("wb")` | Whole-object staged writes |
 | `mkdir`, `makedirs`, `rm`, `rmdir` | Namespace creation and deletion |
-| `cp`, `mv` | Client-side copy and move |
+| `cp` | Client-side copy; copying a LinkNode materializes target bytes |
+| `mv` | DataNode/ContainerNode copy/recreate then delete; LinkNode move raises `NotImplementedError` before mutation |
 | Remote byte ranges, append modes, FUSE | Unsupported |
 
 `vosfs` targets the OpenCADC VOSpace profile only; it does not claim generic
