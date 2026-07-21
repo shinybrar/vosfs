@@ -1,5 +1,10 @@
 # uv workspaces and Release Please: primary-source research
 
+> **Historical, non-normative snapshot (2026-07-17).** This note records
+> observations from that date. It does not define current repository setup or
+> release policy. Use [CONTRIBUTING.md](../../CONTRIBUTING.md) and the
+> [release guide](../agents/release.md) for current requirements.
+
 Researched: 2026-07-17
 
 This note verifies the repository's two-package uv workspace and manifest-mode

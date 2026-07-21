@@ -75,10 +75,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$VALIDATED_SHA"
 
-          if [[ "$TARGET" == "dev" ]]; then
-            git fetch --no-tags origin main:refs/remotes/origin/main
-            test "$VALIDATED_SHA" = "$(git rev-parse origin/main)"
-          else
+          if [[ "$TARGET" == "release" ]]; then
             gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
               | jq -e --arg tag "$RELEASE_TAG" \
                 '.tag_name == $tag and .draft == false' >/dev/null
@@ -93,42 +90,78 @@ jobs:
       - name: Install locked documentation toolchain
         run: uv sync --locked
 
-      - name: Strictly build documentation
-        run: uv run --locked zensical build --strict --clean
-
       - name: Publish documentation
         env:
           RELEASE: ${{ steps.target.outputs.release }}
           VALIDATED_SHA: ${{ github.event.client_payload.sha }}
           VERSION: ${{ steps.target.outputs.version }}
         run: |
+          set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if [[ "$RELEASE" == "true" ]]; then
-            uv run --locked mike deploy \
-              --config-file zensical.toml \
-              --remote origin \
-              --branch gh-pages \
-              --push \
-              --update-aliases \
-              "$VERSION" latest
-            uv run --locked mike set-default \
-              --config-file zensical.toml \
-              --remote origin \
-              --branch gh-pages \
-              --push \
-              latest
-          else
-            git fetch --no-tags origin main:refs/remotes/origin/main
-            test "$VALIDATED_SHA" = "$(git rev-parse origin/main)"
-            uv run --locked mike deploy \
-              --config-file zensical.toml \
-              --remote origin \
-              --branch gh-pages \
-              --push \
-              --update-aliases \
-              dev
-          fi
+          for attempt in 1 2 3; do
+            if [[ "$RELEASE" == "false" ]]; then
+              git fetch --no-tags origin main:refs/remotes/origin/main
+              if [[ "$VALIDATED_SHA" != "$(git rev-parse origin/main)" ]]; then
+                echo "dev documentation superseded by newer main; skipping"
+                exit 0
+              fi
+            fi
+
+            if [[ -n "$(git ls-remote --heads origin refs/heads/gh-pages)" ]]; then
+              git fetch --no-tags origin \
+                gh-pages:refs/remotes/origin/gh-pages
+              git update-ref refs/heads/gh-pages refs/remotes/origin/gh-pages
+            else
+              git update-ref -d refs/remotes/origin/gh-pages
+              git update-ref -d refs/heads/gh-pages
+            fi
+
+            uv run --locked zensical build --strict --clean
+            if [[ "$RELEASE" == "true" ]]; then
+              uv run --locked mike deploy \
+                --config-file zensical.toml \
+                --remote origin \
+                --branch gh-pages \
+                --update-aliases \
+                "$VERSION" latest
+              uv run --locked mike set-default \
+                --config-file zensical.toml \
+                --remote origin \
+                --branch gh-pages \
+                latest
+            else
+              uv run --locked mike deploy \
+                --config-file zensical.toml \
+                --remote origin \
+                --branch gh-pages \
+                --update-aliases \
+                dev
+
+              git fetch --no-tags origin main:refs/remotes/origin/main
+              if [[ "$VALIDATED_SHA" != "$(git rev-parse origin/main)" ]]; then
+                echo "dev documentation superseded by newer main; skipping"
+                exit 0
+              fi
+            fi
+
+            if push_output="$(git push origin gh-pages 2>&1)"; then
+              echo "$push_output"
+              break
+            fi
+            echo "$push_output" >&2
+            if [[ "$push_output" != *"[rejected]"* ]] || \
+              [[ "$push_output" != *"(non-fast-forward)"* && \
+                "$push_output" != *"(fetch first)"* ]]; then
+              exit 1
+            fi
+            if [[ "$attempt" == 3 ]]; then
+              echo "gh-pages push conflicted after 3 attempts" >&2
+              exit 1
+            fi
+            echo "gh-pages changed concurrently; rebuilding attempt $((attempt + 1))"
+          done
 
           uv run --locked mike list --config-file zensical.toml

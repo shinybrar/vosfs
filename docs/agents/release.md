@@ -39,7 +39,8 @@ that package with `uv build --no-sources --package`.
 The publisher requires exactly one wheel and one source distribution. Existing
 assets may contain only those expected names. Draft and mutable releases replace
 both assets with `--clobber`; the workflow verifies the final asset set exactly,
-then publishes a draft. A rerun of an already-published immutable release
+then publishes the release only if it is still a draft. A rerun of an
+already-published immutable release
 verifies the same two expected assets without attempting a forbidden mutation.
 Rerunning the same workflow run is the only recovery path and remains safe after
 a partial upload, publication, or failed documentation dispatch. A different
