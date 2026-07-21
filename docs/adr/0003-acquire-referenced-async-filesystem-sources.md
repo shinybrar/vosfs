@@ -108,11 +108,18 @@ unchanged outer control flow when the invocation itself was interrupted. A
 source is therefore never exited while its invocation-owned iterator is still
 running.
 
-Apart from that tree-only adapter, V1 adds no numeric `130` contract, general
-shield task, cleanup timeout, background loop, or general runner thread.
-Source cleanup itself is not shielded. An exit that returns or raises permits
-later exits; an exit that never returns can prevent cleanup completion and
-propagation.
+Verified recursive `cp` applies the same rule to each current walk
+materialization or filesystem operation: the invocation task shields and, when
+interrupted, drains that one operation before staging and source cleanup. This
+is required because cleanup cannot race invocation-owned reads, writes, or
+iterators. It does not start later work, retry, add concurrency, or convert the
+escaping control flow to a command status.
+
+Apart from the tree iterator and recursive-copy current-operation adapters, V1
+adds no numeric `130` contract, general cleanup shield, cleanup timeout,
+background loop, or general runner thread. Source cleanup itself is not
+shielded. An exit that returns or raises permits later exits; an exit that never
+returns can prevent cleanup completion and propagation.
 
 Outcome precedence is:
 

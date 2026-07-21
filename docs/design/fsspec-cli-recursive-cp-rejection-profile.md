@@ -2,7 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-Status: **Locked positive contract; production remains source-free rejected until issue #286**
+Status: **Implemented locked positive contract**
 
 Question: [Research verified recursive cp -R across mapped filesystem sources](https://github.com/shinybrar/vosfs/issues/283)
 
@@ -28,9 +28,8 @@ same bounded source manifest, one-file host-local staging, and complete
 source-entry verification. Same-source, Local-to-remote, remote-to-Local, and
 remote-to-remote routes therefore have one observable contract.
 
-This profile deliberately replaces the prior rejection decision. Production
-MUST continue its current source-free rejection until issue #286 implements and
-tests the whole contract. This issue adds no recursive-copy command code.
+This profile replaces the prior rejection decision. Issue #286 implements and
+tests the complete contract through the public `App(sources).typer_app` seam.
 
 Multi-source copy, implicit or bare local operands, retries, transfer
 concurrency, progress output, JSON/YAML output, ownership, mode, timestamp or
@@ -377,10 +376,8 @@ ADR 0003 source-exit diagnostics in reverse-entry order.
 
 No destination entry is removed to simulate rollback.
 
-This required current-operation drain is a recursive-copy-specific exception
-to ADR 0003's present tree-only worker rule. Issue #286 MUST update ADR 0003 in
-the same implementation change; the positive command MUST NOT ship while the
-documents conflict. There is no timeout or background worker after source
+This required current-operation drain is the recursive-copy-specific extension
+recorded by ADR 0003. There is no timeout or background worker after source
 cleanup.
 
 ## 9. Matrix delta and implementation gate
@@ -391,10 +388,11 @@ distinct-name rows for every ordered pair of the three initial source forms.
 A `source` scope row means both operands use the same configured name. A
 `source pair` scope row means distinct configured names, and its source-form
 cell records the ordered source-to-destination forms. Source-form text exactly
-matches Section 3 of the matrix. Every new row is `unverified`; research
-inspection is not qualifying command evidence.
+matches Section 3 of the matrix. Research inspection alone was not qualifying
+command evidence. Issue #286 adds the required hermetic and isolated-wheel
+command evidence for every row.
 
-Issue #286 may promote a row only after hermetic tests through
+The implementation promotes a row only after hermetic tests through
 `App(sources).typer_app` cover:
 
 - both `-R` and `-r`, every route, target-resolution branch, existing-target

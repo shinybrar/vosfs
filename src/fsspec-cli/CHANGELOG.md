@@ -26,6 +26,10 @@
 * **fsspec-cli:** add verified same-source two-operand `cp` ([#137](https://github.com/shinybrar/vosfs/issues/137)).
   Passing rows prove target resolution, replacement, bytes, diagnostics, cleanup,
   and partial state only — not POSIX mode, ownership, link identity, or timestamps.
+* **fsspec-cli:** add verified two-operand recursive `cp -R` / `cp -r`
+  ([#286](https://github.com/shinybrar/vosfs/issues/286)).
+  All admitted routes use a bounded manifest, one-file host-local staging, and
+  complete source and destination metadata verification.
 
 ### Changed
 

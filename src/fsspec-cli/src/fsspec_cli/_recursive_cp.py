@@ -1,0 +1,814 @@
+"""Verified two-operand recursive ``cp``."""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import os
+import tempfile
+from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping
+from contextlib import suppress
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import TYPE_CHECKING, TypeVar, cast
+
+import typer
+
+from ._command import _MappedOperand, _render_backend_failure, _usage_error
+from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
+from ._path import _lexical_basename
+from ._sources import _SourceInvocation
+
+if TYPE_CHECKING:
+    from fsspec.asyn import AsyncFileSystem
+
+    from ._app import AsyncFilesystemSource
+
+_MAX_ENTRIES = 10_000
+_WALK_ROW_LENGTH = 3
+_TOKEN_ALIASES = (
+    ("etag", ("ETag", "etag")),
+    ("md5", ("md5",)),
+    ("content-md5", ("content-md5", "content_md5")),
+    ("checksum", ("checksum",)),
+)
+_ValueT = TypeVar("_ValueT")
+
+
+class _IncompatibleResultError(Exception):
+    pass
+
+
+class _UnsupportedEntryError(Exception):
+    pass
+
+
+class _EntryLimitError(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class _ManifestEntry:
+    relative: str
+    path: str
+    kind: str
+    size: int | None
+    tokens: tuple[tuple[str, str | bytes], ...]
+
+
+@dataclass(frozen=True)
+class _Manifest:
+    entries: tuple[_ManifestEntry, ...]
+
+
+@dataclass(frozen=True)
+class _Failure:
+    operand: _MappedOperand
+    category: str | None = None
+    error: Exception | None = None
+    residue: bool = False
+    rendered: bool = False
+
+
+@dataclass(frozen=True)
+class _Rows:
+    values: list[object]
+
+
+@dataclass(frozen=True)
+class _WorkerError:
+    error: BaseException
+
+
+def _canonical_operand(
+    command: str,
+    operand: _MappedOperand,
+    *,
+    source: bool,
+) -> _MappedOperand:
+    parts = operand.path.split("/")
+    if any(part in {".", ".."} for part in parts):
+        rendered = _render_diagnostic_value(operand.spelling)
+        _usage_error(command, f"{rendered}: dot segment unsupported")
+    path = "/" + "/".join(part for part in parts if part)
+    if source and path == "/":
+        rendered = _render_diagnostic_value(operand.spelling)
+        _usage_error(command, f"{rendered}: source root unsupported")
+    return replace(operand, path=path)
+
+
+async def _await_current(awaitable: Awaitable[_ValueT]) -> _ValueT:
+    """Shield and drain one current operation before propagating control flow."""
+    task = asyncio.ensure_future(awaitable)
+    try:
+        return await asyncio.shield(task)
+    except BaseException:
+        while not task.done():
+            with suppress(BaseException):
+                await asyncio.shield(task)
+        with suppress(BaseException):
+            task.result()
+        raise
+
+
+async def _call(
+    filesystem: AsyncFileSystem,
+    operation: str,
+    *args: object,
+    **kwargs: object,
+) -> object:
+    method = getattr(filesystem, operation, None)
+    if not callable(method):
+        raise NotImplementedError
+    result = method(*args, **kwargs)
+    if not inspect.isawaitable(result):
+        raise NotImplementedError
+    return await _await_current(result)
+
+
+def _tokens(info: Mapping[object, object]) -> tuple[tuple[str, str | bytes], ...]:
+    tokens: list[tuple[str, str | bytes]] = []
+    for normalized, aliases in _TOKEN_ALIASES:
+        present = [alias for alias in aliases if alias in info]
+        if len(present) > 1:
+            raise _IncompatibleResultError
+        if present:
+            value = info[present[0]]
+            if type(value) is str or type(value) is bytes:
+                tokens.append((normalized, value))
+    return tuple(tokens)
+
+
+def _entry(
+    relative: str,
+    path: str,
+    info: object,
+    *,
+    expected_kind: str | None = None,
+) -> _ManifestEntry:
+    if not isinstance(info, Mapping) or info.get("name") != path:
+        raise _IncompatibleResultError
+    typed_info = cast("Mapping[object, object]", info)
+    islink = typed_info.get("islink", False)
+    if type(islink) is not bool:
+        raise _IncompatibleResultError
+    kind = typed_info.get("type")
+    if type(kind) is not str:
+        raise _IncompatibleResultError
+    if islink or kind not in {"directory", "file"}:
+        raise _UnsupportedEntryError
+    if expected_kind is not None and kind != expected_kind:
+        raise _IncompatibleResultError
+    size = None
+    if kind == "file":
+        size = typed_info.get("size")
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            raise _IncompatibleResultError
+    return _ManifestEntry(relative, path, kind, size, _tokens(typed_info))
+
+
+def _raw_row_entry_count(value: object) -> int | None:
+    if type(value) is not tuple or len(value) != _WALK_ROW_LENGTH:
+        return None
+    _root, directories, files = value
+    if not isinstance(directories, Mapping) or not isinstance(files, Mapping):
+        return None
+    return len(directories) + len(files)
+
+
+def _materialize_sync(iterator: Iterator[object]) -> _Rows | _WorkerError:
+    values: list[object] = []
+    count = 1
+    outcome: _Rows | _WorkerError = _Rows(values)
+    try:
+        for value in iterator:
+            values.append(value)
+            increment = _raw_row_entry_count(value)
+            if increment is None:
+                break
+            count += increment
+            if count > _MAX_ENTRIES:
+                outcome = _WorkerError(_EntryLimitError())
+                break
+    except BaseException as error:  # noqa: BLE001 - return across task as data.
+        outcome = _WorkerError(error)
+    close = getattr(iterator, "close", None)
+    if callable(close):
+        try:
+            close()
+        except BaseException as error:  # noqa: BLE001 - return across task as data.
+            if isinstance(outcome, _Rows):
+                outcome = _WorkerError(error)
+    return outcome
+
+
+async def _sync_rows(iterator: Iterator[object]) -> list[object]:
+    worker = asyncio.create_task(asyncio.to_thread(_materialize_sync, iterator))
+    try:
+        outcome = await asyncio.shield(worker)
+    except BaseException:
+        while not worker.done():
+            with suppress(BaseException):
+                await asyncio.shield(worker)
+        with suppress(BaseException):
+            worker.result()
+        raise
+    if isinstance(outcome, _WorkerError):
+        raise outcome.error
+    return outcome.values
+
+
+async def _close_async_iterator(iterator: AsyncIterator[object]) -> None:
+    close = getattr(iterator, "aclose", None)
+    if not callable(close):
+        return
+    result = close()
+    if inspect.isawaitable(result):
+        await _await_current(result)
+
+
+async def _async_rows(iterator: AsyncIterator[object]) -> list[object]:
+    values: list[object] = []
+    count = 1
+    try:
+        while True:
+            try:
+                value = await _await_current(anext(iterator))
+            except StopAsyncIteration:
+                break
+            values.append(value)
+            increment = _raw_row_entry_count(value)
+            if increment is None:
+                break
+            count += increment
+            if count > _MAX_ENTRIES:
+                raise _EntryLimitError  # noqa: TRY301 - typed worker outcome.
+    except BaseException:
+        with suppress(BaseException):
+            await _close_async_iterator(iterator)
+        raise
+    await _close_async_iterator(iterator)
+    return values
+
+
+async def _walk_rows(filesystem: AsyncFileSystem, path: str) -> list[object]:
+    method = getattr(filesystem, "_walk", None)
+    if not callable(method):
+        raise NotImplementedError
+    result = method(path, detail=True, on_error="raise")
+    if isinstance(result, AsyncIterator):
+        return await _async_rows(result)
+    if not inspect.isawaitable(result):
+        raise _IncompatibleResultError
+    resolved = await _await_current(result)
+    if not isinstance(resolved, Iterator):
+        raise _IncompatibleResultError
+    return await _sync_rows(resolved)
+
+
+def _child_path(root: str, name: str) -> str:
+    return f"/{name}" if root == "/" else f"{root}/{name}"
+
+
+def _relative_path(root: str, path: str) -> str:
+    return path[len(root) + 1 :] if root != "/" else path[1:]
+
+
+def _manifest_from_rows(  # noqa: C901 - exact manifest validation branches.
+    source_path: str,
+    source_info: object,
+    values: list[object],
+) -> _Manifest:
+    root_entry = _entry("", source_path, source_info, expected_kind="directory")
+    entries = {"": root_entry}
+    rows: dict[str, tuple[Mapping[object, object], Mapping[object, object]]] = {}
+    for value in values:
+        if type(value) is not tuple or len(value) != _WALK_ROW_LENGTH:
+            raise _IncompatibleResultError
+        root, directories, files = value
+        if (
+            type(root) is not str
+            or not root.startswith("/")
+            or root.rstrip("/") != root
+            or "//" in root
+            or "\0" in root
+            or "\n" in root
+            or not isinstance(directories, Mapping)
+            or not isinstance(files, Mapping)
+            or root in rows
+        ):
+            raise _IncompatibleResultError
+        rows[root] = (
+            cast("Mapping[object, object]", directories),
+            cast("Mapping[object, object]", files),
+        )
+
+    expected_roots = {source_path}
+    for root, (directories, files) in rows.items():
+        if set(directories).intersection(files):
+            raise _IncompatibleResultError
+        for collection, kind in ((directories, "directory"), (files, "file")):
+            for name, info in collection.items():
+                if (
+                    type(name) is not str
+                    or not name
+                    or "/" in name
+                    or "\0" in name
+                    or "\n" in name
+                ):
+                    raise _IncompatibleResultError
+                path = _child_path(root, name)
+                relative = _relative_path(source_path, path)
+                if relative in entries:
+                    raise _IncompatibleResultError
+                entries[relative] = _entry(
+                    relative,
+                    path,
+                    info,
+                    expected_kind=kind,
+                )
+                if kind == "directory":
+                    expected_roots.add(path)
+                if len(entries) > _MAX_ENTRIES:
+                    raise _EntryLimitError
+    if set(rows) != expected_roots:
+        raise _IncompatibleResultError
+    return _Manifest(tuple(sorted(entries.values(), key=lambda item: item.relative)))
+
+
+async def _manifest(
+    filesystem: AsyncFileSystem,
+    path: str,
+    source_info: object,
+) -> _Manifest:
+    return _manifest_from_rows(path, source_info, await _walk_rows(filesystem, path))
+
+
+def _render_operand(command: str, operand: _MappedOperand, category: str) -> None:
+    prefix = _render_diagnostic_prefix(command)
+    rendered = _render_diagnostic_value(operand.spelling)
+    typer.echo(f"{prefix} {rendered}: {category}", err=True, color=True)
+
+
+def _render_failure(command: str, failure: _Failure) -> None:
+    if failure.rendered:
+        return
+    if failure.category is None and failure.error is not None:
+        _render_backend_failure(command, failure.operand, failure.error)
+        return
+    suffix = "; destination residue may remain" if failure.residue else ""
+    _render_operand(command, failure.operand, f"{failure.category}{suffix}")
+
+
+def _read_failure(operand: _MappedOperand, error: Exception) -> _Failure:
+    return _Failure(operand, error=error)
+
+
+def _staging_failure(source: _MappedOperand, error: Exception) -> _Failure:
+    rendered_class = _render_diagnostic_value(type(error).__name__)
+    return _Failure(source, f"staging failure ({rendered_class})", residue=True)
+
+
+async def _optional_info(
+    filesystem: AsyncFileSystem,
+    path: str,
+) -> tuple[object | None, Exception | None]:
+    try:
+        return await _call(filesystem, "_info", path), None
+    except FileNotFoundError:
+        return None, None
+    except Exception as error:  # noqa: BLE001 - classify read boundary.
+        return None, error
+
+
+def _classify_source_info(
+    operand: _MappedOperand,
+    info: object,
+) -> _Failure | None:
+    if not isinstance(info, Mapping):
+        return _Failure(operand, "incompatible result")
+    typed_info = cast("Mapping[object, object]", info)
+    kind = typed_info.get("type")
+    if type(kind) is not str:
+        return _Failure(operand, "incompatible result")
+    islink = typed_info.get("islink", False)
+    if type(islink) is not bool:
+        return _Failure(operand, "incompatible result")
+    if islink or kind not in {"directory", "file"}:
+        return _Failure(operand, "unsupported entry type")
+    if kind == "file":
+        return _Failure(operand, "not a directory")
+    return None
+
+
+def _classify_existing(  # noqa: PLR0911 - stable metadata categories.
+    operand: _MappedOperand,
+    path: str,
+    info: object,
+    *,
+    expected: str | None = None,
+    require_name: bool = True,
+) -> tuple[_ManifestEntry | None, _Failure | None]:
+    if not require_name:
+        if not isinstance(info, Mapping):
+            return None, _Failure(operand, "incompatible result")
+        typed_info = cast("Mapping[object, object]", info)
+        kind = typed_info.get("type")
+        if type(kind) is not str:
+            return None, _Failure(operand, "incompatible result")
+        islink = typed_info.get("islink", False)
+        if type(islink) is not bool:
+            return None, _Failure(operand, "incompatible result")
+        if islink or kind not in {"directory", "file"}:
+            return None, _Failure(operand, "unsupported entry type")
+        return _ManifestEntry("", path, kind, None, ()), None
+    try:
+        entry = _entry("", path, info)
+    except _UnsupportedEntryError:
+        return None, _Failure(operand, "unsupported entry type")
+    except _IncompatibleResultError:
+        return None, _Failure(operand, "incompatible result")
+    if expected is not None and entry.kind != expected:
+        return None, _Failure(operand, "destination type conflict")
+    return entry, None
+
+
+async def _resolve_target(  # noqa: C901, PLR0911, PLR0912 - locked resolution.
+    source: _MappedOperand,
+    destination: _MappedOperand,
+    source_filesystem: AsyncFileSystem,
+    destination_filesystem: AsyncFileSystem,
+) -> tuple[str, _Failure | None]:
+    destination_info, error = await _optional_info(
+        destination_filesystem, destination.path
+    )
+    if error is not None:
+        return destination.path, _read_failure(destination, error)
+
+    known_parent = None
+    resolved = destination.path
+    resolved_info = destination_info
+    if destination_info is not None:
+        entry, failure = _classify_existing(
+            destination,
+            destination.path,
+            destination_info,
+            require_name=False,
+        )
+        if failure is not None:
+            return resolved, failure
+        if entry is None:
+            return resolved, _Failure(destination, "incompatible result")
+        if entry.kind == "directory":
+            known_parent = destination.path
+            resolved = _child_path(destination.path, _lexical_basename(source.path))
+            resolved_info, error = await _optional_info(
+                destination_filesystem, resolved
+            )
+            if error is not None:
+                return resolved, _read_failure(destination, error)
+
+    parent = resolved.rpartition("/")[0] or "/"
+    if parent != known_parent:
+        parent_info, error = await _optional_info(destination_filesystem, parent)
+        if error is not None:
+            return resolved, _read_failure(destination, error)
+        if parent_info is None:
+            return resolved, _Failure(destination, "not found")
+        parent_entry, failure = _classify_existing(
+            destination, parent, parent_info, require_name=False
+        )
+        if failure is not None:
+            if failure.category == "unsupported entry type":
+                return resolved, _Failure(destination, "not a directory")
+            return resolved, failure
+        if parent_entry is None:
+            return resolved, _Failure(destination, "incompatible result")
+        if parent_entry.kind != "directory":
+            return resolved, _Failure(destination, "not a directory")
+
+    if resolved_info is not None:
+        root_entry, failure = _classify_existing(
+            destination, resolved, resolved_info, require_name=False
+        )
+        if failure is not None:
+            return resolved, failure
+        if root_entry is None:
+            return resolved, _Failure(destination, "incompatible result")
+        if root_entry.kind == "file":
+            return resolved, _Failure(destination, "destination type conflict")
+
+    same_namespace = (
+        source.name == destination.name or source_filesystem is destination_filesystem
+    )
+    if same_namespace and (
+        resolved == source.path or resolved.startswith(f"{source.path}/")
+    ):
+        return resolved, _Failure(destination, "destination is inside source")
+    return resolved, None
+
+
+def _destination_path(root: str, relative: str) -> str:
+    return root if not relative else _child_path(root, relative)
+
+
+async def _preflight_destination(
+    destination: _MappedOperand,
+    filesystem: AsyncFileSystem,
+    root: str,
+    manifest: _Manifest,
+) -> tuple[tuple[_ManifestEntry, ...], _Failure | None]:
+    missing: list[_ManifestEntry] = []
+    for entry in manifest.entries:
+        path = _destination_path(root, entry.relative)
+        info, error = await _optional_info(filesystem, path)
+        if error is not None:
+            return (), _read_failure(destination, error)
+        if info is None:
+            if entry.kind == "directory":
+                missing.append(entry)
+            continue
+        existing, failure = _classify_existing(destination, path, info)
+        if failure is not None:
+            return (), failure
+        if existing is None:
+            return (), _Failure(destination, "incompatible result")
+        if existing.kind != entry.kind:
+            return (), _Failure(destination, "destination type conflict")
+    return tuple(missing), None
+
+
+def _cleanup_staging(command: str, source: _MappedOperand, path: str) -> bool:
+    try:
+        Path(path).unlink(missing_ok=True)
+    except Exception as error:  # noqa: BLE001 - diagnostic boundary.
+        rendered_class = _render_diagnostic_value(type(error).__name__)
+        _render_operand(
+            command,
+            source,
+            "staging cleanup failure "
+            f"({rendered_class}); host staging residue may remain; "
+            "destination residue may remain",
+        )
+        return False
+    return True
+
+
+def _cleanup_under_control(command: str, source: _MappedOperand, path: str) -> None:
+    with suppress(BaseException):  # Original control flow wins.
+        _cleanup_staging(command, source, path)
+
+
+async def _transfer(  # noqa: C901, PLR0912, PLR0913 - locked transfer phases.
+    command: str,
+    source: _MappedOperand,
+    destination: _MappedOperand,
+    source_filesystem: AsyncFileSystem,
+    destination_filesystem: AsyncFileSystem,
+    source_entry: _ManifestEntry,
+    destination_path: str,
+) -> _Failure | None:
+    temporary = None
+    try:
+        descriptor, temporary = tempfile.mkstemp(prefix="fsspec-cli-cp-recursive-")
+    except Exception as error:  # noqa: BLE001 - staging creation boundary.
+        return _staging_failure(source, error)
+
+    failure = None
+    try:
+        try:
+            os.close(descriptor)
+        except Exception as error:  # noqa: BLE001 - descriptor boundary.
+            failure = _staging_failure(source, error)
+
+        if failure is None:
+            try:
+                await _call(
+                    source_filesystem,
+                    "_get_file",
+                    source_entry.path,
+                    temporary,
+                )
+            except Exception:  # noqa: BLE001 - stable transfer category.
+                failure = _Failure(source, "transfer failure", residue=True)
+
+        if failure is None:
+            try:
+                staged_size = Path(temporary).stat().st_size  # noqa: ASYNC240
+            except Exception as error:  # noqa: BLE001 - staging stat boundary.
+                failure = _staging_failure(source, error)
+            else:
+                if staged_size != source_entry.size:
+                    failure = _Failure(source, "source changed", residue=True)
+
+        if failure is None:
+            try:
+                await _call(
+                    destination_filesystem,
+                    "_put_file",
+                    temporary,
+                    destination_path,
+                    mode="overwrite",
+                )
+            except Exception:  # noqa: BLE001 - stable mutation category.
+                failure = _Failure(destination, "mutation failure", residue=True)
+    except BaseException:
+        _cleanup_under_control(command, source, temporary)
+        raise
+
+    if failure is not None:
+        _render_failure(command, failure)
+    cleanup_succeeded = _cleanup_staging(command, source, temporary)
+    if failure is not None:
+        return replace(failure, rendered=True)
+    if not cleanup_succeeded:
+        return _Failure(source, rendered=True)
+    return None
+
+
+async def _mutate(  # noqa: PLR0913 - explicit copy context.
+    command: str,
+    source: _MappedOperand,
+    destination: _MappedOperand,
+    source_filesystem: AsyncFileSystem,
+    destination_filesystem: AsyncFileSystem,
+    root: str,
+    manifest: _Manifest,
+    missing_directories: tuple[_ManifestEntry, ...],
+) -> _Failure | None:
+    for entry in sorted(
+        missing_directories,
+        key=lambda item: (item.relative.count("/"), item.relative),
+    ):
+        try:
+            await _call(
+                destination_filesystem,
+                "_mkdir",
+                _destination_path(root, entry.relative),
+                create_parents=False,
+            )
+        except Exception:  # noqa: BLE001, PERF203 - stable mutation category.
+            return _Failure(destination, "mutation failure", residue=True)
+
+    for entry in manifest.entries:
+        if entry.kind != "file":
+            continue
+        failure = await _transfer(
+            command,
+            source,
+            destination,
+            source_filesystem,
+            destination_filesystem,
+            entry,
+            _destination_path(root, entry.relative),
+        )
+        if failure is not None:
+            return failure
+    return None
+
+
+async def _revalidate_source(
+    source: _MappedOperand,
+    filesystem: AsyncFileSystem,
+    frozen: _Manifest,
+) -> _Failure | None:
+    try:
+        current_info = await _call(filesystem, "_info", source.path)
+        current = await _manifest(filesystem, source.path, current_info)
+    except Exception:  # noqa: BLE001 - stable revalidation category.
+        return _Failure(source, "source revalidation failure", residue=True)
+    if current != frozen:
+        return _Failure(source, "source changed", residue=True)
+    return None
+
+
+def _shared_tokens_match(
+    source_tokens: tuple[tuple[str, str | bytes], ...],
+    destination_tokens: tuple[tuple[str, str | bytes], ...],
+) -> bool:
+    destination = dict(destination_tokens)
+    return all(
+        destination[name] == value
+        for name, value in source_tokens
+        if name in destination
+    )
+
+
+async def _verify_destination(
+    destination: _MappedOperand,
+    filesystem: AsyncFileSystem,
+    root: str,
+    manifest: _Manifest,
+) -> _Failure | None:
+    try:
+        for source_entry in manifest.entries:
+            path = _destination_path(root, source_entry.relative)
+            info = await _call(filesystem, "_info", path)
+            destination_entry = _entry(
+                source_entry.relative,
+                path,
+                info,
+                expected_kind=source_entry.kind,
+            )
+            if destination_entry.size != source_entry.size or not _shared_tokens_match(
+                source_entry.tokens, destination_entry.tokens
+            ):
+                return _Failure(destination, "verification failure", residue=True)
+    except Exception:  # noqa: BLE001 - stable verification category.
+        return _Failure(destination, "verification failure", residue=True)
+    return None
+
+
+async def _copy_tree(  # noqa: C901, PLR0911 - locked phase precedence.
+    command: str,
+    source: _MappedOperand,
+    destination: _MappedOperand,
+    source_filesystem: AsyncFileSystem,
+    destination_filesystem: AsyncFileSystem,
+) -> _Failure | None:
+    try:
+        source_info = await _call(source_filesystem, "_info", source.path)
+    except Exception as error:  # noqa: BLE001 - classify read boundary.
+        return _read_failure(source, error)
+    failure = _classify_source_info(source, source_info)
+    if failure is not None:
+        return failure
+
+    root, failure = await _resolve_target(
+        source,
+        destination,
+        source_filesystem,
+        destination_filesystem,
+    )
+    if failure is not None:
+        return failure
+
+    try:
+        manifest = await _manifest(source_filesystem, source.path, source_info)
+    except _UnsupportedEntryError:
+        return _Failure(source, "unsupported entry type")
+    except _EntryLimitError:
+        return _Failure(source, f"source tree exceeds {_MAX_ENTRIES} entries")
+    except _IncompatibleResultError:
+        return _Failure(source, "incompatible result")
+    except Exception as error:  # noqa: BLE001 - classify walk boundary.
+        return _read_failure(source, error)
+
+    missing, failure = await _preflight_destination(
+        destination, destination_filesystem, root, manifest
+    )
+    if failure is not None:
+        return failure
+    failure = await _mutate(
+        command,
+        source,
+        destination,
+        source_filesystem,
+        destination_filesystem,
+        root,
+        manifest,
+        missing,
+    )
+    if failure is not None:
+        return failure
+    failure = await _revalidate_source(source, source_filesystem, manifest)
+    if failure is not None:
+        return failure
+    return await _verify_destination(
+        destination,
+        destination_filesystem,
+        root,
+        manifest,
+    )
+
+
+async def _run_recursive_cp(
+    command: str,
+    source_operand: _MappedOperand,
+    destination_operand: _MappedOperand,
+    sources: Mapping[str, AsyncFilesystemSource],
+) -> None:
+    source = _canonical_operand(command, source_operand, source=True)
+    destination = _canonical_operand(command, destination_operand, source=False)
+    invocation = _SourceInvocation(command, sources)
+    succeeded = False
+    failure = None
+    try:
+        names = tuple(dict.fromkeys((source.name, destination.name)))
+        filesystems = await invocation.acquire(names)
+        if filesystems is not None:
+            failure = await _copy_tree(
+                command,
+                source,
+                destination,
+                filesystems[source.name],
+                filesystems[destination.name],
+            )
+            if failure is not None:
+                _render_failure(command, failure)
+            succeeded = failure is None
+    finally:
+        command_error = failure.error if failure is not None else None
+        cleanup_failed = await invocation.close_with_command_error(command_error)
+    if not succeeded or cleanup_failed:
+        raise typer.Exit(1)

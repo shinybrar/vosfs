@@ -87,7 +87,7 @@ type or protocol.
 | `info` | One normalized metadata dictionary plus backend-specific `extra` values |
 | `sign` (opt-in) | Backend-signed URL when the selected source implements `sign` |
 | `cat` | Concatenate mapped files (and stdin `-`) to stdout |
-| `cp` | Metadata-verified same-source, cross-source, and multi-source file copy (no `-R`) |
+| `cp` | Metadata-verified file copy; verified two-operand directory copy with `-R` / `-r` |
 | `mv` | Metadata-verified same-source file move, single or multi-file into a directory |
 | `mkdir` | Create directories; `-p` creates parents |
 | `rmdir` | Remove empty directories |
@@ -110,6 +110,14 @@ read metadata internally. `find` does not provide predicates, globbing, or
 recursive unless `--maxdepth N` bounds it; remote sources may perform one
 listing request for every reached directory. One top-level `_walk` invocation
 does not mean one remote request.
+
+`cp -R source:/directory destination:/target` and `cp -r` copy one directory
+through a bounded 10,000-entry manifest and one-file host-local staging. The
+command supports same-source and cross-source routes, preserves empty
+directories, rejects links and special entries before mutation, and verifies
+the source manifest plus destination metadata before success. It does not
+promise a snapshot, transaction, rollback, exact mirror, or POSIX metadata
+preservation.
 
 `info [--] name:/path` awaits one backend `_info` call and pretty-prints every
 normalized metadata field plus backend-specific values under `extra`. Sparse
