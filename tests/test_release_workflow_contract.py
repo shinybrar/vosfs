@@ -12,9 +12,12 @@ _PAGES = _WORKFLOWS / "pages.yml"
 def _step(workflow: str, name: str, next_name: str | None = None) -> str:
     """Return one named workflow step using stable step names as boundaries."""
     block = workflow.split(f"      - name: {name}\n", 1)[1]
-    if next_name is not None:
-        block = block.split(f"      - name: {next_name}\n", 1)[0]
-    return block
+    boundary = (
+        f"\n      - name: {next_name}\n"
+        if next_name is not None
+        else "\n      - name: "
+    )
+    return block.split(boundary, 1)[0]
 
 
 def test_release_runs_once_on_each_main_push() -> None:
@@ -99,7 +102,9 @@ def test_publisher_builds_and_replaces_exactly_two_assets_on_rerun() -> None:
 def test_published_immutable_rerun_verifies_without_mutation() -> None:
     workflow = _PUBLISH.read_text()
     guard = 'if [[ "$IS_DRAFT" == "false" && "$IS_IMMUTABLE" == "true" ]]; then'
-    immutable_branch, mutable_branch = workflow.split(guard, 1)[1].split("else", 1)
+    immutable_branch, mutable_branch = workflow.split(guard, 1)[1].split(
+        "\n          else\n", 1
+    )
 
     assert "IS_DRAFT: ${{ steps.release.outputs.is_draft }}" in workflow
     assert "IS_IMMUTABLE: ${{ steps.release.outputs.is_immutable }}" in workflow
@@ -139,7 +144,6 @@ def test_pages_accepts_only_causal_repository_dispatch_payloads() -> None:
         "Verify documentation source",
     )
     publish = _step(workflow, "Publish documentation")
-    dev_publish = publish.split("          else\n", 1)[1]
 
     assert "types: [docs-publish]" in workflow
     assert (
@@ -158,17 +162,59 @@ def test_pages_accepts_only_causal_repository_dispatch_payloads() -> None:
     assert '[[ -z "$RELEASE_TAG" ]]' in workflow
     assert "release tag must be an exact vX.Y.Z tag" in workflow
     assert "persist-credentials: true" in checkout
-    assert workflow.count('test "$VALIDATED_SHA" = "$(git rev-parse origin/main)"') == 2
+    assert publish.count('"$VALIDATED_SHA" != "$(git rev-parse origin/main)"') == 2
     assert 'git merge-base --is-ancestor "$VALIDATED_SHA" origin/main' not in workflow
     assert "VALIDATED_SHA: ${{ github.event.client_payload.sha }}" in publish
-    assert (
-        dev_publish.index("git fetch --no-tags origin main:")
-        < dev_publish.index('test "$VALIDATED_SHA" = "$(git rev-parse origin/main)"')
-        < dev_publish.index("uv run --locked mike deploy")
-    )
     assert "releases/tags/$RELEASE_TAG" in workflow
     assert ".draft == false" in workflow
     assert 'git rev-parse "$RELEASE_TAG^{commit}"' in workflow
+
+
+def test_pages_retries_atomic_gh_pages_pushes() -> None:
+    workflow = _PAGES.read_text()
+    publish = _step(workflow, "Publish documentation")
+    attempt = publish.split("          for attempt in 1 2 3; do\n", 1)[1]
+
+    assert "--push" not in publish
+    assert publish.count("git push origin gh-pages") == 1
+    assert "git ls-remote --heads origin refs/heads/gh-pages" in attempt
+    assert "gh-pages:refs/remotes/origin/gh-pages" in attempt
+    assert "git update-ref refs/heads/gh-pages refs/remotes/origin/gh-pages" in attempt
+    assert "git update-ref -d refs/heads/gh-pages" in attempt
+    assert attempt.index("gh-pages:refs/remotes/origin/gh-pages") < attempt.index(
+        "uv run --locked mike deploy"
+    )
+    assert attempt.index("uv run --locked mike deploy") < attempt.index(
+        "git push origin gh-pages"
+    )
+    assert (
+        attempt.index('"$VERSION" latest')
+        < attempt.index("uv run --locked mike set-default")
+        < attempt.index("git push origin gh-pages")
+    )
+    assert '"$push_output" != *"(non-fast-forward)"*' in attempt
+    assert '"$push_output" != *"(fetch first)"*' in attempt
+    assert '[[ "$attempt" == 3 ]]' in attempt
+    assert "gh-pages push conflicted after 3 attempts" in attempt
+
+
+def test_pages_dev_revalidates_current_main_before_build_and_push() -> None:
+    workflow = _PAGES.read_text()
+    publish = _step(workflow, "Publish documentation")
+    attempt = publish.split("          for attempt in 1 2 3; do\n", 1)[1]
+    current_main_check = '"$VALIDATED_SHA" != "$(git rev-parse origin/main)"'
+    first_check = attempt.index(current_main_check)
+    second_check = attempt.index(current_main_check, first_check + 1)
+    first_fetch = attempt.index("git fetch --no-tags origin main:")
+    second_fetch = attempt.index("git fetch --no-tags origin main:", first_fetch + 1)
+    build = attempt.index("uv run --locked zensical build --strict --clean")
+    dev_deploy = attempt.index("uv run --locked mike deploy", build)
+    push = attempt.index("git push origin gh-pages")
+
+    assert publish.count("git fetch --no-tags origin main:") == 2
+    assert publish.count("dev documentation superseded by newer main; skipping") == 2
+    assert first_fetch < first_check < build
+    assert dev_deploy < second_fetch < second_check < push
 
 
 def test_completion_workflows_and_docs_have_no_package_registry_lane() -> None:
