@@ -40,6 +40,8 @@ class _NormalizedPath(str):
     ) -> str:
         """Preserve provenance only for structurally safe remapping text."""
         value = super().replace(old, new, count)
+        if value == self:
+            return self
         unsafe = ("\x00", "?", "#", "%", "\\", ":")
         if any(marker in new for marker in unsafe):
             return value

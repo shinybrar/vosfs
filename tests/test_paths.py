@@ -153,3 +153,12 @@ def test_safely_replacing_normalized_path_preserves_percent_suffix() -> None:
 
     assert paths.is_normalized(remapped)
     assert remapped == "/destination/100%41"
+
+
+def test_noop_replacing_normalized_path_preserves_provenance() -> None:
+    normalized = paths.strip_protocol("vos://root/100%2541")
+
+    unchanged = normalized.replace("missing", "?")
+
+    assert paths.is_normalized(unchanged)
+    assert unchanged == normalized
