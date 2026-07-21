@@ -8,6 +8,7 @@ not a service or VOSpace authority.
 
 from __future__ import annotations
 
+from typing import SupportsIndex
 from urllib.parse import quote, unquote, unquote_to_bytes
 
 PROTOCOL = "vos"
@@ -25,6 +26,11 @@ class _NormalizedPath(str):
     def rstrip(self, chars: str | None = None) -> _NormalizedPath:
         """Preserve normalization provenance across fsspec traversal."""
         return _NormalizedPath(super().rstrip(chars))
+
+    def __getitem__(self, key: SupportsIndex | slice) -> str:
+        """Preserve normalization provenance across fsspec path slicing."""
+        value = super().__getitem__(key)
+        return _NormalizedPath(value) if isinstance(key, slice) else value
 
 
 def strip_protocol(path: str) -> str:
@@ -46,7 +52,8 @@ def strip_protocol(path: str) -> str:
             an encoded path separator, or a ``..`` segment.
     """
     if isinstance(path, _NormalizedPath):
-        return path
+        segments = [segment for segment in path.split("/") if segment]
+        return _NormalizedPath("/" + "/".join(segments)) if segments else "/"
     if "\x00" in path:
         msg = "path must not contain a NUL byte"
         raise ValueError(msg)

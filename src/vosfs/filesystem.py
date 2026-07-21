@@ -1610,7 +1610,7 @@ def _ancestors_top_down(path: str) -> list[str]:
     result: list[str] = []
     current = ""
     for segment in paths.segments(path):
-        current = f"{current}/{segment}"
+        current = paths.mark_normalized(f"{current}/{segment}")
         result.append(current)
     return result
 

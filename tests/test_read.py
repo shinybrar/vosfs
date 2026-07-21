@@ -575,6 +575,13 @@ def test_literal_percent_directory_survives_recursive_get(
     )
     fs = make_fs(router)
 
+    expected_globs = {
+        "*": ["/root/100%41/child"],
+        "[c]hild": ["/root/100%41/child"],
+        "**": ["/root/100%41", "/root/100%41/child"],
+    }
+    for pattern, expected in expected_globs.items():
+        assert fs.glob(f"vos://root/100%2541/{pattern}") == expected
     assert fs.expand_path("vos://root", recursive=True) == [
         "/root",
         "/root/100%41",

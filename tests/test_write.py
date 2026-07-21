@@ -364,7 +364,7 @@ def test_recursive_put_preserves_literal_percent_in_remapped_containers(
     router: respx.Router,
     tmp_path: Path,
 ) -> None:
-    from conftest import BASE_URL
+    from conftest import AUTHORITY, BASE_URL
 
     source = tmp_path / "tree"
     (source / "empty").mkdir(parents=True)
@@ -374,6 +374,15 @@ def test_recursive_put_preserves_literal_percent_in_remapped_containers(
 
     def node_op(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
+            if "/destA" in str(request.url):
+                path = request.url.path.split("/nodes", 1)[1]
+                document = (
+                    f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+                    f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+                    f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}{path}">'
+                    f"<vos:properties/><vos:nodes/></vos:node>"
+                ).encode()
+                return httpx.Response(200, content=document)
             return httpx.Response(404)
         return httpx.Response(201)
 
@@ -394,6 +403,13 @@ def test_recursive_put_preserves_literal_percent_in_remapped_containers(
         f"{NODES_URL}/dest%2541/tree/empty",
     ]
     assert all("destA" not in url for url in node_put_urls)
+    node_get_urls = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "GET"
+        and str(call.request.url).startswith(f"{NODES_URL}/")
+    ]
+    assert all("destA" not in url for url in node_get_urls)
     assert files == {"/dest%41/tree/c.bin": b"content"}
     byte_put_urls = [
         str(call.request.url)
