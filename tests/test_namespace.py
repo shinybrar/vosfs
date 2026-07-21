@@ -376,6 +376,29 @@ def test_recursive_copy_creates_tree(router: respx.Router) -> None:
     fs.close()
 
 
+def test_copy_rejects_external_link_before_destination_mutation(
+    router: respx.Router,
+) -> None:
+    target = "vos://external.example!vault/target?token=secret-token"
+    sim = VOSpaceSim().add_link("/src", target)
+    sim.install(router)
+    fs = make_fs(router, token="service-token")
+
+    with pytest.raises(NotImplementedError, match="external LinkNode"):
+        fs.copy("/src", "/new-parent/dst")
+
+    assert "/new-parent" not in sim.nodes
+    assert "/new-parent/dst" not in sim.nodes
+    assert sim.byte_requests == []
+    assert not any(call.request.url.path == "/arc/synctrans" for call in router.calls)
+    assert not any(
+        call.request.url.host != "staging.canfar.net" for call in router.calls
+    )
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert "secret-token" not in str(router.calls)
+    fs.close()
+
+
 # --- move -----------------------------------------------------------------------
 
 

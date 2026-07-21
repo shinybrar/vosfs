@@ -92,6 +92,35 @@ def test_external_link_byte_reads_are_rejected_before_transfer(
 
 
 @pytest.mark.parametrize(
+    ("target", "secrets"),
+    [
+        (
+            "vos://user:password@external.example!vault/target",
+            ("user", "password"),
+        ),
+        (
+            "https://external.example/files/preauth:secret-token/data?token=query-token",
+            ("secret-token", "query-token"),
+        ),
+    ],
+)
+def test_external_link_error_redacts_target(
+    router: respx.Router, target: str, secrets: tuple[str, ...]
+) -> None:
+    sim = VOSpaceSim().add_link("/link", target)
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(NotImplementedError) as caught:
+        fs.cat_file("/link")
+
+    for rendered in (str(caught.value), repr(caught.value)):
+        assert target not in rendered
+        assert all(secret not in rendered for secret in secrets)
+    fs.close()
+
+
+@pytest.mark.parametrize(
     ("start", "end", "expected"),
     [
         (0, 3, b"abc"),

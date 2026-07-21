@@ -688,16 +688,16 @@ class VOSpaceFileSystem(AsyncFileSystem):
 
     # -- reading bytes -------------------------------------------------------
 
-    async def _validate_read_target(self, path: str) -> None:
+    async def _validate_read_target(self, path: str) -> Node:
         """Reject external LinkNodes before synchronous transfer negotiation."""
         authority = await self._require_authority()
         node = self._parse_and_note(await self._get_node_document(path))
-        if node.node_type != "link":
-            return
-        target = urlsplit(cast("str", node.target))
-        if target.scheme != "vos" or target.netloc != authority:
-            msg = f"external LinkNode byte reads are unsupported: {node.target!r}"
-            raise NotImplementedError(msg)
+        if node.node_type == "link":
+            target = urlsplit(cast("str", node.target))
+            if target.scheme != "vos" or target.netloc != authority:
+                msg = "external LinkNode byte reads are unsupported"
+                raise NotImplementedError(msg)
+        return node
 
     async def _open_read_stream(self, path: str) -> httpx.Response:
         """Negotiate a read and return the open, streaming byte response."""
@@ -1337,7 +1337,9 @@ class VOSpaceFileSystem(AsyncFileSystem):
         path2 = self._strip_protocol(path2)
         # Resolve the source first so a missing source fails before any
         # destination container is created (no orphaned parent on error).
-        source_is_dir = (await self._info(path1))["type"] == "directory"
+        source_is_dir = (
+            await self._validate_read_target(path1)
+        ).node_type == "container"
         # Then materialize the destination's parent, for both a directory and a
         # file target, so copying into a not-yet-created subtree (for example a
         # recursive glob into ``target/newdir``) never orphans an intermediate
