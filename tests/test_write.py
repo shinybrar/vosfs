@@ -4,6 +4,8 @@ import base64
 import gzip
 import hashlib
 import io
+import posixpath
+from collections import Counter
 from pathlib import Path
 from typing import cast
 
@@ -17,8 +19,10 @@ from conftest import (
     make_fs,
     mock_capabilities,
     mock_transfers,
+    target_path,
     transfer_details,
 )
+from vospace_sim import VOSpaceSim
 
 DATA_NODE = (
     b'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
@@ -44,6 +48,48 @@ def _mock_put(router: respx.Router, response: httpx.Response) -> None:
         return_value=httpx.Response(200, content=transfer_details(_ENDPOINT)),
     )
     router.put(_ENDPOINT).mock(return_value=response)
+
+
+def _assert_coordinated_write_requests(
+    router: respx.Router,
+    *,
+    containers: list[str],
+    data_nodes: list[str],
+) -> None:
+    """Prove remote containers precede one negotiation and PUT per data node."""
+    requests = [call.request for call in router.calls]
+    container_requests = [
+        (index, request.url.path.removeprefix("/arc/nodes"))
+        for index, request in enumerate(requests)
+        if request.method == "PUT" and request.url.path.startswith("/arc/nodes")
+    ]
+    negotiations = [
+        (index, target_path(request.content))
+        for index, request in enumerate(requests)
+        if request.method == "POST" and request.url.path == "/arc/synctrans"
+    ]
+    byte_puts = [
+        (index, request.url.params["p"])
+        for index, request in enumerate(requests)
+        if request.method == "PUT" and request.url.path == "/arc/files"
+    ]
+
+    assert Counter(path for _, path in container_requests) == Counter(containers)
+    assert Counter(path for _, path in negotiations) == Counter(data_nodes)
+    assert Counter(path for _, path in byte_puts) == Counter(data_nodes)
+
+    container_index = {path: index for index, path in container_requests}
+    negotiation_index = {path: index for index, path in negotiations}
+    byte_put_index = {path: index for index, path in byte_puts}
+    for container in containers:
+        parent = posixpath.dirname(container) or "/"
+        if parent in container_index:
+            assert container_index[parent] < container_index[container]
+    for data_node in data_nodes:
+        for container in containers:
+            if data_node.startswith(f"{container}/"):
+                assert container_index[container] < negotiation_index[data_node]
+        assert negotiation_index[data_node] < byte_put_index[data_node]
 
 
 # --- round trips ----------------------------------------------------------------
@@ -188,6 +234,86 @@ def test_touch_no_truncate_unsupported(router: respx.Router) -> None:
     fs = make_fs(router)
     with pytest.raises(NotImplementedError):
         fs.touch("/x", truncate=False)
+    fs.close()
+
+
+def test_pipe_mapping_materializes_shared_remote_parents_once(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim()
+    sim.install(router)
+    fs = make_fs(router)
+
+    data_nodes = ["/batch/nested/a.bin", "/batch/nested/b.bin"]
+    fs.pipe(
+        {data_nodes[0]: b"a", data_nodes[1]: b"b"},
+        batch_size=2,
+        mode="overwrite",
+    )
+
+    _assert_coordinated_write_requests(
+        router,
+        containers=["/batch", "/batch/nested"],
+        data_nodes=data_nodes,
+    )
+
+    assert fs.find("/batch") == data_nodes
+    assert fs.cat_file("/batch/nested/a.bin") == b"a"
+    assert fs.cat_file("/batch/nested/b.bin") == b"b"
+    fs.close()
+
+
+def test_pipe_mapping_rejects_file_parent_before_data_writes(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_file("/batch", b"not-a-container")
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(FileExistsError, match="not a directory"):
+        fs.pipe(
+            {"/batch/a.bin": b"a", "/batch/b.bin": b"b"},
+            batch_size=2,
+        )
+
+    assert not any(
+        call.request.url.path in {"/arc/synctrans", "/arc/files"}
+        for call in router.calls
+    )
+    fs.close()
+
+
+def test_put_tree_materializes_empty_directories_before_data(
+    router: respx.Router,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    (source / "empty").mkdir(parents=True)
+    (source / "nested").mkdir()
+    (source / "root.bin").write_bytes(b"root-bytes")
+    (source / "nested" / "leaf.bin").write_bytes(b"leaf-bytes")
+    sim = VOSpaceSim()
+    sim.install(router)
+    fs = make_fs(router)
+
+    fs.put(str(source), "/uploads/tree", recursive=True, batch_size=2)
+
+    containers = [
+        "/uploads",
+        "/uploads/tree",
+        "/uploads/tree/empty",
+        "/uploads/tree/nested",
+    ]
+    data_nodes = ["/uploads/tree/nested/leaf.bin", "/uploads/tree/root.bin"]
+    _assert_coordinated_write_requests(
+        router,
+        containers=containers,
+        data_nodes=data_nodes,
+    )
+    assert all(fs.isdir(path) for path in containers)
+    assert fs.ls("/uploads/tree/empty", detail=False) == []
+    assert fs.cat_file(data_nodes[0]) == b"leaf-bytes"
+    assert fs.cat_file(data_nodes[1]) == b"root-bytes"
     fs.close()
 
 
