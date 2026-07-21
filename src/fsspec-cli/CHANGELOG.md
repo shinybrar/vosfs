@@ -32,6 +32,13 @@
 * Parameterize private command orchestration with concrete command labels
   without adding a supported command or public runner.
 
+## [0.4.0](https://github.com/shinybrar/vosfs/compare/fsspec-cli-v0.3.0...fsspec-cli-v0.4.0) (2026-07-21)
+
+
+### Features
+
+* **vosfs:** complete OpenCADC profile hardening ([#279](https://github.com/shinybrar/vosfs/issues/279)) ([df0a65d](https://github.com/shinybrar/vosfs/commit/df0a65d0559cab1eff9b544d5c7927417f87ea07))
+
 ## [0.3.0](https://github.com/shinybrar/vosfs/compare/fsspec-cli-v0.2.1...fsspec-cli-v0.3.0) (2026-07-21)
 
 
