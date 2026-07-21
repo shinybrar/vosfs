@@ -32,15 +32,6 @@ class _NormalizedPath(str):
         value = super().__getitem__(key)
         return _NormalizedPath(value) if isinstance(key, slice) else value
 
-    def replace(
-        self,
-        old: str,
-        new: str,
-        count: SupportsIndex = -1,
-    ) -> _NormalizedPath:
-        """Preserve normalization provenance across fsspec path remapping."""
-        return _NormalizedPath(super().replace(old, new, count))
-
 
 def strip_protocol(path: str) -> str:
     """Return the canonical internal path for ``path``.

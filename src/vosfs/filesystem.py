@@ -264,6 +264,11 @@ class _InheritedCopyAdapter:
     def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - fsspec hook surface
         return getattr(self._filesystem, name)
 
+    def cp_file(self, path1: str, path2: str, **kwargs: Any) -> None:  # noqa: ANN401
+        if self._mark_destinations:
+            path2 = paths.mark_normalized(path2)
+        self._filesystem.cp_file(path1, path2, **kwargs)
+
     async def _cp_file(self, path1: str, path2: str, **kwargs: Any) -> None:  # noqa: ANN401
         if self._mark_destinations:
             path2 = paths.mark_normalized(path2)
@@ -1490,6 +1495,42 @@ class VOSpaceFileSystem(AsyncFileSystem):
         await self._cp_file(source, destination)
         await self._rm_file(source)
 
+    def copy(
+        self,
+        path1: str | list[str],
+        path2: str | list[str],
+        recursive: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
+        maxdepth: int | None = None,
+        on_error: str | None = None,
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> None:
+        """Normalize destinations before fsspec remaps them onto sources."""
+
+        def normalize_destination(path: str) -> str:
+            normalized = self._strip_protocol(path)
+            if path.endswith("/") and normalized != "/":
+                return f"{normalized}/"
+            return normalized
+
+        destinations = (
+            [normalize_destination(path) for path in path2]
+            if isinstance(path2, list)
+            else normalize_destination(path2)
+        )
+        adapter = cast(
+            "AsyncFileSystem",
+            _InheritedCopyAdapter(self, mark_destinations=True),
+        )
+        AsyncFileSystem.copy(
+            adapter,
+            path1,
+            destinations,
+            recursive=recursive,
+            maxdepth=maxdepth,
+            on_error=on_error,
+            **kwargs,
+        )
+
     async def _copy(  # noqa: PLR0913 - fsspec hook signature
         self,
         path1: str | list[str],
@@ -1547,6 +1588,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = f"move destination already exists: {destination}"
             raise FileExistsError(msg)
         recursive = recursive or source_info["type"] == "directory"
+        kwargs["on_error"] = "raise"
         self.copy(source, destination, recursive=recursive, maxdepth=maxdepth, **kwargs)
         if not self.exists(destination):
             msg = f"move did not create the destination: {destination}; source is kept"

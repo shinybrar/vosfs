@@ -132,3 +132,15 @@ def test_public_assume_literal_still_validates_raw_paths(bad: str) -> None:
     with pytest.raises(ValueError):  # noqa: PT011 - profile boundary, not message text
         fs.expand_path([bad], assume_literal=True)
     fs.close()
+
+
+@pytest.mark.parametrize("replacement", ["?", "%2F"])
+def test_replacing_normalized_path_drops_trust(replacement: str) -> None:
+    from vosfs import VOSpaceFileSystem
+
+    normalized = paths.strip_protocol("vos://root/100%2541")
+    tainted = normalized.replace("%41", replacement)
+    fs = VOSpaceFileSystem("https://example.invalid", skip_instance_cache=True)
+    with pytest.raises(ValueError):  # noqa: PT011 - profile boundary, not message text
+        fs.expand_path([tainted], assume_literal=True)
+    fs.close()

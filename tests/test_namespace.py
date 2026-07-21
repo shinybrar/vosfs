@@ -28,25 +28,33 @@ def _fs(router, sim, *, asynchronous=True):
 def _install_percent_mutation_routes(
     router: respx.Router,
     files: dict[str, bytes],
+    *,
+    listings: dict[str, bytes] | None = None,
+    data_nodes: set[str] | None = None,
 ) -> tuple[set[str], list[str]]:
     """Install a percent-aware node store with a misleading ``100A`` alias."""
     created: set[str] = set()
     deleted: list[str] = []
+    listings = listings or {}
+    data_nodes = data_nodes or set(files)
     mock_transfers(router, files)
 
     def node_op(request: httpx.Request) -> httpx.Response:
         encoded = str(request.url).split(NODES_URL, 1)[1]
         internal = unquote(encoded)
         if request.method == "GET":
-            if internal in files:
+            document = listings.get(internal)
+            if document is None and (internal in files or internal in data_nodes):
                 document = (
                     f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
                     f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
                     f'xsi:type="vos:DataNode" uri="vos://{AUTHORITY}{encoded}">'
                     f"<vos:properties><vos:property "
                     f'uri="ivo://ivoa.net/vospace/core#length">'
-                    f"{len(files[internal])}</vos:property></vos:properties></vos:node>"
+                    f"{len(files.get(internal, b''))}</vos:property>"
+                    f"</vos:properties></vos:node>"
                 ).encode()
+            if document is not None:
                 return httpx.Response(200, content=document)
             if encoded in created or "100A" in encoded:
                 document = (
@@ -436,6 +444,45 @@ def test_copy_preserves_literal_percent_destination_and_parent(
     fs.close()
 
 
+def test_copy_raw_percent_urls_decode_source_and_destination_once(
+    router: respx.Router,
+) -> None:
+    source_root = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/src%2541">'
+        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:DataNode" '
+        f'uri="vos://{AUTHORITY}/src%2541/child"><vos:properties>'
+        f'<vos:property uri="ivo://ivoa.net/vospace/core#length">5</vos:property>'
+        f"</vos:properties></vos:node></vos:nodes></vos:node>"
+    ).encode()
+    files = {"/src%41/file": b"scalar", "/src%41/child": b"child"}
+    created, _deleted = _install_percent_mutation_routes(
+        router,
+        files,
+        listings={"/src%41": source_root},
+    )
+    fs = make_fs(router)
+
+    fs.copy("vos://src%2541/file", "vos://dest%2542/copied")
+    fs.copy("vos://src%2541", "vos://tree%2542", recursive=True)
+
+    assert files["/dest%42/copied"] == b"scalar"
+    assert files["/tree%42/child"] == b"child"
+    assert all("/vos:" not in path for path in files)
+    assert "/tree%2542" in created
+    byte_urls = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method in {"GET", "PUT"}
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ]
+    assert any("p=/src%2541/file" in url for url in byte_urls)
+    assert any("p=/dest%2542/copied" in url for url in byte_urls)
+    assert any("p=/tree%2542/child" in url for url in byte_urls)
+    fs.close()
+
+
 def test_mkdir_preserves_literal_percent_parent(router: respx.Router) -> None:
     created, _deleted = _install_percent_mutation_routes(router, {})
     fs = make_fs(router)
@@ -706,6 +753,35 @@ def test_move_preserves_literal_percent_destination_before_source_delete(
         and str(call.request.url).startswith(f"{BASE_URL}/files")
     ]
     assert byte_puts == [f"{BASE_URL}/files?p=/moved%2541"]
+    fs.close()
+
+
+def test_recursive_move_keeps_source_when_one_child_copy_fails(
+    router: respx.Router,
+) -> None:
+    source_listing = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/src">'
+        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:DataNode" '
+        f'uri="vos://{AUTHORITY}/src/a"><vos:properties/></vos:node>'
+        f'<vos:node xsi:type="vos:DataNode" uri="vos://{AUTHORITY}/src/b">'
+        f"<vos:properties/></vos:node></vos:nodes></vos:node>"
+    ).encode()
+    files = {"/src/a": b"a"}
+    _created, deleted = _install_percent_mutation_routes(
+        router,
+        files,
+        listings={"/src": source_listing},
+        data_nodes={"/src/a", "/src/b"},
+    )
+    fs = make_fs(router)
+
+    with pytest.raises(FileNotFoundError):
+        fs.mv("/src", "/dest", recursive=True)
+
+    assert deleted == []
+    assert files["/src/a"] == b"a"
     fs.close()
 
 
