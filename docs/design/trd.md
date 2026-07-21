@@ -565,7 +565,7 @@ Hermetic tests **MUST** cover:
    environment credential reconstruction; and
 8. all scientific-stack gates in section 14.
 
-The current hermetic baseline collects 542 tests: 536 pass and six skip. All
+The current hermetic baseline collects 546 tests: 540 pass and six skip. All
 six skips belong to the reusable-suite ledger below, which is exact for fsspec
 2026.6.0 and `vosfs` v0.4.0:
 
