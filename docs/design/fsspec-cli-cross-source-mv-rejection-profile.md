@@ -127,19 +127,32 @@ fingerprint.
 
 ### 4.3 Native `vosfs`
 
-At the pinned source commit, `VOSpaceFileSystem._info` maps a DataNode to
-`name`, `type`, `size`, and `uri`, with optional `mtime` and OpenCADC `md5`.
-The exact mapping and its minimal form are covered by
+At the pinned source commit, `_info` parses the node document, then
+[`to_info`](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/vosfs/nodes.py#L165-L196)
+maps a DataNode to requested-path `name`, `type`, `size`, and the document's
+node-identifier `uri`. It may also expose `mtime`, OpenCADC `md5`,
+`content_type`, and the read-only `properties` mapping containing every
+URI-keyed property. A minimal DataNode has only the four required fields; the
+exact complete and minimal shapes are covered by
 [`test_nodes.py`](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/tests/test_nodes.py#L302-L330).
-Neither optional value is an immutable node-generation identifier: `md5`
-identifies content and `mtime` is a property value. A minimal DataNode supplies
-neither.
+
+None identifies an immutable generation. The `uri` is path identity and can be
+reused by a replacement. Cavern explicitly does not preserve its internal
+[`Node.id` except for root](https://github.com/opencadc/vos/blob/cf976ce8141dd3341631b7f3e07aa38443d42f58/cavern/src/main/java/org/opencadc/cavern/nodes/NodeUtil.java#L159-L180).
+`md5` identifies content, `mtime`/date and `content_type` are property values,
+and the OpenCADC profile defines no URI-keyed property as an immutable
+generation token. Arbitrary properties therefore cannot be promoted into a
+guard by this command profile.
 
 `VOSpaceFileSystem._rm_file` checks only that a fresh `_info` result is not a
-directory, then `_delete_node` issues an unconditional node `DELETE`; see
-[`filesystem.py`](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/vosfs/filesystem.py#L1156-L1166)
-and the
-[`_rm_file` implementation](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/vosfs/filesystem.py#L1239-L1250).
+directory. It passes no fingerprint to `_delete_node`, whose exact request is
+`_send_to_service("DELETE", url)` with no conditional header or generation
+parameter; see
+[`_delete_node`](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/vosfs/filesystem.py#L1156-L1166)
+and
+[`_rm_file`](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/vosfs/filesystem.py#L1239-L1250).
+The pinned Cavern persistence likewise resolves the path and calls
+[`Files.delete`](https://github.com/opencadc/vos/blob/cf976ce8141dd3341631b7f3e07aa38443d42f58/cavern/src/main/java/org/opencadc/cavern/nodes/FileSystemNodePersistence.java#L512-L526).
 Native `vosfs` therefore supplies no deletion guard, and its cross-source `cp`
 directions also lack qualifying evidence.
 
@@ -166,19 +179,30 @@ claim about concurrent external mutations it never observes.
 
 ## 6. Matrix and isolated-wheel gate
 
-The tested command matrix retains one `command preflight` / `not entered` /
-`unsupported` row. It must not invent Local, Memory, or `vosfs` source-pair
-rows because no source is entered. The hermetic public-seam test at the pinned
-commit uses independent recording factories, proves neither is called, and
-proves both stores remain unchanged:
+The tested command matrix retains one `command preflight` / `not entered` row.
+Its current status is `unverified`; `unsupported` remains the required status
+until qualifying evidence covers the complete gate. It must not invent Local,
+Memory, or `vosfs` source-pair rows because no source is entered. The hermetic
+public-seam test at the pinned commit uses independent recording factories,
+proves neither is called, and proves both stores remain unchanged:
 [`test_mv.py::test_mv_rejects_cross_source_without_factories_or_mutation`](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/fsspec-cli/tests/test_mv.py#L493-L515).
 
-The isolated-wheel gate builds `fsspec-cli`, rebuilds its wheel from the source
-distribution, installs it with pinned `vosfs`, fsspec, and Typer wheels outside
-the workspace, and runs `test_mv.py`. Required CI repeats that gate on Ubuntu
-with Python 3.10 through 3.14 and on macOS with Python 3.12. A future positive
-profile must add exact source-pair tests to that same gate before changing the
-matrix row or removing this rejection.
+The current isolated-wheel gate builds a workspace `fsspec-cli` wheel and
+source distribution, proves that the source distribution can produce another
+wheel, but installs the original workspace-built wheel. Its isolated
+environments let `uv` resolve declared fsspec, Typer, and pytest constraints;
+they do not install the rebuilt wheel with this research tuple's exact pins.
+Running `test_mv.py` through that gate is useful local regression evidence, but
+is not qualifying immutable evidence for this row.
+
+Before the row becomes `unsupported`, CI must install the wheel rebuilt from
+the source distribution with exact fsspec 2026.6.0 and Typer 0.27.0 wheels from
+a local wheelhouse, run the negative `test_mv.py` case outside the workspace,
+and record an immutable run for Ubuntu with Python 3.10 through 3.14 and macOS
+with Python 3.12. No network resolution may fill missing dependencies. Any
+future positive profile must additionally install the exact admitted source
+pair, add its tests to that rebuilt-wheel gate, and replace rather than
+reinterpret the rejection row.
 
 ## 7. Rejected positive shortcuts
 
