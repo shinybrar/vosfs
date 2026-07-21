@@ -8,7 +8,7 @@ not a service or VOSpace authority.
 
 from __future__ import annotations
 
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, unquote_to_bytes
 
 PROTOCOL = "vos"
 
@@ -66,6 +66,13 @@ def strip_protocol(path: str) -> str:
     if decoded != encoded:
         return _NormalizedPath(normalized)
     return normalized
+
+
+def mark_normalized(path: str) -> str:
+    """Mark a coordinator-produced internal path as already decoded."""
+    if unquote_to_bytes(path) != path.encode():
+        return _NormalizedPath(path)
+    return path
 
 
 def _strip_scheme(path: str) -> str:

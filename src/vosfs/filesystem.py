@@ -766,6 +766,22 @@ class VOSpaceFileSystem(AsyncFileSystem):
             **kwargs,
         )
 
+    async def _expand_path(
+        self,
+        path: str | list[str],
+        recursive: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
+        maxdepth: int | None = None,
+        assume_literal: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
+    ) -> list[str]:
+        """Keep fsspec-expanded paths from being percent-decoded again."""
+        expanded = await super()._expand_path(
+            path,
+            recursive=recursive,
+            maxdepth=maxdepth,
+            assume_literal=assume_literal,
+        )
+        return [paths.mark_normalized(item) for item in expanded]
+
     async def _get_file(
         self,
         rpath: str,

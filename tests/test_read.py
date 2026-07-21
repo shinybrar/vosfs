@@ -444,6 +444,41 @@ def test_literal_percent_targets_survive_scalar_list_and_bulk_coordinators(
     fs.close()
 
 
+def test_literal_percent_target_survives_wildcard_expansion(
+    router: respx.Router,
+) -> None:
+    from conftest import AUTHORITY, BASE_URL, NODES_URL
+
+    internal = "/authority/dir/100%41"
+    listing = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/authority/dir">'
+        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:DataNode" '
+        f'uri="vos://{AUTHORITY}/authority/dir/100%2541">'
+        f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
+        f"15</vos:property></vos:properties></vos:node></vos:nodes></vos:node>"
+    ).encode()
+    mock_transfers(router, {internal: b"literal-percent"})
+    router.get(f"{NODES_URL}/authority/dir").mock(
+        return_value=httpx.Response(200, content=listing)
+    )
+    fs = make_fs(router)
+
+    matches = fs.glob("vos://authority/dir/*")
+    assert matches == [internal]
+    assert type(matches[0]) is str
+    assert fs.cat("vos://authority/dir/*") == {internal: b"literal-percent"}
+    byte_urls = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "GET"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ]
+    assert byte_urls == [f"{BASE_URL}/files?p=/authority/dir/100%2541"]
+    fs.close()
+
+
 def test_direct_byte_endpoint_303_is_consumed_once_without_credentials(
     router: respx.Router,
 ) -> None:
