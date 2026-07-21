@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
+from ._path import _lexical_basename
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -57,12 +59,6 @@ class ListingRow:
     group: str | int | None
     link_target: str | None
     extra: Mapping[str, object]
-
-
-def _basename(name: str) -> str:
-    if name and all(character == "/" for character in name):
-        return "/"
-    return name.rstrip("/").rsplit("/", 1)[-1]
 
 
 def _kind(info: Mapping[str, object]) -> ListingKind:
@@ -160,7 +156,7 @@ def to_listing(info: Mapping[str, object]) -> ListingRow:
         raise ValueError(message)
 
     return ListingRow(
-        name=_basename(name),
+        name=_lexical_basename(name),
         kind=_kind(info),
         size=_non_negative_int(info.get("size")),
         mtime=_mtime(info),

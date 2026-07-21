@@ -676,6 +676,27 @@ def test_cp_appends_basename_when_destination_is_directory() -> None:
     assert cp_events[0][2:4] == ("/docs/notes.txt", "/docs/out/notes.txt")
 
 
+@pytest.mark.parametrize("source_path", ["/", "///"])
+def test_cp_preserves_root_source_destination(source_path: str) -> None:
+    source = _file_source(
+        source_path=source_path,
+        parent="/",
+    )
+    destination = _file_source(
+        source_path="/other.txt",
+        directories={"/", "/out"},
+    )
+
+    result = _invoke_cp(
+        [f"source:{source_path}", "destination:/out"],
+        sources={"source": source, "destination": destination},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    put_events = [event for event in destination.events if event[0] == "put_file"]
+    assert put_events[0][2] == "/out/"
+
+
 def test_cp_replaces_existing_destination_file() -> None:
     source = _file_source(
         file_contents={

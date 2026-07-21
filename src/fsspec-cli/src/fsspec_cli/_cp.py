@@ -19,6 +19,7 @@ from ._command import (
     _usage_error,
 )
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
+from ._path import _lexical_basename
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
@@ -114,11 +115,6 @@ async def _require_directory(
     return None
 
 
-def _basename(path: str) -> str:
-    normalized = path.rstrip("/") or "/"
-    return normalized.rsplit("/", 1)[-1]
-
-
 def _parent_path(path: str) -> str:
     normalized = path.rstrip("/") or "/"
     if normalized == "/":
@@ -128,6 +124,8 @@ def _parent_path(path: str) -> str:
 
 
 def _join_under(directory: str, name: str) -> str:
+    if name == "/":
+        name = ""
     if directory in {"/", ""}:
         return f"/{name}"
     return f"{directory.rstrip('/')}/{name}"
@@ -182,7 +180,7 @@ async def _resolve_destination(  # noqa: C901, PLR0911, PLR0912 - explicit targe
             return destination.path, _CpFailure(destination, incompatible="result")
         dest_type = dest_info["type"]
         if dest_type == "directory":
-            resolved = _join_under(destination.path, _basename(source_path))
+            resolved = _join_under(destination.path, _lexical_basename(source_path))
         elif dest_type == "file":
             resolved = destination.path
         else:
