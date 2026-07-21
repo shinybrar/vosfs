@@ -376,6 +376,20 @@ def test_recursive_copy_creates_tree(router: respx.Router) -> None:
     fs.close()
 
 
+def test_copy_internal_link_materializes_target_bytes(router: respx.Router) -> None:
+    target = f"vos://{AUTHORITY}/target"
+    sim = VOSpaceSim().add_file("/target", b"linked").add_link("/src", target)
+    sim.install(router)
+    fs = make_fs(router)
+
+    fs.copy("/src", "/dst")
+
+    assert sim.nodes["/dst"] == "data"
+    assert sim.blobs["/dst"] == b"linked"
+    assert sim.nodes["/src"] == "link"
+    fs.close()
+
+
 def test_copy_rejects_external_link_before_destination_mutation(
     router: respx.Router,
 ) -> None:

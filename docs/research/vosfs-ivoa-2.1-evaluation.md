@@ -193,8 +193,10 @@ implemented.
 That defect and promise are superseded. Current `mv` resolves source metadata
 before destination handling and raises `NotImplementedError` for a LinkNode
 before copy, delete, rollback, or cleanup mutation. This applies when the
-destination is absent, exists, or is the source path itself. Copying a LinkNode
-continues to materialize its target bytes as a DataNode.
+destination is absent, exists, or is the source path itself. Copying an internal
+LinkNode whose target has the discovered VOSpace authority continues to
+materialize its target bytes as a DataNode; copying an external or non-VOS
+LinkNode raises `NotImplementedError` before destination mutation.
 
 The resolution selected the previously recommended unsupported behavior rather
 than byte-materializing move semantics. LinkNode creation and link-preserving

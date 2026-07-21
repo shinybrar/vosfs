@@ -10,6 +10,8 @@ import respx
 from conftest import BASE_URL, make_fs, mock_transfers
 from vospace_sim import VOSpaceSim
 
+from vosfs import staging
+
 
 async def test_get_file_streams_to_disk(router: respx.Router, tmp_path: Path) -> None:
     mock_transfers(router, {"/data.bin": b"hello world"})
@@ -117,6 +119,48 @@ def test_external_link_error_redacts_target(
     for rendered in (str(caught.value), repr(caught.value)):
         assert target not in rendered
         assert all(secret not in rendered for secret in secrets)
+    fs.close()
+
+
+@pytest.mark.parametrize("operation", ["cat_ranges", "open"])
+def test_external_link_rejection_precedes_staging(
+    router: respx.Router,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    sim = VOSpaceSim().add_link("/link", "vos://external.example!vault/target")
+    sim.install(router)
+    fs = make_fs(router)
+    temp_calls = 0
+    unlink_calls = 0
+    original_new_temp_path = staging.new_temp_path
+    original_unlink = Path.unlink
+
+    def counted_new_temp_path() -> str:
+        nonlocal temp_calls
+        temp_calls += 1
+        return original_new_temp_path()
+
+    def counted_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        nonlocal unlink_calls
+        unlink_calls += 1
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(staging, "new_temp_path", counted_new_temp_path)
+    monkeypatch.setattr(Path, "unlink", counted_unlink)
+
+    def attempt_read() -> None:
+        if operation == "cat_ranges":
+            fs.cat_ranges(["/link"], [0], [1], on_error="raise")
+        else:
+            with fs.open("/link", "rb"):
+                pass
+
+    with pytest.raises(NotImplementedError, match="external LinkNode"):
+        attempt_read()
+
+    assert temp_calls == 0
+    assert unlink_calls == 0
     fs.close()
 
 
