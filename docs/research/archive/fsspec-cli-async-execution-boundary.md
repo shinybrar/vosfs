@@ -36,7 +36,7 @@ The research found one hard contradiction among the earlier locks:
 Consequently, the old live-instance seam, literal end-to-end async execution,
 host-owned reusable instances, and deterministic resource cleanup could not all
 hold at once. [Issue #92](https://github.com/shinybrar/vosfs/issues/92)
-resolved the contradiction; [ADR 0002](../adr/0002-own-async-filesystems-per-invocation.md)
+resolved the contradiction; [ADR 0002](../../adr/0002-own-async-filesystems-per-invocation.md)
 is the sole normative host-integration and lifecycle contract.
 
 ## Primary-source facts
@@ -147,6 +147,6 @@ The later tracer should prove, test-first:
 This research does not add a console script, construct or authenticate
 filesystems inside `fsspec-cli`, alter `vosfs`, or implement commands. It does
 not claim every fsspec backend is async-compatible. ADR 0002 records the locked
-ownership contract; [ADR 0003](../adr/0003-acquire-referenced-async-filesystem-sources.md)
+ownership contract; [ADR 0003](../../adr/0003-acquire-referenced-async-filesystem-sources.md)
 records lifecycle-failure semantics. The tested matrix and production tracer
 sequencing remain with their linked Wayfinder tickets.
