@@ -254,6 +254,32 @@ def test_touch_no_truncate_unsupported(router: respx.Router) -> None:
     fs.close()
 
 
+def test_put_preserves_literal_percent_after_destination_remapping(
+    router: respx.Router,
+    tmp_path: Path,
+) -> None:
+    from conftest import BASE_URL
+
+    source = tmp_path / "README.md"
+    source.write_bytes(b"literal-percent")
+    files: dict[str, bytes] = {}
+    mock_transfers(router, files)
+    router.get(f"{NODES_URL}/100%2541").mock(return_value=httpx.Response(404))
+    fs = make_fs(router)
+
+    fs.put(str(source), "vos://100%2541")
+
+    assert files == {"/100%41": b"literal-percent"}
+    byte_urls = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "PUT"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ]
+    assert byte_urls == [f"{BASE_URL}/files?p=/100%2541"]
+    fs.close()
+
+
 def test_pipe_mapping_materializes_shared_remote_parents_once(
     router: respx.Router,
 ) -> None:

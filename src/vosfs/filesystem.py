@@ -200,8 +200,14 @@ class _DeferredBranchCallback:
 class _InheritedWriteAdapter:
     """Make inherited bulk hooks build inert per-file awaitables."""
 
-    def __init__(self, filesystem: VOSpaceFileSystem) -> None:
+    def __init__(
+        self,
+        filesystem: VOSpaceFileSystem,
+        *,
+        mark_put_destinations: bool = False,
+    ) -> None:
         self._filesystem = filesystem
+        self._mark_put_destinations = mark_put_destinations
 
     def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - fsspec hook surface
         return getattr(self._filesystem, name)
@@ -215,6 +221,19 @@ class _InheritedWriteAdapter:
         return _DeferredAwaitable(
             self._filesystem,
             partial(self._filesystem._pipe_file, path, value, **kwargs),  # noqa: SLF001
+        )
+
+    def _put_file(
+        self,
+        lpath: str,
+        rpath: str,
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> _DeferredAwaitable:
+        if self._mark_put_destinations:
+            rpath = paths.mark_normalized(rpath)
+        return _DeferredAwaitable(
+            self._filesystem,
+            partial(self._filesystem._put_file, lpath, rpath, **kwargs),  # noqa: SLF001
         )
 
 
@@ -774,6 +793,12 @@ class VOSpaceFileSystem(AsyncFileSystem):
         assume_literal: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
     ) -> list[str]:
         """Keep fsspec-expanded paths from being percent-decoded again."""
+        if assume_literal:
+            path = (
+                paths.mark_normalized(path)
+                if isinstance(path, str)
+                else [paths.mark_normalized(item) for item in path]
+            )
         expanded = await super()._expand_path(
             path,
             recursive=recursive,
@@ -1046,7 +1071,14 @@ class VOSpaceFileSystem(AsyncFileSystem):
     ) -> list[Any] | None:
         """Use fsspec's upload coordinator with one shared parent-creation scope."""
         async with _write_scope(self):
-            adapter = cast("AsyncFileSystem", _InheritedWriteAdapter(self))
+            paired_paths = isinstance(lpath, list) and isinstance(rpath, list)
+            adapter = cast(
+                "AsyncFileSystem",
+                _InheritedWriteAdapter(
+                    self,
+                    mark_put_destinations=not paired_paths,
+                ),
+            )
             return await AsyncFileSystem._put(  # noqa: SLF001 - inherited hook seam
                 adapter,
                 lpath,

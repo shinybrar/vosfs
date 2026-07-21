@@ -467,8 +467,59 @@ def test_literal_percent_target_survives_wildcard_expansion(
 
     matches = fs.glob("vos://authority/dir/*")
     assert matches == [internal]
-    assert type(matches[0]) is str
+    assert isinstance(matches[0], str)
     assert fs.cat("vos://authority/dir/*") == {internal: b"literal-percent"}
+    assert fs.cat(matches[0]) == b"literal-percent"
+    byte_urls = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "GET"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ]
+    assert byte_urls == [f"{BASE_URL}/files?p=/authority/dir/100%2541"] * 2
+    fs.close()
+
+
+def test_literal_percent_target_survives_recursive_wildcard_get(
+    router: respx.Router,
+    tmp_path: Path,
+) -> None:
+    from conftest import AUTHORITY, BASE_URL, NODES_URL
+
+    internal = "/authority/dir/100%41"
+    listing = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/authority/dir">'
+        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:DataNode" '
+        f'uri="vos://{AUTHORITY}/authority/dir/100%2541">'
+        f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
+        f"15</vos:property></vos:properties></vos:node></vos:nodes></vos:node>"
+    ).encode()
+    child = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:DataNode" uri="vos://{AUTHORITY}/authority/dir/100%2541">'
+        f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
+        f"15</vos:property></vos:properties></vos:node>"
+    ).encode()
+    mock_transfers(router, {internal: b"literal-percent"})
+    router.get(f"{NODES_URL}/authority/dir").mock(
+        return_value=httpx.Response(200, content=listing)
+    )
+    correct_node = router.get(f"{NODES_URL}/authority/dir/100%2541").mock(
+        return_value=httpx.Response(200, content=child)
+    )
+    wrong_node = router.get(f"{NODES_URL}/authority/dir/100A").mock(
+        return_value=httpx.Response(404)
+    )
+    fs = make_fs(router)
+
+    fs.get("vos://authority/dir/*", str(tmp_path) + "/", recursive=True)
+
+    assert (tmp_path / "100%41").read_bytes() == b"literal-percent"
+    assert correct_node.called
+    assert not wrong_node.called
     byte_urls = [
         str(call.request.url)
         for call in router.calls
