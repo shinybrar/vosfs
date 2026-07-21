@@ -179,8 +179,8 @@ def test_direct_byte_endpoint_303_is_unsupported(router: respx.Router) -> None:
     # A 303 whose Location is a direct byte endpoint (non-XML) is not yet
     # negotiated (issue #63): distinguishing it from transfer details without
     # consuming a possibly single-use or large endpoint needs a streaming
-    # discriminator validated against live OpenCADC. Until then it surfaces as a
-    # transfer-details parse error rather than being used.
+    # discriminator validated against representative response shapes. Until
+    # then it surfaces as a transfer-details parse error rather than being used.
     import re
 
     from conftest import NODES_URL, ROOT_CONTAINER, SYNC_URL, mock_capabilities

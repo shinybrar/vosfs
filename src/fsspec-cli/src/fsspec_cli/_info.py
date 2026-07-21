@@ -29,7 +29,6 @@ if TYPE_CHECKING:
 
     from ._app import AsyncFilesystemSource
 
-_preflight = _preflight_single_mapped_operand
 _PRETTY_WIDTH = 80
 
 
@@ -179,7 +178,7 @@ async def _run_info(
     raw_arguments: tuple[str, ...],
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    operand = _preflight(command, raw_arguments, sources)
+    operand = _preflight_single_mapped_operand(command, raw_arguments, sources)
     invocation = _SourceInvocation(command, sources)
     succeeded = False
     failure: _Failure | None = None

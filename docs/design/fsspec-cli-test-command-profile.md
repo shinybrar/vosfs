@@ -119,4 +119,4 @@ exactly one matching hook, strict boolean validation, silent true and false
 results, backend diagnostics, and invocation-owned cleanup.
 
 This ticket records its matrix rows as `unverified` until immutable qualifying
-evidence exists. It makes no live OpenCADC claim.
+evidence exists. Evidence remains limited to the named source forms.

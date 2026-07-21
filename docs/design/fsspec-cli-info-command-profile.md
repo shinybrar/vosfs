@@ -183,8 +183,8 @@ Hermetic public-`App` evidence covers:
   and ordinary/control-flow `repr` failures.
 
 These tests establish only the named source forms and the locked command seam.
-They are not live OpenCADC evidence, a completeness claim for arbitrary fsspec
-backends, or evidence that every backend value has a stable custom `repr`.
+They are not a completeness claim for arbitrary fsspec backends or evidence
+that every backend value has a stable custom `repr`.
 
 ## 7. Help and README language
 

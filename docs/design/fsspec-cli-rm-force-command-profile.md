@@ -49,4 +49,4 @@ Status `2` preserves base `rm` preflight failure rules.
 Hermetic tests exercise source-free zero-operand and option-rejection paths,
 plus adapted async Local and Memory and native async `vosfs` through
 `App(sources).typer_app`. Installed-wheel CI runs the same tests outside the
-workspace. Live OpenCADC evidence is not required in v1.
+workspace.

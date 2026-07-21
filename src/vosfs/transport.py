@@ -118,7 +118,7 @@ class ClientPool:
         """Return the transport for a TLS key: injected, certificate, or plain."""
         if self._injected is not None:
             return self._injected
-        # Real client-certificate TLS needs a genuine PEM; the live gate covers it.
+        # Client-certificate TLS requires genuine PEM material.
         if key == _CERT:  # pragma: no cover
             return self._build_cert_transport()
         return httpx.AsyncHTTPTransport(
@@ -126,12 +126,7 @@ class ClientPool:
         )
 
     def _build_cert_transport(self) -> httpx.AsyncHTTPTransport:  # pragma: no cover
-        """Build a client-certificate transport (exercised by the live gate).
-
-        Real client-certificate TLS requires a genuine combined PEM, so this
-        path is covered by the credential-gated integration suite rather than
-        the hermetic tests.
-        """
+        """Build a client-certificate transport from the configured PEM."""
         certfile = self._certfile
         if certfile is None:
             msg = "no certificate is configured for a certificate transfer"

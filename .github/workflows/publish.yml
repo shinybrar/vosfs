@@ -1,14 +1,14 @@
-name: Publish Code
+name: Publish Package
 
 on:
   repository_dispatch:
-    types: [release-build]
+    types: [package-release]
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event.client_payload.tag_name }}
+  group: package-release-${{ github.event.client_payload.package }}-${{ github.event.client_payload.tag_name }}
   cancel-in-progress: false
 
 jobs:
@@ -16,32 +16,45 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
+    env:
+      PACKAGE: ${{ github.event.client_payload.package }}
+      RELEASE_SHA: ${{ github.event.client_payload.sha }}
+      RELEASE_TAG: ${{ github.event.client_payload.tag_name }}
     steps:
-      - name: Validate release dispatch
+      - name: Validate package release dispatch
+        id: release
         env:
-          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ github.event.client_payload.sha }}
-          RELEASE_TAG: ${{ github.event.client_payload.tag_name }}
         run: |
-          if [[ "$GITHUB_RUN_ATTEMPT" != "1" ]]; then
-            echo "failed code releases are not resumed; publish the next patch" >&2
+          set -euo pipefail
+
+          case "$PACKAGE" in
+            vosfs) expected_tag='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' ;;
+            fsspec-cli) expected_tag='^fsspec-cli-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' ;;
+            *) echo "unknown package: $PACKAGE" >&2; exit 1 ;;
+          esac
+          if [[ ! "$RELEASE_TAG" =~ $expected_tag ]]; then
+            echo "release tag does not match package $PACKAGE" >&2
             exit 1
           fi
-          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "release tag must be an exact vX.Y.Z tag" >&2
-            exit 1
-          fi
-          if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "release dispatch requires a full commit SHA" >&2
-            exit 1
-          fi
-          if [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" != "true" ]]; then
-            echo "release $RELEASE_TAG is not the draft created by this release run" >&2
+          if ! [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "package release requires a full commit SHA" >&2
             exit 1
           fi
 
-      - name: Check out the released tag
+          RELEASE_JSON="$(
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"
+          )"
+          jq -e --arg tag "$RELEASE_TAG" '
+            .tag_name == $tag and
+            (.id | type == "number") and
+            (.draft | type == "boolean") and
+            (.immutable | type == "boolean")
+          ' <<<"$RELEASE_JSON" >/dev/null
+          echo "is_draft=$(jq -r .draft <<<"$RELEASE_JSON")" >> "$GITHUB_OUTPUT"
+          echo "is_immutable=$(jq -r .immutable <<<"$RELEASE_JSON")" >> "$GITHUB_OUTPUT"
+
+      - name: Check out released tag
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
@@ -49,26 +62,76 @@ jobs:
           ref: ${{ github.event.client_payload.tag_name }}
 
       - name: Verify released commit
-        env:
-          RELEASE_SHA: ${{ github.event.client_payload.sha }}
-        run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+        run: |
+          set -euo pipefail
+          TAG_SHA="$(git rev-parse "$RELEASE_TAG^{commit}")"
+          test "$TAG_SHA" = "$RELEASE_SHA"
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 
       - name: Install uv
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
 
-      - name: Build release distributions
-        run: uv build --no-sources
-
-      - name: Attach distributions to the GitHub Release
+      - name: Build and publish package distributions
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.client_payload.tag_name }}
-        run: gh release upload "$RELEASE_TAG" dist/*.whl dist/*.tar.gz
+          IS_DRAFT: ${{ steps.release.outputs.is_draft }}
+          IS_IMMUTABLE: ${{ steps.release.outputs.is_immutable }}
+        run: |
+          set -euo pipefail
+          uv build --no-sources --package "$PACKAGE"
 
-      - name: Publish the complete GitHub Release
+          shopt -s nullglob
+          WHEELS=(dist/*.whl)
+          SDISTS=(dist/*.tar.gz)
+          if [[ "${#WHEELS[@]}" -ne 1 || "${#SDISTS[@]}" -ne 1 ]]; then
+            echo "build must produce exactly one wheel and one sdist" >&2
+            exit 1
+          fi
+          DISTRIBUTIONS=("${WHEELS[@]}" "${SDISTS[@]}")
+
+          mapfile -t EXPECTED_ASSETS < <(
+            printf '%s\n' "${DISTRIBUTIONS[@]##*/}" | sort
+          )
+          mapfile -t EXISTING_ASSETS < <(
+            gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | sort
+          )
+          for asset in "${EXISTING_ASSETS[@]}"; do
+            if [[ "$asset" != "${EXPECTED_ASSETS[0]}" && "$asset" != "${EXPECTED_ASSETS[1]}" ]]; then
+              echo "unexpected release asset: $asset" >&2
+              exit 1
+            fi
+          done
+
+          if [[ "$IS_DRAFT" == "false" && "$IS_IMMUTABLE" == "true" ]]; then
+            echo "published immutable release; verifying assets without mutation"
+          else
+            gh release upload "$RELEASE_TAG" "${DISTRIBUTIONS[@]}" --clobber
+          fi
+
+          mapfile -t FINAL_ASSETS < <(
+            gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | sort
+          )
+          if [[ "${#FINAL_ASSETS[@]}" -ne 2 ]]; then
+            echo "release must contain exactly two package assets" >&2
+            exit 1
+          fi
+          test "${FINAL_ASSETS[0]}" = "${EXPECTED_ASSETS[0]}"
+          test "${FINAL_ASSETS[1]}" = "${EXPECTED_ASSETS[1]}"
+
+          if [[ "$IS_DRAFT" == "true" ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false
+          fi
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = false
+
+      - name: Dispatch published vosfs documentation
+        if: env.PACKAGE == 'vosfs'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.client_payload.tag_name }}
-        run: gh release edit "$RELEASE_TAG" --draft=false
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" \
+            -f event_type=docs-publish \
+            -f "client_payload[target]=release" \
+            -f "client_payload[tag_name]=$RELEASE_TAG" \
+            -f "client_payload[sha]=$RELEASE_SHA"
