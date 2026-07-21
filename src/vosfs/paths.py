@@ -22,6 +22,10 @@ class _NormalizedPath(str):
 
     __slots__ = ()
 
+    def rstrip(self, chars: str | None = None) -> _NormalizedPath:
+        """Preserve normalization provenance across fsspec traversal."""
+        return _NormalizedPath(super().rstrip(chars))
+
 
 def strip_protocol(path: str) -> str:
     """Return the canonical internal path for ``path``.

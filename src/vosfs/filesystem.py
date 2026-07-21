@@ -236,6 +236,18 @@ class _InheritedWriteAdapter:
             partial(self._filesystem._put_file, lpath, rpath, **kwargs),  # noqa: SLF001
         )
 
+    def _makedirs(
+        self,
+        path: str,
+        exist_ok: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
+    ) -> _DeferredAwaitable:
+        if self._mark_put_destinations:
+            path = paths.mark_normalized(path)
+        return _DeferredAwaitable(
+            self._filesystem,
+            partial(self._filesystem._makedirs, path, exist_ok=exist_ok),  # noqa: SLF001
+        )
+
 
 class VOSpaceFileSystem(AsyncFileSystem):
     """An asynchronous fsspec filesystem for the OpenCADC VOSpace profile.

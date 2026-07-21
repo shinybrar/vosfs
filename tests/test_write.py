@@ -360,6 +360,51 @@ def test_put_tree_materializes_empty_directories_before_data(
     fs.close()
 
 
+def test_recursive_put_preserves_literal_percent_in_remapped_containers(
+    router: respx.Router,
+    tmp_path: Path,
+) -> None:
+    from conftest import BASE_URL
+
+    source = tmp_path / "tree"
+    (source / "empty").mkdir(parents=True)
+    (source / "c.bin").write_bytes(b"content")
+    files: dict[str, bytes] = {}
+    mock_transfers(router, files)
+
+    def node_op(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(404)
+        return httpx.Response(201)
+
+    router.route(url__regex=rf"^{NODES_URL}/").mock(side_effect=node_op)
+    fs = make_fs(router)
+
+    fs.put(str(source), "vos://dest%2541/", recursive=True)
+
+    node_put_urls = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "PUT"
+        and str(call.request.url).startswith(f"{NODES_URL}/")
+    ]
+    assert node_put_urls == [
+        f"{NODES_URL}/dest%2541",
+        f"{NODES_URL}/dest%2541/tree",
+        f"{NODES_URL}/dest%2541/tree/empty",
+    ]
+    assert all("destA" not in url for url in node_put_urls)
+    assert files == {"/dest%41/tree/c.bin": b"content"}
+    byte_put_urls = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "PUT"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ]
+    assert byte_put_urls == [f"{BASE_URL}/files?p=/dest%2541/tree/c.bin"]
+    fs.close()
+
+
 # --- create / exclusive preflight -----------------------------------------------
 
 

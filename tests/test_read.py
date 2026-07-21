@@ -530,6 +530,72 @@ def test_literal_percent_target_survives_recursive_wildcard_get(
     fs.close()
 
 
+def test_literal_percent_directory_survives_recursive_get(
+    router: respx.Router,
+    tmp_path: Path,
+) -> None:
+    from conftest import AUTHORITY, BASE_URL, NODES_URL
+
+    root_listing = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/root">'
+        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:ContainerNode" '
+        f'uri="vos://{AUTHORITY}/root/100%2541"><vos:properties/>'
+        f"</vos:node></vos:nodes></vos:node>"
+    ).encode()
+    percent_listing = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/root/100%2541">'
+        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:DataNode" '
+        f'uri="vos://{AUTHORITY}/root/100%2541/child">'
+        f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
+        f"5</vos:property></vos:properties></vos:node></vos:nodes></vos:node>"
+    ).encode()
+    child = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:DataNode" uri="vos://{AUTHORITY}/root/100%2541/child">'
+        f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
+        f"5</vos:property></vos:properties></vos:node>"
+    ).encode()
+    mock_transfers(router, {"/root/100%41/child": b"child"})
+    router.get(f"{NODES_URL}/root").mock(
+        return_value=httpx.Response(200, content=root_listing)
+    )
+    correct_dir = router.get(f"{NODES_URL}/root/100%2541").mock(
+        return_value=httpx.Response(200, content=percent_listing)
+    )
+    router.get(f"{NODES_URL}/root/100%2541/child").mock(
+        return_value=httpx.Response(200, content=child)
+    )
+    wrong_dir = router.get(f"{NODES_URL}/root/100A").mock(
+        return_value=httpx.Response(404)
+    )
+    fs = make_fs(router)
+
+    assert fs.expand_path("vos://root", recursive=True) == [
+        "/root",
+        "/root/100%41",
+        "/root/100%41/child",
+    ]
+    target = tmp_path / "download"
+    fs.get("vos://root", str(target), recursive=True)
+
+    assert (target / "100%41" / "child").read_bytes() == b"child"
+    assert correct_dir.called
+    assert not wrong_dir.called
+    byte_urls = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "GET"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ]
+    assert byte_urls == [f"{BASE_URL}/files?p=/root/100%2541/child"]
+    fs.close()
+
+
 def test_direct_byte_endpoint_303_is_consumed_once_without_credentials(
     router: respx.Router,
 ) -> None:
