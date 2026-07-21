@@ -259,7 +259,7 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [`rm -d`](fsspec-cli-rm-directory-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | `test_command_matrix.py` on this change; exact `_rm_file`/`_rmdir`, no `_rm` or listing |
 | [`rm -d`](fsspec-cli-rm-directory-command-profile.md) | source | `vosfs / native async` | `pass` | — | Hermetic | `test_vosfs_command_matrix.py` uses fully mocked native transport; installed-wheel gate names this test explicitly |
 | [`rm -d` option rejection](fsspec-cli-rm-directory-command-profile.md#preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | `test_rm.py` on this change |
-| [Guarded recursive `rm -R`/`-r`](fsspec-cli-rm-recursive-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | — |
+| [Adapted Local guarded recursive `rm` rejection](fsspec-cli-rm-recursive-command-profile.md#1-verdict-and-scope) | source | `local / adapted async` | `unverified` | — | Hermetic negative rejection | — |
 | [Guarded recursive `rm -R`/`-r`](fsspec-cli-rm-recursive-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | — |
 | [Guarded recursive `rm -R`/`-r`](fsspec-cli-rm-recursive-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | — |
 | [Guarded recursive `rm` preflight](fsspec-cli-rm-recursive-command-profile.md#2-source-free-preflight) | command preflight | `not entered` | `unverified` | — | Hermetic negative rejection | — |

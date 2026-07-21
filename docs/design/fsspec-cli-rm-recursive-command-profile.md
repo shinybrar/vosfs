@@ -19,9 +19,16 @@ and **MAY** are interpreted as described by
 Guarded recursive removal is admitted as a **client-derived capability** for
 these exact **async filesystem source** forms:
 
-- `local / adapted async`;
 - `memory / adapted async`; and
 - `vosfs / native async`.
+
+`local / adapted async` is explicitly rejected before operand inspection or
+mutation. Its manifest can become unsafe before the first primitive removal:
+an admitted directory ancestor can be replaced by a symlink, after which
+`LocalFileSystem.rm_file(descendant)` follows that ancestor and deletes outside
+the selected tree. Pinned Local exposes neither a no-follow descendant-removal
+primitive nor an identity token that a delete consumes atomically. Rechecking
+metadata narrows but cannot close that race.
 
 The **embedded command library** may implement this profile through a complete
 pre-mutation manifest followed by sequential leaves-first primitive removals.
@@ -84,10 +91,18 @@ ordinary failure precedence follow
 Every distinct referenced source is acquired before any filesystem work;
 operands then run sequentially in argv order.
 
-The implementation MUST consume only awaited `_info`, `_ls(detail=True)`,
-`_rm_file`, and `_rmdir` operations. It MUST NOT call `_rm`, `_find`, `_walk`,
-a public synchronous facade, a backend-specific recursive-delete API, or an
-interactive capability probe. It MUST NOT branch on backend class or protocol.
+For admitted forms, the implementation MUST consume only awaited `_info`,
+`_ls(detail=True)`, `_rm_file`, and `_rmdir` operations. It MUST NOT call `_rm`,
+`_find`, `_walk`, a public synchronous facade, a backend-specific
+recursive-delete API, or an interactive capability probe.
+
+Immediately after source acquisition and before any operand `_info`, `_ls`, or
+mutation, the command MUST classify the exact adapted Local form from its
+`AsyncFileSystemWrapper` and wrapped `LocalFileSystem` identities. Every Local
+operand then fails as `unsupported operation`, with no filesystem call or
+mutation. This exact negative safety route is the sole backend-identity branch;
+positive behavior remains operation- and result-driven. A protocol string
+alone MUST NOT select either route.
 
 Raw synchronous Local and Memory instances, wrong-mode async filesystems, and
 host-owned reusable instances remain rejected by source validation. Other
@@ -96,11 +111,14 @@ tested command matrix is evidence only; it MUST NOT become a runtime registry.
 
 ## 4. Complete pre-mutation manifest
 
-Each operand is independently planned immediately before its mutation. A plan
-begins with `_info(root)` and requires a mapping whose `name`, after removing
-trailing slashes, is the requested root and whose `type` is `directory`.
-Pre-mutation `FileNotFoundError` is `not found`, or a successful no-op under
-`-f` with no verbose line.
+Each admitted operand is independently planned immediately before its mutation.
+A plan begins with `_info(root)` and requires a mapping whose `name`, after
+removing trailing slashes, is the requested root. If `islink` is present it
+MUST be boolean. `islink is True` rejects the root as `unsupported operation`
+before `_ls` or mutation, regardless of its reported `type`. Only after this
+link guard may the command require `type == "directory"`. Pre-mutation
+`FileNotFoundError` is `not found`, or a successful no-op under `-f` with no
+verbose line.
 
 The command recursively calls `_ls(path, detail=True)` for directories and
 MUST finish and validate the complete manifest before issuing the first
@@ -110,7 +128,7 @@ mutation for that operand. Every result MUST satisfy all these conditions:
    `type` equal to `file` or `directory`.
 2. An `islink` field, when present, is boolean. `islink is True`, `type` other
    than `file` or `directory`, and every special descendant reject the operand
-   before mutation as `unsupported operation`.
+   before traversal below that entry or mutation as `unsupported operation`.
 3. A listed child is exactly one immediate, non-empty child of the directory
    being listed. Its final component is neither `.` nor `..`.
 4. Every candidate is either the requested root or starts with the exact
@@ -125,13 +143,22 @@ postorder manifest is deterministic and leaves-first.
 
 ### 4.1 Containment proof
 
-Root and dot-component rejection completes source-free. Manifest construction
-accepts only an exact immediate-child edge whose candidate also satisfies the
-exact root-prefix predicate. Induction over those accepted edges makes every
-manifest member equal to or below the selected root. Before every mutation,
-the command reasserts both that the candidate is the next exact manifest member
-and that the root-prefix predicate still holds. No mutation call exists on a
-path that failed either proof.
+Root and dot-component rejection completes source-free. Root-link rejection
+completes after one `_info` and before `_ls`. Manifest construction accepts only
+an exact immediate-child edge whose candidate also satisfies the exact
+root-prefix predicate. Induction over those accepted edges makes every manifest
+member equal to or below the selected root. Before every mutation, the command
+reasserts both that the candidate is the next exact manifest member and that
+the root-prefix predicate still holds. No mutation call exists on a path that
+failed either proof.
+
+That lexical proof is insufficient for a host filesystem whose ancestor can
+be swapped to a symlink between manifest and deletion, so adapted Local is not
+admitted. Memory has no link or special namespace objects. Under VOSpace node
+semantics every path ancestor must remain a ContainerNode; encountering a
+LinkNode as an ancestor fails the node operation instead of resolving a child
+DELETE through its target. These are source-form constraints, not a generic
+fsspec guarantee.
 
 A manifest or classification failure performs no mutation for that operand.
 Ordinary failure does not stop later operands, matching base `rm` ordering.
@@ -164,8 +191,9 @@ unless output or escaping control flow stops the invocation.
 ## 6. Force, verbose, and multi-operand behavior
 
 - `-f` suppresses only a root `FileNotFoundError` found before that operand's
-  mutation. It does not suppress manifest, containment, link, special-entry,
-  permission, mutation, verification, output, or cleanup failures.
+  mutation. It does not suppress source-form, manifest, containment, link,
+  special-entry, permission, mutation, verification, output, or cleanup
+  failures.
 - `-v` writes the exact original mapped operand spelling plus one newline only
   after the final root absence proof. It writes no descendant lines, no line
   for a force-suppressed missing root, and no line for a partial failure.
@@ -187,8 +215,8 @@ Cancellation before the first mutation for an operand leaves that operand
 unchanged. Cancellation after mutation begins stops scheduling new manifest
 entries and leaves already completed removals in place.
 
-Adapted Local and Memory hooks run in `asyncio.to_thread`. Therefore #288 MUST
-use one narrow recursive-`rm` shield-and-drain boundary around the current
+Adapted Memory hooks run in `asyncio.to_thread`. Therefore #288 MUST use one
+narrow recursive-`rm` shield-and-drain boundary around the current
 mutation hook: if the invocation receives escaping `BaseException` control
 flow, it drains that one in-flight hook before source cleanup, schedules no
 post-check or later mutation, and then propagates the original control-flow
@@ -235,19 +263,23 @@ resolves fsspec 2026.6.0, Typer 0.27.0, fsspec-cli 0.4.0, and vosfs 0.5.0.
 The fsspec 2026.6.0 annotated tag resolves to immutable commit
 [`a2457004d03e0312f715f90f58873de5ab195a37`](https://github.com/fsspec/filesystem_spec/commit/a2457004d03e0312f715f90f58873de5ab195a37).
 
-Local inspection and a throwaway admission probe ran on 2026-07-21 with CPython
-3.13.5 on macOS 15.7.7 arm64. The probe used the exact Local and Memory source
-forms below, built the complete immediate-child manifest, rejected a Local
-directory symlink and FIFO before mutation, preserved the symlink's external
-target, removed admitted trees leaves-first, and observed
-`FileNotFoundError` for each removed root. This is admission research, not a
-qualifying command-matrix run.
+Local inspection and throwaway probes ran on 2026-07-21 with CPython 3.13.5 on
+macOS 15.7.7 arm64. Direct `_info` on a Local symlink to a directory returned
+`type="directory", islink=True`, proving why root link rejection must precede
+the type check and `_ls`. A second probe built a manifest for
+`tree/dir/victim`, renamed `tree/dir`, replaced it with a symlink to an outside
+directory containing `victim`, then called the pinned adapted `_rm_file` on the
+manifest path. The outside file was deleted. This reached contradiction and
+rejects adapted Local; lexical rechecks or another pre-delete `info` cannot
+make its non-atomic path removal safe. The Memory probe removed an admitted
+tree leaves-first and observed `FileNotFoundError` for its root. These are
+admission research observations, not qualifying command-matrix runs.
 
 | Source form | Immutable source evidence | Admission result |
 | --- | --- | --- |
-| `local / adapted async`: `AsyncFileSystemWrapper(LocalFileSystem(skip_instance_cache=True), asynchronous=True)` | The wrapper installs awaited thread adapters for public methods ([wrapper](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/asyn_wrapper.py#L81-L97)). Local immediate listing and info expose `islink` and classify non-followed directory entries ([listing/info](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/local.py#L59-L127)); `rmdir` and `rm_file` are single-entry primitives ([rmdir](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/local.py#L55-L57), [rm_file](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/local.py#L185-L189)). | Admitted with manifest link/special rejection and mutation draining. |
+| `local / adapted async`: `AsyncFileSystemWrapper(LocalFileSystem(skip_instance_cache=True), asynchronous=True)` | The wrapper installs awaited thread adapters for public methods ([wrapper](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/asyn_wrapper.py#L81-L97)). Direct Local info follows a link for target type while retaining `islink=True`; `rm_file` is path-based `os.remove` ([info](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/local.py#L78-L127), [rm_file](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/local.py#L185-L189)). No pinned Local primitive atomically binds removal to the admitted ancestor identities or forbids following a swapped ancestor symlink. | Rejected before operand filesystem calls or mutation. |
 | `memory / adapted async`: isolated `MemoryFileSystem`, then `AsyncFileSystemWrapper(..., asynchronous=True)` | Memory lists only immediate file or pseudo-directory entries and reports only those two types ([listing](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/memory.py#L43-L105), [info/rmdir](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/memory.py#L136-L169)). Inherited `rm_file` calls Memory's single-key `_rm` ([base primitive](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/spec.py#L1243-L1250), [Memory delete](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/implementations/memory.py#L234-L239)). | Admitted with isolated state and mutation draining. |
-| `vosfs / native async`: fresh `VOSpaceFileSystem(asynchronous=True, skip_instance_cache=True)` with awaited `aclose()` | At the pinned vosfs commit, DataNode, ContainerNode, and LinkNode map to `file`, `directory`, and `other` plus `islink=True` respectively ([mapping](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/vosfs/nodes.py#L165-L188)). `_info` and `_ls` expose node metadata and immediate children ([metadata/listing](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/vosfs/filesystem.py#L341-L379)); `_rm_file` and `_rmdir` are guarded single-node primitives ([removal](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/vosfs/filesystem.py#L1239-L1257)). Hermetic namespace tests prove leaves-first single-node deletion, malformed-child containment rejection before DELETE, and partial completion reporting ([tests](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/tests/test_namespace.py#L225-L328)). | Admitted for the OpenCADC VOSpace profile; no generic VOSpace claim. |
+| `vosfs / native async`: fresh `VOSpaceFileSystem(asynchronous=True, skip_instance_cache=True)` with awaited `aclose()` | At the pinned vosfs commit, DataNode, ContainerNode, and LinkNode map to `file`, `directory`, and `other` plus `islink=True` respectively ([mapping](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/vosfs/nodes.py#L165-L188)). `_info` and `_ls` expose node metadata and immediate children ([metadata/listing](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/vosfs/filesystem.py#L341-L379)); `_rm_file` and `_rmdir` are guarded single-node primitives ([removal](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/vosfs/filesystem.py#L1239-L1257)). VOSpace node operations require ancestors to be ContainerNodes and report a link found in the path rather than resolving a child mutation through it ([VOSpace 2.1 sections 6.2.1 and 6.2.4](https://www.ivoa.net/documents/VOSpace/20180620/REC-VOSpace-2.1.html)). Hermetic namespace tests prove leaves-first single-node deletion, malformed-child containment rejection before DELETE, and partial completion reporting ([tests](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/tests/test_namespace.py#L225-L328)). | Admitted for the OpenCADC VOSpace profile; no generic VOSpace claim. |
 
 The guarded CLI algorithm is necessary even though native vosfs already has a
 recursive helper: Local and Memory recursive composites delegate or expand
@@ -256,20 +288,25 @@ verbose, cancellation, and final-absence contract.
 
 ## 10. Hermetic and isolated-wheel strategy
 
-Issue #288 MUST keep all four new matrix rows `unverified` until the exact
-implementation commit passes:
+Issue #288 MUST keep all four new matrix rows `unverified` until its exact
+implementation commit supplies qualifying gates. Those gates may then classify
+adapted Local and recursive preflight as `unsupported`, and adapted Memory and
+native vosfs as `pass`:
 
 1. source-free App-seam tests for both aliases, groups, `-f`/`-v` composition,
    zero operands, roots, every-position dot segments, malformed/unknown mapped
    operands, and zero factory/mutation on whole-argv rejection;
-2. recording-source tests for complete-manifest-before-mutation, deterministic
-   leaves-first calls, strict containment, duplicate/cyclic/malformed results,
-   final absence, ordinary partial failure, later-operand continuation,
-   verbose output failure, cleanup precedence, and cancellation at every
-   boundary;
-3. deterministic Local and isolated Memory tests, including an out-of-tree
-   Local symlink, special entry, concurrent disappearance/addition, partial
-   residue, and drained adapted-thread cancellation;
+2. recording-source tests proving root `islink=True` rejects before `_ls` and
+   mutation, plus complete-manifest-before-mutation, deterministic leaves-first
+   calls, strict containment, duplicate/cyclic/malformed results, final
+   absence, ordinary partial failure, later-operand continuation, verbose
+   output failure, cleanup precedence, and cancellation at every boundary;
+3. an exact adapted Local negative test that proves rejection before operand
+   `_info` or mutation, plus a separate symlink-swap fixture demonstrating why
+   manifest admission cannot authorize `tree/dir/victim` after `tree/dir`
+   becomes a link to an outside directory; and deterministic isolated Memory
+   tests for concurrent disappearance/addition, partial residue, and drained
+   adapted-thread cancellation;
 4. a fully mocked native vosfs transport covering DataNode, ContainerNode,
    LinkNode, malformed child URI, permission/service/parse failures, partial
    DELETE success, final absence, and zero `/async-delete` calls; and
