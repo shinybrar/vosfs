@@ -26,6 +26,7 @@ from fsspec.asyn import AsyncFileSystem, _get_batch_size, _run_coros_in_chunks, 
 from fsspec.callbacks import DEFAULT_CALLBACK
 from fsspec.compression import compr
 from fsspec.core import get_compression
+from fsspec.utils import other_paths
 
 from vosfs import capabilities, config, errors, negotiate, nodes, paths, staging
 from vosfs.transport import ClientPool, build_timeout
@@ -1588,10 +1589,49 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = f"move destination already exists: {destination}"
             raise FileExistsError(msg)
         recursive = recursive or source_info["type"] == "directory"
+        source_paths = self.expand_path(
+            source,
+            recursive=recursive,
+            maxdepth=maxdepth,
+        )
+        source_manifest = [(path, self.info(path)) for path in source_paths]
+        destination_paths = [
+            paths.mark_normalized(path)
+            for path in other_paths(source_paths, destination)
+        ]
         kwargs["on_error"] = "raise"
-        self.copy(source, destination, recursive=recursive, maxdepth=maxdepth, **kwargs)
-        if not self.exists(destination):
-            msg = f"move did not create the destination: {destination}; source is kept"
+        self.copy(
+            source_paths,
+            destination_paths,
+            recursive=recursive,
+            maxdepth=maxdepth,
+            **kwargs,
+        )
+        incomplete = 0
+        first_failure = ""
+        for (_, expected), copied_path in zip(
+            source_manifest,
+            destination_paths,
+            strict=True,
+        ):
+            try:
+                copied = self.info(copied_path)
+            except FileNotFoundError:
+                copied = None
+            type_matches = copied is not None and copied["type"] == expected["type"]
+            size_matches = type_matches and (
+                expected["type"] == "directory" or copied["size"] == expected["size"]
+            )
+            if not size_matches:
+                incomplete += 1
+                if not first_failure:
+                    first_failure = copied_path
+        if incomplete:
+            msg = (
+                f"move copy is incomplete at {first_failure} "
+                f"({incomplete} destination entries failed verification); "
+                "source is kept"
+            )
             raise errors.VOSpaceError(msg)
         self.rm(source, recursive=recursive)
         self._invalidate(source)

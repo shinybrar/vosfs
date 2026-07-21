@@ -16,7 +16,7 @@ from conftest import (
 from defusedxml import ElementTree
 from vospace_sim import VOSpaceSim
 
-from vosfs import paths
+from vosfs import errors, paths
 from vosfs.nodes import LENGTH_PROPERTY_URI, VOSPACE_NS, XML_HEADERS
 
 
@@ -782,6 +782,38 @@ def test_recursive_move_keeps_source_when_one_child_copy_fails(
 
     assert deleted == []
     assert files["/src/a"] == b"a"
+    fs.close()
+
+
+def test_recursive_move_keeps_source_when_copy_omits_one_child(
+    router: respx.Router,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sim = (
+        VOSpaceSim()
+        .add_container("/src")
+        .add_file("/src/a", b"a")
+        .add_file("/src/b", b"b")
+    )
+    sim.install(router)
+    fs = make_fs(router)
+    copy = fs.copy
+
+    def incomplete_copy(*_args: object, **_kwargs: object) -> None:
+        fs.mkdir("/dest")
+        copy("/src/a", "/dest/a")
+
+    monkeypatch.setattr(fs, "copy", incomplete_copy)
+
+    with pytest.raises(errors.VOSpaceError, match="incomplete"):
+        fs.mv("/src", "/dest", recursive=True)
+
+    assert sim.nodes["/dest"] == "container"
+    assert sim.blobs["/dest/a"] == b"a"
+    assert "/dest/b" not in sim.nodes
+    assert sim.blobs["/src/a"] == b"a"
+    assert sim.blobs["/src/b"] == b"b"
+    assert sim.delete_requests == []
     fs.close()
 
 

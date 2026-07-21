@@ -134,7 +134,7 @@ def test_public_assume_literal_still_validates_raw_paths(bad: str) -> None:
     fs.close()
 
 
-@pytest.mark.parametrize("replacement", ["?", "%2F"])
+@pytest.mark.parametrize("replacement", ["?", "#", "%2F", "%5C"])
 def test_replacing_normalized_path_drops_trust(replacement: str) -> None:
     from vosfs import VOSpaceFileSystem
 
@@ -144,3 +144,12 @@ def test_replacing_normalized_path_drops_trust(replacement: str) -> None:
     with pytest.raises(ValueError):  # noqa: PT011 - profile boundary, not message text
         fs.expand_path([tainted], assume_literal=True)
     fs.close()
+
+
+def test_safely_replacing_normalized_path_preserves_percent_suffix() -> None:
+    normalized = paths.strip_protocol("vos://root/100%2541")
+
+    remapped = normalized.replace("/root", "/destination")
+
+    assert paths.is_normalized(remapped)
+    assert remapped == "/destination/100%41"

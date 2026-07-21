@@ -32,6 +32,23 @@ class _NormalizedPath(str):
         value = super().__getitem__(key)
         return _NormalizedPath(value) if isinstance(key, slice) else value
 
+    def replace(
+        self,
+        old: str,
+        new: str,
+        count: SupportsIndex = -1,
+    ) -> str:
+        """Preserve provenance only for structurally safe remapping text."""
+        value = super().replace(old, new, count)
+        unsafe = ("\x00", "?", "#", "%", "\\", ":")
+        if any(marker in new for marker in unsafe):
+            return value
+        if not value.startswith("/") or any(
+            segment in (".", "..") for segment in value.split("/")
+        ):
+            return value
+        return _NormalizedPath(value)
+
 
 def strip_protocol(path: str) -> str:
     """Return the canonical internal path for ``path``.
