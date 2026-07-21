@@ -3,6 +3,7 @@
 <!-- pyml disable line-length -->
 
 Researched: 2026-07-10
+Reconciled with executable evidence: 2026-07-21
 Contract target: `vosfs` v0.3.0
 Client contract: fsspec 2026.6.0
 Server boundary: `opencadc/vos` commit `cf976ce8141dd3341631b7f3e07aa38443d42f58`
@@ -56,7 +57,8 @@ The async hook names and inherited coordinators below are those in fsspec 2026.6
 | `created` | **U** | Cavern does not expose a distinct portable creation time; raise `NotImplementedError`, not a fabricated value. |
 | `walk` / `_walk` | **D** | Recursive client traversal over `_ls`; honour `maxdepth`, `topdown`, `on_error`, and detailed/non-detailed forms. |
 | `find` / `_find` | **D** | Client traversal over `_walk`; honour `maxdepth`, `withdirs`, and `detail`. |
-| `glob` / `_glob` | **D** | fsspec expansion over `_find`, including `*`, `?`, `[]`, and `**`; no server-side glob claim. |
+| `glob` / `_glob` | **D** | fsspec expansion over `_find`, including `*`, `[]`, and `**`; no server-side glob claim. |
+| Question-mark glob paths | **U** | `?` is the existing path grammar's URL query delimiter, so these patterns cannot be expressed without adding a new path grammar. |
 | `expand_path` / `_expand_path` | **D** | fsspec expansion for literal, list, glob, `recursive`, and `maxdepth` inputs. |
 | `du`, `disk_usage`, `tree` / `_du` | **D** | Client traversal and node sizes; potentially expensive and unpaginated. |
 | `checksum`, `ukey` | **D** | fsspec metadata token only. v0.3.0 does not promise a content checksum API even when Cavern exposes an MD5 property. |
@@ -81,10 +83,10 @@ The async hook names and inherited coordinators below are those in fsspec 2026.6
 | --- | --- | --- |
 | `pipe_file`, `write_bytes` / `_pipe_file(mode="overwrite")` | **N** | Negotiate one whole PUT; create a missing DataNode or truncate existing bytes. |
 | `_pipe_file(mode="create")` | **D** | `_info` / `GET /nodes` preflight, then negotiate and PUT; raise `FileExistsError` when already present. The check is explicitly non-atomic. ([test](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/tests/abstract/pipe.py)) |
-| `pipe` / `_pipe` | **D** | Bounded bulk coordinator over `_pipe_file`. |
+| `pipe` / `_pipe` | **D** | Bounded bulk coordinator over `_pipe_file`; materialize required remote parents top-down at most once per operation. |
 | `put_file`, `upload` / `_put_file(mode="overwrite")` | **N** | Negotiate and stream one local file through one whole PUT with bounded memory and byte callback updates. |
 | `_put_file(mode="create")` | **D** | Same non-atomic `_info` preflight semantics as `_pipe_file(mode="create")`. |
-| `put` / `_put` | **D** | fsspec file/list/glob/recursive coordinator over `_put_file`, creating needed containers and honouring `maxdepth`. |
+| `put` / `_put` | **D** | fsspec file/list/glob/recursive coordinator over `_put_file`; materialize required remote parents top-down at most once per operation, preserve empty directories, and honour `maxdepth`. |
 | `open("wb")`, `open("w")` | **D** | A seekable disk-backed temporary writer negotiates and uploads once on successful close. No bytes are silently discarded: fsspec's base upload hooks are no-ops, so `vosfs` must provide the staging writer. ([base file contract](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/spec.py#L1849-L2110)) |
 | `open("xb")`, `open("x")` | **D** | Same writer plus non-atomic existence preflight; existing target raises `FileExistsError`. ([abstract open test](https://github.com/fsspec/filesystem_spec/blob/a2457004d03e0312f715f90f58873de5ab195a37/fsspec/tests/abstract/open.py)) |
 | `open("ab")`, `open("a")` | **U** | Reject append. Cavern PUT truncates, and v0.3.0 does not hide a download-rewrite race behind append semantics. |
@@ -107,8 +109,8 @@ until a source-owned complete-result contract exists.
 | `rmdir` | **D** | List and require an empty ContainerNode, then DELETE. The emptiness check and delete are non-atomic. Non-empty raises `OSError`. |
 | `cp_file` / `_cp_file` | **D** | Negotiated whole-object GET-to-PUT relay; no native `copyNode`. Overwrite an existing DataNode. Preserve bytes, not server-only properties; copying an internal LinkNode materializes its target bytes as a DataNode. |
 | `copy`, `cp` / `_copy` | **D** | fsspec list/glob/recursive expansion over the relay; create containers as needed and honour `maxdepth`. There is no atomic recursive copy. |
-| `_mv_file` | **D** | Require an absent destination, copy the DataNode bytes or recreate the LinkNode, then DELETE the source only after destination success. A failed source delete can leave both paths. |
-| `mv`, `move`, `rename` | **D** | Coordinate recursive copy then leaves-first source removal for containers. The move is non-atomic, reports partial completion, and never invokes `/transfers`. |
+| `_mv_file` | **D / U** | Resolve source metadata first. For a DataNode, require an absent destination, copy its bytes, then DELETE the source only after destination success; a failed source delete can leave both paths. For a LinkNode, raise `NotImplementedError` before destination checks, same-path no-op, copy, delete, rollback, or cleanup mutation. |
+| `mv`, `move`, `rename` | **D / U** | Coordinate recursive copy then leaves-first source removal for DataNodes and ContainerNodes. Resolve LinkNode source metadata, then raise `NotImplementedError` before copy or delete mutation. The supported move path is non-atomic, reports partial completion, and never invokes `/transfers`. |
 | move with overwrite; cross-service move | **U** | Reject an existing destination and cross-filesystem orchestration. |
 | `touch(truncate=True)` | **N** | Whole PUT of zero bytes, creating or truncating the DataNode. |
 | `touch(truncate=False)` | **U** | Cavern has no content-preserving timestamp-touch primitive. |
@@ -158,3 +160,11 @@ v0.3.0 is compatible only when all **N** and **D** rows above pass against an `o
 6. assert that FUSE remains unsupported rather than reporting it as untested support.
 
 This matrix is the complete v0.3.0 fsspec/scientific-stack capability boundary. Broader VOSpace portability, true ranged reads, conditional writes, append/update, native copy, cross-service transfer, block caching, and FUSE are future contracts.
+
+At the 2026-07-21 reconciliation, the hermetic suite collected 592 tests: 586
+passed and six skipped. The reusable fsspec 2026.6.0 subset collected 137 cases:
+131 supported cases passed and the same six question-mark glob rows skipped
+with the path-grammar reason above. Copy, get, and put each contribute the same
+two `fil?1` rows (non-recursive and recursive). The list-source get hashed-name
+case and every missing-parent put case pass; coordinated missing-parent pipe
+and put behavior is covered by dedicated hermetic tests.

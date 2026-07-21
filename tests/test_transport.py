@@ -155,6 +155,7 @@ def test_json_round_trip(router: respx.Router) -> None:
     blob = fs.to_json()
     assert "transport" not in blob
     restored = VOSpaceFileSystem.from_json(blob)
+    assert isinstance(restored, VOSpaceFileSystem)
     assert restored.endpoint_url == fs.endpoint_url
 
 
@@ -172,6 +173,16 @@ async def test_build_and_close_race_leaves_no_open_client(router: respx.Router) 
     import asyncio
 
     pool = _pool(injected_transport=httpx.MockTransport(router.async_handler))
-    await asyncio.gather(pool.client(), pool.aclose(), return_exceptions=True)
+    lock = pool._get_lock()
+    await lock.acquire()
+    close = asyncio.create_task(pool.aclose())
+    await asyncio.sleep(0)
+    build = asyncio.create_task(pool.client())
+    await asyncio.sleep(0)
+    lock.release()
+
+    result = await asyncio.gather(close, build, return_exceptions=True)
+
+    assert isinstance(result[1], ValueError)
     assert pool.closed is True
     assert pool._clients == {}

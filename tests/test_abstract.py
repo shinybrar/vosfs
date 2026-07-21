@@ -6,11 +6,16 @@ simulator-backed synchronous :class:`~vosfs.VOSpaceFileSystem`. A single
 fixtures; the inherited scenario fixtures build their trees through that same
 filesystem, so state persists in the in-memory simulator.
 
-Every abstract test that exercises a behaviour the v0.3.0 profile cannot express
-is overridden with an explicit ``skip`` whose reason maps to the unsupported
-capability, so the green run doubles as a capability matrix. The remaining
-skip root cause is ``_QUESTION_MARK``: path normalization treats ``?`` as a URL
-query delimiter, so glob patterns containing ``?`` cannot be resolved.
+The pinned fsspec 2026.6.0 suites collect 137 cases: 131 supported cases run and
+six question-mark glob cases are skipped as one explicit Unsupported capability.
+The six skips are the ``fil?1`` non-recursive and recursive rows in copy, get,
+and put. The current path grammar treats ``?`` as a URL query delimiter, so it
+cannot express those glob paths without widening the public path contract.
+
+List-source get, including the hashed-name fixture, runs as supported evidence;
+its former failure was fixture teardown, not a backend capability gap. All
+missing-parent put cases also run after coordinated writes gained top-down
+parent materialization.
 """
 
 from __future__ import annotations
@@ -44,8 +49,9 @@ if TYPE_CHECKING:
 _VERSION = f"vosfs v{version('vosfs')}"
 
 _QUESTION_MARK = (
-    f"unsupported in {_VERSION}: path normalization treats '?' as a URL query "
-    "delimiter, so glob patterns containing '?' cannot be resolved"
+    f"unsupported in {_VERSION} (TRD sections 4 and 11): the path grammar "
+    "reserves '?' as a URL query delimiter, so question-mark glob paths cannot "
+    "be expressed"
 )
 
 

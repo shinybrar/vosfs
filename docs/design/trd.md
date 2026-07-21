@@ -7,13 +7,13 @@ Status: **Approved and implemented**
 Implementation status: **Implemented and released**
 
 Contract version vs package version: this v0.3.0 capability contract has governed
-every shipped `vosfs` release from v0.3.0 through v0.4.0; the `vosfs` source is
-unchanged since v0.3.0, so the capability contract remains at v0.3.0 independently
-of the package version.
+every shipped `vosfs` release from v0.3.0 through v0.4.0. Later implementation
+hardening preserves this public capability boundary, so the contract remains at
+v0.3.0 independently of the package version.
 
 Contract target: **`vosfs` v0.3.0**
 
-Last updated: **2026-07-17**
+Last updated: **2026-07-21**
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**,
 and **MAY** in this document are to be interpreted as described by
@@ -152,6 +152,10 @@ Path parsing **MUST**:
 - preserve Unicode path content; and
 - percent-encode individual path segments when constructing HTTP URLs.
 
+Because `?` starts a query under this path grammar, a question-mark glob pattern
+cannot be expressed as a filesystem path. Question-mark glob paths are
+Unsupported; the contract does not add an alternate escaping or path grammar.
+
 The logical VOSpace authority used inside XML documents **MUST** be discovered
 from the URI returned by the root node. It **MUST** be cached per filesystem
 instance and every later node URI **MUST** match it. The caller does not supply
@@ -255,8 +259,11 @@ Listings contain immediate children only and are unpaged. Client traversal
 target has the discovered VOSpace authority; an external LinkNode **MUST**
 raise `NotImplementedError`.
 
-Copying a LinkNode materializes its target bytes as a DataNode. Client-derived
-move recreates the LinkNode at the destination before deleting the source.
+Copying an internal LinkNode whose target has the discovered VOSpace authority
+materializes its target bytes as a DataNode. Copying an external or non-VOS
+LinkNode **MUST** raise `NotImplementedError` before destination mutation.
+Client-derived move of any LinkNode is unsupported and **MUST** raise
+`NotImplementedError` before copy or delete mutation.
 
 Generic property writes, permission mutation, public link creation, `chmod`,
 and `chown` are unsupported.
@@ -345,6 +352,10 @@ downloads are unsupported.
   truncate the target DataNode.
 - `_pipe_file(mode="create")` **MUST** use `_info` as an existence preflight
   and raise `FileExistsError` for an existing path. The check is non-atomic.
+- Coordinated `put` and `pipe` **MUST** create missing remote `ContainerNode`
+  parents top-down at most once per operation before writing descendants. A
+  recursive `put` **MUST** also materialize empty source directories. This does
+  not change the single-file `put_file` or `pipe_file` hooks.
 - `open("wb")` and `open("w")` **MUST** stage into a disk-backed temporary file
   and issue one PUT only when close completes successfully.
 - `open("xb")` and `open("x")` **MUST** add the same non-atomic existence
@@ -384,9 +395,11 @@ multipart upload are unsupported.
   properties.
 - Recursive copy **MUST** create containers and relay files client-side. It is
   non-atomic.
-- Move **MUST** require an absent destination, copy or recreate the source,
-  and delete the source only after destination success. It **MUST NOT** call
-  `/transfers`.
+- Move of a DataNode or ContainerNode **MUST** require an absent destination,
+  copy or recreate the source, and delete the source only after destination
+  success. It **MUST NOT** call `/transfers`.
+- Move of a LinkNode is unsupported and **MUST** raise `NotImplementedError`
+  after resolving source metadata but before copy or delete mutation.
 - `touch(truncate=True)` **MUST** PUT zero bytes. `touch(truncate=False)` is
   unsupported.
 
@@ -412,7 +425,8 @@ the directory cache.
 | `exists`, `lexists`, `isfile`, `isdir`, `size`, `sizes` | Client-derived | Derived from `_info`; `lexists` does not dereference links. |
 | `modified` | Client-derived | Return the OpenCADC modification date. |
 | `created` | Unsupported | Raise `NotImplementedError`; no creation timestamp is fabricated. |
-| `walk`, `find`, `glob`, `expand_path` | Client-derived | Client traversal with fsspec `maxdepth`, detail, and error semantics. Traversal never follows links. |
+| `walk`, `find`, `glob`, `expand_path` | Client-derived | Client traversal with fsspec `maxdepth`, detail, and error semantics. Glob supports `*`, `[]`, and `**`. Traversal never follows links. |
+| Question-mark glob paths | Unsupported | `?` is the existing path grammar's query delimiter, so these patterns cannot be expressed without a new grammar. |
 | `du`, `disk_usage`, `tree` | Client-derived | Unpaged client traversal; potentially expensive. |
 | `checksum`, `ukey` | Client-derived | fsspec metadata token; no separate public content-checksum API. |
 | `cat_file` | Client-derived | Whole-object GET followed by local slicing. |
@@ -425,10 +439,10 @@ the directory cache.
 | Remote Range/206 | Unsupported | No `Range` request is sent. |
 | `pipe_file(mode="overwrite")`, `write_bytes` | Native | Negotiated whole PUT with create-or-truncate behavior. |
 | `pipe_file(mode="create")` | Client-derived | `_info` preflight followed by negotiated PUT; explicitly non-atomic. |
-| `pipe` | Client-derived | Bounded fsspec coordinator over `_pipe_file`. |
+| `pipe` | Client-derived | Bounded fsspec coordinator over `_pipe_file`; creates required remote parents top-down once per operation. |
 | `put_file(mode="overwrite")`, `upload` | Native | Bounded negotiated PUT from one local file. |
 | `put_file(mode="create")` | Client-derived | `_info` preflight followed by negotiated PUT; explicitly non-atomic. |
-| `put` | Client-derived | fsspec expansion and coordinator over `_put_file`. |
+| `put` | Client-derived | fsspec expansion and coordinator over `_put_file`; creates required remote parents top-down once per operation and preserves empty directories. |
 | `open("wb"/"w"/"xb"/"x")` | Client-derived | Disk-staged upload on successful close. |
 | Append and `+` modes | Unsupported | Raise `NotImplementedError` before mutation. |
 | `mkdir` | Native | Create one ContainerNode. |
@@ -436,7 +450,8 @@ the directory cache.
 | `rm_file` | Native | Delete one non-container node. |
 | `rm`, `rmdir` | Client-derived | Empty-check or leaves-first client deletion; no async UWS. |
 | `cp_file`, `copy`, `cp` | Client-derived | Bounded byte relay and client recursion. |
-| `mv`, `move`, `rename` | Client-derived | Non-atomic copy/recreate then delete; no overwrite. |
+| `mv`, `move`, `rename` (DataNode and ContainerNode) | Client-derived | Non-atomic copy/recreate then delete; no overwrite. |
+| `mv`, `move`, `rename` (LinkNode) | Unsupported | Resolve source metadata, then raise `NotImplementedError` before copy or delete mutation. |
 | `touch(truncate=True)` | Native | Create or truncate to zero bytes. |
 | `touch(truncate=False)` | Unsupported | Raise `NotImplementedError`. |
 | Blocking facade | Client-derived | fsspec mirrors supported coroutine hooks when `asynchronous=False`. |
@@ -544,13 +559,32 @@ Hermetic tests **MUST** cover:
 4. every supported coroutine hook with `asynchronous=True`, every mirrored
    public method with `asynchronous=False`, and staged `open()` through its
    supported synchronous seam;
-5. fsspec 2026.6.0's reusable abstract open, pipe, copy, get, put, and move
+5. fsspec 2026.6.0's reusable abstract open, pipe, copy, get, and put
    tests, with skips mapped to an explicit unsupported row;
 6. pickle and fsspec JSON round-trips in a fresh process before and after
    client creation;
 7. instance-cache eviction, close behavior, directory-cache invalidation, and
    environment credential reconstruction; and
 8. all scientific-stack gates in section 14.
+
+The current hermetic baseline collects 592 tests: 586 pass and six skip. All
+six skips belong to the reusable-suite ledger below, which is exact for fsspec
+2026.6.0 and `vosfs` v0.4.0:
+
+| Reusable suite | Supported pass | Unsupported skip | Exact skip reason |
+| --- | ---: | ---: | --- |
+| open | 1 | 0 | — |
+| pipe | 1 | 0 | — |
+| copy | 43 | 2 | `fil?1`, non-recursive and recursive: `?` is the path grammar's query delimiter. |
+| get | 43 | 2 | `fil?1`, non-recursive and recursive: `?` is the path grammar's query delimiter. |
+| put | 43 | 2 | `fil?1`, non-recursive and recursive: `?` is the path grammar's query delimiter. |
+| **Total** | **131** | **6** | One Unsupported question-mark glob capability; no other reusable-suite skip. |
+
+The supported get count includes the list-source hashed-name case; its earlier
+teardown failure did not establish a backend gap. All reusable missing-parent
+put cases run. Coordinated missing-parent pipe and put behavior is additionally
+covered by the focused write tests. Move remains supported through dedicated
+hermetic tests because fsspec 2026.6.0 publishes no reusable move suite.
 
 Replay tests **MUST** block unmatched network access and require every expected
 RESpx route to be called.

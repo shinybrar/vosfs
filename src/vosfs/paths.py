@@ -8,13 +8,108 @@ not a service or VOSpace authority.
 
 from __future__ import annotations
 
-from urllib.parse import quote, unquote
+import operator
+from typing import SupportsIndex
+from urllib.parse import quote, unquote, unquote_to_bytes
 
 PROTOCOL = "vos"
 
 _SCHEME_PREFIX = f"{PROTOCOL}:"
 # Percent-encodings that would smuggle a path separator into a single segment.
 _ENCODED_SEPARATORS = ("%2f", "%5c")
+
+
+class _NormalizedPath(str):
+    """A filesystem path that has already passed one percent decode."""
+
+    __slots__ = ()
+
+    def rstrip(self, chars: str | None = None) -> _NormalizedPath:
+        """Preserve normalization provenance across fsspec traversal."""
+        return _NormalizedPath(super().rstrip(chars))
+
+    def __getitem__(self, key: SupportsIndex | slice) -> str:
+        """Preserve normalization provenance across fsspec path slicing."""
+        value = super().__getitem__(key)
+        return _NormalizedPath(value) if isinstance(key, slice) else value
+
+    def replace(
+        self,
+        old: str,
+        new: str,
+        count: SupportsIndex = -1,
+    ) -> str:
+        """Preserve provenance only for structurally safe remapping text."""
+        replacement_limit = operator.index(count)
+        value = super().replace(old, new, replacement_limit)
+        if value == self:
+            return self
+        origins = _replacement_origins(self, old, new, replacement_limit)
+        if _introduces_hazard(self, value, origins):
+            return value
+        if not value.startswith("/") or any(
+            segment in (".", "..") for segment in value.split("/")
+        ):
+            return value
+        return _NormalizedPath(value)
+
+
+def _replacement_origins(
+    original: str,
+    old: str,
+    new: str,
+    count: int,
+) -> list[int | None]:
+    """Map replacement-result characters to their original character positions."""
+    origins: list[int | None] = []
+    if old == "":
+        insertions = len(original) + 1 if count < 0 else min(count, len(original) + 1)
+        for index in range(len(original)):
+            if index < insertions:
+                origins.extend([None] * len(new))
+            origins.append(index)
+        if len(original) < insertions:
+            origins.extend([None] * len(new))
+        return origins
+
+    cursor = 0
+    replacements = 0
+    while count < 0 or replacements < count:
+        position = original.find(old, cursor)
+        if position < 0:
+            break
+        origins.extend(range(cursor, position))
+        origins.extend([None] * len(new))
+        cursor = position + len(old)
+        replacements += 1
+    origins.extend(range(cursor, len(original)))
+    return origins
+
+
+def _introduces_hazard(
+    original: str,
+    result: str,
+    origins: list[int | None],
+) -> bool:
+    """Return whether a hazardous result token was inserted or newly composed."""
+    for index, character in enumerate(result):
+        origin = origins[index]
+        if character in ("\x00", "?", "#", "%", "\\", ":") and (
+            origin is None or original[origin] != character
+        ):
+            return True
+        if (
+            character == "%"
+            and len(result) >= index + 3
+            and all(
+                digit in "0123456789abcdefABCDEF"
+                for digit in result[index + 1 : index + 3]
+            )
+        ):
+            escape_origins = origins[index : index + 3]
+            if origin is None or escape_origins != [origin, origin + 1, origin + 2]:
+                return True
+    return False
 
 
 def strip_protocol(path: str) -> str:
@@ -35,6 +130,9 @@ def strip_protocol(path: str) -> str:
         ValueError: If the path contains a query, fragment, userinfo, NUL byte,
             an encoded path separator, or a ``..`` segment.
     """
+    if isinstance(path, _NormalizedPath):
+        segments = [segment for segment in path.split("/") if segment]
+        return _NormalizedPath("/" + "/".join(segments)) if segments else "/"
     if "\x00" in path:
         msg = "path must not contain a NUL byte"
         raise ValueError(msg)
@@ -50,10 +148,26 @@ def strip_protocol(path: str) -> str:
     # Collapse any run of leading slashes into a single root slash.
     remainder = "/" + remainder.lstrip("/")
 
-    decoded = [_decode_segment(segment) for segment in remainder.split("/") if segment]
+    encoded = [segment for segment in remainder.split("/") if segment]
+    decoded = [_decode_segment(segment) for segment in encoded]
     if not decoded:
         return "/"
-    return "/" + "/".join(decoded)
+    normalized = "/" + "/".join(decoded)
+    if decoded != encoded:
+        return _NormalizedPath(normalized)
+    return normalized
+
+
+def mark_normalized(path: str) -> str:
+    """Mark a coordinator-produced internal path as already decoded."""
+    if unquote_to_bytes(path) != path.encode():
+        return _NormalizedPath(path)
+    return path
+
+
+def is_normalized(path: str) -> bool:
+    """Return whether ``path`` retains one-decode provenance."""
+    return isinstance(path, _NormalizedPath)
 
 
 def _strip_scheme(path: str) -> str:
@@ -105,7 +219,7 @@ def parent(path: str) -> str:
     if path == "/":
         return "/"
     head = path.rsplit("/", 1)[0]
-    return head or "/"
+    return mark_normalized(head or "/")
 
 
 def segments(path: str) -> list[str]:
