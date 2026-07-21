@@ -955,23 +955,24 @@ class VOSpaceFileSystem(AsyncFileSystem):
                         values.append((index, local.read(max(0, stop - first))))
                     return values
             finally:
-                with contextlib.suppress(OSError):
-                    Path(temp_path).unlink()  # noqa: ASYNC240
+                staging.unlink_temp_path(temp_path)
 
         grouped_items = list(grouped.items())
         chunk_size = effective_batch_size or _get_batch_size()
         if chunk_size == -1:
             chunk_size = len(grouped_items)
-        object_results: list[Any] = []
+        object_results: list[list[tuple[int, bytes]] | BaseException] = []
         for offset in range(0, len(grouped_items), chunk_size):
             chunk = grouped_items[offset : offset + chunk_size]
-            object_results.extend(
+            chunk_results = cast(
+                "list[list[tuple[int, bytes]] | BaseException]",
                 await _run_coros_in_chunks(
                     [stage_object(path, ranges) for path, ranges in chunk],
                     batch_size=chunk_size,
                     return_exceptions=on_error == "return",
-                )
+                ),
             )
+            object_results.extend(chunk_results)
         results: list[bytes | BaseException] = [b""] * count
         for ranges, outcome in zip(grouped.values(), object_results, strict=True):
             if isinstance(outcome, BaseException):
@@ -1067,8 +1068,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
                 )
                 return staging.StagedReadFile(temp_path)
             except BaseException:
-                with contextlib.suppress(OSError):
-                    Path(temp_path).unlink()
+                staging.unlink_temp_path(temp_path)
                 raise
         if "w" in mode or "x" in mode:
             if "x" in mode and self.exists(path):
@@ -1477,8 +1477,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
             )
             await self._put_file(temp_path, path2, mode="overwrite")
         finally:
-            with contextlib.suppress(OSError):
-                Path(temp_path).unlink()  # noqa: ASYNC240 - local-disk cleanup, not remote I/O
+            staging.unlink_temp_path(temp_path)
 
     async def _mv_file(self, path1: str, path2: str) -> None:
         """Move one DataNode; reject a LinkNode before copy or delete."""
@@ -1674,7 +1673,10 @@ class VOSpaceFileSystem(AsyncFileSystem):
             size_matches = type_matches and (
                 expected["type"] == "directory" or copied["size"] == expected["size"]
             )
-            (completed if size_matches else failed).append(copied_path)
+            if size_matches:
+                completed.append(copied_path)
+            else:
+                failed.append(copied_path)
         return completed, failed
 
     def _remove_moved_sources(
