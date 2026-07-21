@@ -10,7 +10,7 @@ Prototyped: 2026-07-15
 
 Question: [shinybrar/vosfs#80](https://github.com/shinybrar/vosfs/issues/80)
 
-Locked profile: [`fsspec-cli` plain `ls` command profile](../design/fsspec-cli-plain-ls-command-profile.md)
+Locked profile: [`fsspec-cli` plain `ls` command profile](../../design/fsspec-cli-plain-ls-command-profile.md)
 
 Client baseline: fsspec 2026.6.0
 
@@ -46,7 +46,7 @@ result shapes, and the tested compatibility floor. No synchronous prototype
 code is an implementation precursor. [Define the async execution boundary for
 fsspec-cli](https://github.com/shinybrar/vosfs/issues/90) owns event-loop,
 filesystem-instance, and host-embedding evidence. [Issue #92](https://github.com/shinybrar/vosfs/issues/92)
-and [ADR 0002](../adr/0002-own-async-filesystems-per-invocation.md)
+and [ADR 0002](../../adr/0002-own-async-filesystems-per-invocation.md)
 subsequently lock the production contract.
 
 ## Superseded prototype seam
@@ -57,7 +57,7 @@ App(filesystems: Mapping[str, AbstractFileSystem]).typer_app
 
 The disposed prototype used host-owned live filesystem instances; production
 injection and ownership are superseded by
-[ADR 0002](../adr/0002-own-async-filesystems-per-invocation.md). A host Typer
+[ADR 0002](../../adr/0002-own-async-filesystems-per-invocation.md). A host Typer
 application can still mount the returned app with `add_typer`; no console script
 or shell-installable surface was added.
 
@@ -212,9 +212,9 @@ literal mapped-root behavior.
 
 - Async execution evidence: [issue #90](https://github.com/shinybrar/vosfs/issues/90)
 - Async host and lifecycle contract: [issue #92](https://github.com/shinybrar/vosfs/issues/92)
-- Source lifecycle failure behavior: [Acquire every referenced async filesystem source before filesystem work](../adr/0003-acquire-referenced-async-filesystem-sources.md)
+- Source lifecycle failure behavior: [Acquire every referenced async filesystem source before filesystem work](../../adr/0003-acquire-referenced-async-filesystem-sources.md)
 - Tested-status vocabulary and version policy: [issue #81](https://github.com/shinybrar/vosfs/issues/81)
-- Long-format decision: [strict `ls -l` rejection](../design/fsspec-cli-ls-long-rejection-profile.md)
+- Long-format decision: [strict `ls -l` rejection](../../design/fsspec-cli-ls-long-rejection-profile.md)
 - Production tracer sequencing: [issue #83](https://github.com/shinybrar/vosfs/issues/83)
 
 ## Verdict and prototype disposal
@@ -235,6 +235,6 @@ retains the evidence; no production CLI implementation was added by issue #80.
 
 ## Evidence links
 
-- [Locked command profile](../design/fsspec-cli-plain-ls-command-profile.md)
-- [Portable capability floor](fsspec-cli-plain-ls-capability-floor.md)
+- [Locked command profile](../../design/fsspec-cli-plain-ls-command-profile.md)
+- [Portable capability floor](../fsspec-cli-plain-ls-capability-floor.md)
 - [Issue #80](https://github.com/shinybrar/vosfs/issues/80)
