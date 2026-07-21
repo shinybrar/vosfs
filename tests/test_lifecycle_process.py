@@ -11,13 +11,38 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
-from conftest import CAPABILITIES, make_fs
+from conftest import BASE_URL, CAPABILITIES, make_fs
 from dask.base import tokenize
 
 from vosfs import VOSpaceFileSystem
+from vosfs.capabilities import ANONYMOUS_METHOD
+from vosfs.negotiate import NegotiatedEndpoint
 
 if TYPE_CHECKING:
     import respx
+
+
+class _CountingTransport(httpx.AsyncBaseTransport):
+    """Record whether a direct send reached the injected transport."""
+
+    def __init__(self, counter: Any) -> None:
+        self._counter = counter
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        with self._counter.get_lock():
+            self._counter.value += 1
+        return httpx.Response(200, request=request)
+
+
+async def _direct_send(filesystem: VOSpaceFileSystem, kind: str) -> None:
+    if kind == "service":
+        await filesystem._send_to_service(
+            "GET", f"{filesystem.endpoint_url}/capabilities"
+        )
+        return
+    await filesystem._byte_send(
+        NegotiatedEndpoint(f"{BASE_URL}/files/data", ANONYMOUS_METHOD), "GET"
+    )
 
 
 def _runtime_probe(filesystem: VOSpaceFileSystem) -> dict[str, Any]:
@@ -49,6 +74,18 @@ def _fork_probe(filesystem: VOSpaceFileSystem, connection: Any) -> None:
         connection.close()
 
 
+def _fork_send_probe(filesystem: VOSpaceFileSystem, kind: str, connection: Any) -> None:
+    """Try to reach one inherited direct-send seam in a forked child."""
+    try:
+        asyncio.run(_direct_send(filesystem, kind))
+    except Exception as exc:  # noqa: BLE001 - send the observable child failure
+        connection.send((type(exc).__name__, str(exc)))
+    else:
+        connection.send((None, None))
+    finally:
+        connection.close()
+
+
 async def test_concurrent_close_is_idempotent_and_blocks_cached_io(
     router: respx.Router,
 ) -> None:
@@ -67,17 +104,30 @@ async def test_pickle_and_json_reconstruct_only_constructor_state(
     router.get("/capabilities").mock(
         return_value=httpx.Response(200, content=CAPABILITIES)
     )
-    filesystem = make_fs(router, asynchronous=True, token="literal")
+    filesystem = VOSpaceFileSystem(
+        BASE_URL,
+        transport=httpx.MockTransport(router.async_handler),
+        asynchronous=True,
+        token="serialization-review-literal",
+    )
     constructor_token = tokenize(filesystem)
     await filesystem._get_bindings()
     filesystem._authority = "example.test!vault"
     filesystem.dircache["/"] = []
     assert tokenize(filesystem) == constructor_token
+    assert (
+        VOSpaceFileSystem(
+            BASE_URL, asynchronous=True, token="serialization-review-literal"
+        )
+        is filesystem
+    )
 
     pickled = pickle.loads(pickle.dumps(filesystem))  # noqa: S301 - trusted round-trip
-    type(filesystem)._cache.pop(pickled._fs_token, None)
     restored_json = VOSpaceFileSystem.from_json(filesystem.to_json())
     assert isinstance(restored_json, VOSpaceFileSystem)
+    assert pickled is not filesystem
+    assert restored_json is not filesystem
+    assert restored_json is not pickled
 
     for restored in (pickled, restored_json):
         assert restored._loop is None
@@ -88,7 +138,7 @@ async def test_pickle_and_json_reconstruct_only_constructor_state(
         assert restored._bindings_lock is None
         assert restored._authority is None
         assert list(restored.dircache) == []
-    await filesystem.aclose()
+    await asyncio.gather(filesystem.aclose(), pickled.aclose(), restored_json.aclose())
 
 
 @pytest.mark.parametrize(("asynchronous", "has_loop"), [(True, False), (False, True)])
@@ -135,6 +185,47 @@ def test_forked_live_instance_fails_before_cached_io(router: respx.Router) -> No
     assert process.exitcode == 0
     assert result[0] == "RuntimeError"
     assert "reconstruct" in result[1]
+
+
+@pytest.mark.parametrize("kind", ["service", "byte"])
+def test_forked_live_instance_fails_before_direct_send(kind: str) -> None:
+    context = multiprocessing.get_context("fork")
+    counter = context.Value("i", 0)
+    filesystem = VOSpaceFileSystem(
+        BASE_URL,
+        transport=_CountingTransport(counter),
+        asynchronous=True,
+        skip_instance_cache=True,
+    )
+    parent, child = context.Pipe(duplex=False)
+    process = context.Process(target=_fork_send_probe, args=(filesystem, kind, child))
+
+    process.start()
+    child.close()
+    result = parent.recv()
+    process.join(timeout=10)
+
+    assert process.exitcode == 0
+    assert result[0] == "RuntimeError"
+    assert "reconstruct" in result[1]
+    assert counter.value == 0
+
+
+@pytest.mark.parametrize("kind", ["service", "byte"])
+async def test_closed_instance_fails_before_direct_send(kind: str) -> None:
+    context = multiprocessing.get_context("spawn")
+    counter = context.Value("i", 0)
+    filesystem = VOSpaceFileSystem(
+        BASE_URL,
+        transport=_CountingTransport(counter),
+        asynchronous=True,
+        skip_instance_cache=True,
+    )
+    await filesystem.aclose()
+
+    with pytest.raises(ValueError, match="closed"):
+        await _direct_send(filesystem, kind)
+    assert counter.value == 0
 
 
 def test_dask_token_depends_only_on_constructor_state(router: respx.Router) -> None:

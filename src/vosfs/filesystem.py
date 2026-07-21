@@ -311,6 +311,17 @@ class VOSpaceFileSystem(AsyncFileSystem):
         """Tokenize primitive constructor state, independent of worker identity."""
         return type(self), self.storage_args, self.storage_options
 
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...]]:
+        """Reconstruct outside fsspec's live instance cache."""
+        constructor, (cls, args, options) = super().__reduce__()
+        return constructor, (cls, args, {**options, "skip_instance_cache": True})
+
+    def to_dict(self, *, include_password: bool = True) -> dict[str, Any]:
+        """Serialize constructor state for fresh fsspec reconstruction."""
+        state = super().to_dict(include_password=include_password)
+        state["skip_instance_cache"] = True
+        return state
+
     @overload
     @classmethod
     def _strip_protocol(cls, path: str) -> str: ...
@@ -381,6 +392,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         the transfer-details URL) therefore can never route a bearer token or
         client certificate to another host.
         """
+        self._ensure_usable()
         request_headers = dict(headers or {})
         use_cert = False
         if _same_origin(url, self.endpoint_url):
@@ -615,6 +627,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         A redirect (3xx) response fails: only the approved synchronous-transfer
         303 chain may redirect.
         """
+        self._ensure_usable()
         request_headers, use_cert = self._byte_routing(endpoint)
         request_headers.update(headers or {})
         request = httpx.Request(
