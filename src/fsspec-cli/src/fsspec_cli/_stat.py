@@ -25,6 +25,7 @@ from ._command import (
     _render_backend_failure,
     _render_output_failure,
     _usage_error,
+    _write_binary,
 )
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._sources import _SourceInvocation
@@ -203,10 +204,7 @@ def _render_line(operand: _MappedOperand, info: Mapping[str, object]) -> bytes:
 
 def _write_line(line: bytes) -> None:
     stdout = _binary_stdout()
-    written = stdout.write(line)
-    if written != len(line):
-        message = "short write"
-        raise OSError(message)
+    _write_binary(stdout, line)
     stdout.flush()
 
 
