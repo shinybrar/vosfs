@@ -89,8 +89,10 @@ After acquiring the one referenced source, the command MUST:
    - otherwise use the exact destination path;
 3. require that any existing resolved destination is a replaceable file (not a
    directory or other type);
-4. await `_info(parent)` for the resolved destination parent and require
-   `type == "directory"`; and
+4. require `type == "directory"` for the resolved destination parent, reusing
+   the validated destination metadata only when that destination is a directory
+   and its path is exactly the resolved parent; otherwise await
+   `_info(parent)`; and
 5. reject exact same configured source name plus exact same backend path before
    mutation.
 
