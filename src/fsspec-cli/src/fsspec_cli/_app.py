@@ -84,7 +84,7 @@ _ASYNC_COMMANDS: tuple[_AsyncCommand, ...] = (
     ("tail", "Display trailing bytes", _run_tail, _TailCommand),
     ("tree", "Display a recursive directory tree", _run_tree, _TreeCommand),
     ("info", "Display normalized file information", _run_info, _InfoCommand),
-    ("cp", "Copy files or a directory with -R", _run_cp, _RawCommand),
+    ("cp", "Copy files or one directory with -R or -r", _run_cp, _RawCommand),
     ("mv", "Move or rename files", _run_mv, _RawCommand),
     ("mkdir", "Create directories", _run_mkdir, _RawCommand),
     ("rmdir", "Remove empty directories", _run_rmdir, _RawCommand),

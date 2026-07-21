@@ -66,8 +66,8 @@ The admission rests on these version-pinned seams:
 - Existing two-operand [same-source](fsspec-cli-same-source-cp-command-profile.md) and [cross-source](fsspec-cli-cross-source-cp-command-profile.md) profiles supply the target resolution, secure staging, recognized-token, lifecycle, and residue floors. The pinned [Local/Memory matrix tests](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/fsspec-cli/tests/test_command_matrix.py) and [mocked native `vosfs` tests](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/fsspec-cli/tests/test_vosfs_command_matrix.py) establish those public-seam primitives.
 
 These sources establish implementation feasibility, not passing recursive-copy
-matrix evidence. Section 9 keeps every positive row `unverified` until the
-complete implementation gate exists.
+matrix evidence. Section 9 keeps every positive row `unverified` until an
+exact-commit implementation gate has immutable evidence.
 
 ## 3. Source forms
 
@@ -388,11 +388,12 @@ distinct-name rows for every ordered pair of the three initial source forms.
 A `source` scope row means both operands use the same configured name. A
 `source pair` scope row means distinct configured names, and its source-form
 cell records the ordered source-to-destination forms. Source-form text exactly
-matches Section 3 of the matrix. Research inspection alone was not qualifying
-command evidence. Issue #286 adds the required hermetic and isolated-wheel
-command evidence for every row.
+matches Section 3 of the matrix. Research inspection and mutable local runs are
+not qualifying command evidence. Issue #286 adds the required hermetic and
+isolated-wheel tests; rows remain `unverified` until an exact-commit gate has an
+immutable evidence link.
 
-The implementation promotes a row only after hermetic tests through
+A later evidence update may promote a row only after hermetic tests through
 `App(sources).typer_app` cover:
 
 - both `-R` and `-r`, every route, target-resolution branch, existing-target

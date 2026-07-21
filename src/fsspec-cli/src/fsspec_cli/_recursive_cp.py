@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, TypeVar, cast
 
 import typer
 
-from ._command import _MappedOperand, _render_backend_failure, _usage_error
+from ._command import _MappedOperand, _usage_error
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._path import _lexical_basename
 from ._sources import _SourceInvocation
@@ -111,6 +111,44 @@ async def _await_current(awaitable: Awaitable[_ValueT]) -> _ValueT:
         raise
 
 
+async def _drain_task(task: asyncio.Task[object]) -> None:
+    while not task.done():
+        with suppress(BaseException):
+            await asyncio.shield(task)
+
+
+def _close_sync_iterator(iterator: Iterator[object]) -> None:
+    close = getattr(iterator, "close", None)
+    if callable(close):
+        close()
+
+
+async def _resolve_sync_iterator(
+    awaitable: Awaitable[object],
+) -> Iterator[object]:
+    task = asyncio.ensure_future(awaitable)
+    try:
+        resolved = await asyncio.shield(task)
+    except BaseException:
+        await _drain_task(task)
+        try:
+            resolved = task.result()
+        except BaseException:  # noqa: BLE001, S110 - original control flow wins.
+            pass
+        else:
+            if isinstance(resolved, Iterator):
+                close_task = asyncio.create_task(
+                    asyncio.to_thread(_close_sync_iterator, resolved)
+                )
+                await _drain_task(close_task)
+                with suppress(BaseException):
+                    close_task.result()
+        raise
+    if not isinstance(resolved, Iterator):
+        raise _IncompatibleResultError
+    return resolved
+
+
 async def _call(
     filesystem: AsyncFileSystem,
     operation: str,
@@ -134,8 +172,9 @@ def _tokens(info: Mapping[object, object]) -> tuple[tuple[str, str | bytes], ...
             raise _IncompatibleResultError
         if present:
             value = info[present[0]]
-            if type(value) is str or type(value) is bytes:
-                tokens.append((normalized, value))
+            if type(value) is not str and type(value) is not bytes:
+                raise _IncompatibleResultError
+            tokens.append((normalized, value))
     return tuple(tokens)
 
 
@@ -260,14 +299,15 @@ async def _walk_rows(filesystem: AsyncFileSystem, path: str) -> list[object]:
         return await _async_rows(result)
     if not inspect.isawaitable(result):
         raise _IncompatibleResultError
-    resolved = await _await_current(result)
-    if not isinstance(resolved, Iterator):
-        raise _IncompatibleResultError
-    return await _sync_rows(resolved)
+    return await _sync_rows(await _resolve_sync_iterator(result))
 
 
 def _child_path(root: str, name: str) -> str:
     return f"/{name}" if root == "/" else f"{root}/{name}"
+
+
+def _has_dot_segment(path: str) -> bool:
+    return any(part in {".", ".."} for part in path.split("/"))
 
 
 def _relative_path(root: str, path: str) -> str:
@@ -293,6 +333,8 @@ def _manifest_from_rows(  # noqa: C901 - exact manifest validation branches.
             or "//" in root
             or "\0" in root
             or "\n" in root
+            or "\r" in root
+            or _has_dot_segment(root)
             or not isinstance(directories, Mapping)
             or not isinstance(files, Mapping)
             or root in rows
@@ -305,18 +347,22 @@ def _manifest_from_rows(  # noqa: C901 - exact manifest validation branches.
 
     expected_roots = {source_path}
     for root, (directories, files) in rows.items():
-        if set(directories).intersection(files):
-            raise _IncompatibleResultError
+        child_names: set[str] = set()
         for collection, kind in ((directories, "directory"), (files, "file")):
             for name, info in collection.items():
                 if (
                     type(name) is not str
                     or not name
+                    or name in {".", ".."}
                     or "/" in name
                     or "\0" in name
                     or "\n" in name
+                    or "\r" in name
                 ):
                     raise _IncompatibleResultError
+                if name in child_names:
+                    raise _IncompatibleResultError
+                child_names.add(name)
                 path = _child_path(root, name)
                 relative = _relative_path(source_path, path)
                 if relative in entries:
@@ -353,15 +399,22 @@ def _render_operand(command: str, operand: _MappedOperand, category: str) -> Non
 def _render_failure(command: str, failure: _Failure) -> None:
     if failure.rendered:
         return
-    if failure.category is None and failure.error is not None:
-        _render_backend_failure(command, failure.operand, failure.error)
-        return
     suffix = "; destination residue may remain" if failure.residue else ""
     _render_operand(command, failure.operand, f"{failure.category}{suffix}")
 
 
 def _read_failure(operand: _MappedOperand, error: Exception) -> _Failure:
-    return _Failure(operand, error=error)
+    if isinstance(error, FileNotFoundError):
+        category = "not found"
+    elif isinstance(error, PermissionError):
+        category = "permission denied"
+    elif isinstance(error, NotImplementedError):
+        category = "unsupported operation"
+    else:
+        rendered_class = _render_diagnostic_value(type(error).__name__)
+        rendered_message = _render_diagnostic_value(str(error))
+        category = f"backend failure ({rendered_class}): {rendered_message}"
+    return _Failure(operand, category, error=error)
 
 
 def _staging_failure(source: _MappedOperand, error: Exception) -> _Failure:
@@ -617,7 +670,11 @@ async def _transfer(  # noqa: C901, PLR0912, PLR0913 - locked transfer phases.
         raise
 
     if failure is not None:
-        _render_failure(command, failure)
+        try:
+            _render_failure(command, failure)
+        except BaseException:
+            _cleanup_under_control(command, source, temporary)
+            raise
     cleanup_succeeded = _cleanup_staging(command, source, temporary)
     if failure is not None:
         return replace(failure, rendered=True)
