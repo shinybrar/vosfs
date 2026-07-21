@@ -46,7 +46,7 @@ finally:
 | `cat_file`, `get`, `open("rb")` | Whole-object staged reads |
 | `pipe_file`, `put`, `open("wb")` | Whole-object staged writes |
 | `mkdir`, `makedirs`, `rm`, `rmdir` | Namespace creation and deletion |
-| `cp` | Client-side copy; copying a LinkNode materializes target bytes |
+| `cp` | Client-side copy; an internal same-authority LinkNode materializes target bytes, while an external or non-VOS LinkNode raises `NotImplementedError` before mutation |
 | `mv` | DataNode/ContainerNode copy/recreate then delete; LinkNode move raises `NotImplementedError` before mutation |
 | Remote byte ranges, append modes, FUSE | Unsupported |
 

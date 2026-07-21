@@ -688,8 +688,29 @@ class VOSpaceFileSystem(AsyncFileSystem):
 
     # -- reading bytes -------------------------------------------------------
 
-    async def _open_read_stream(self, path: str) -> httpx.Response:
+    async def _validate_read_target(self, path: str) -> Node:
+        """Reject external LinkNodes before synchronous transfer negotiation."""
+        authority = await self._require_authority()
+        node = self._parse_and_note(await self._get_node_document(path))
+        if node.node_type == "link":
+            target = urlsplit(cast("str", node.target))
+            if target.scheme != "vos" or target.netloc != authority:
+                msg = "external LinkNode byte reads are unsupported"
+                raise NotImplementedError(msg)
+        return node
+
+    async def _preflight_read_target(self, path: str) -> Node:
+        """Validate byte-read capability and LinkNode target before staging."""
+        (await self._get_bindings()).require_sync()
+        return await self._validate_read_target(path)
+
+    async def _open_read_stream(
+        self, path: str, *, target_validated: bool = False
+    ) -> httpx.Response:
         """Negotiate a read and return the open, streaming byte response."""
+        (await self._get_bindings()).require_sync()
+        if not target_validated:
+            await self._validate_read_target(path)
         endpoint = await self._negotiate(
             path,
             direction=negotiate.DIRECTION_PULL,
@@ -759,7 +780,21 @@ class VOSpaceFileSystem(AsyncFileSystem):
                 Path(lpath).mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
                 return
         callback: Callback = kwargs.get("callback", DEFAULT_CALLBACK)
-        response = await self._open_read_stream(rpath)
+        await self._download_file(rpath, lpath, callback=callback)
+
+    async def _download_file(
+        self,
+        rpath: str,
+        lpath: str,
+        *,
+        callback: Callback = DEFAULT_CALLBACK,
+        target_validated: bool = False,
+    ) -> None:
+        """Stream one read to disk, optionally reusing a safe preflight."""
+        response = await self._open_read_stream(
+            rpath,
+            target_validated=target_validated,
+        )
         try:
             size = response.headers.get("content-length")
             callback.set_size(int(size) if size is not None else None)
@@ -829,9 +864,14 @@ class VOSpaceFileSystem(AsyncFileSystem):
             stripped_path: str,
             ranges: list[tuple[int, int | None, int | None]],
         ) -> list[tuple[int, bytes]]:
+            await self._preflight_read_target(stripped_path)
             temp_path = staging.new_temp_path()
             try:
-                await self._get_file(stripped_path, temp_path)
+                await self._download_file(
+                    stripped_path,
+                    temp_path,
+                    target_validated=True,
+                )
                 with Path(temp_path).open("rb") as local:  # noqa: ASYNC230
                     size = os.fstat(local.fileno()).st_size
                     values: list[tuple[int, bytes]] = []
@@ -941,9 +981,16 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = "deferred commit (autocommit=False) is unsupported"
             raise NotImplementedError(msg)
         if "r" in mode:
+            sync(self.loop, self._preflight_read_target, path)
             temp_path = staging.new_temp_path()
             try:
-                self.get_file(path, temp_path)
+                sync(
+                    self.loop,
+                    self._download_file,
+                    path,
+                    temp_path,
+                    target_validated=True,
+                )
                 return staging.StagedReadFile(temp_path)
             except BaseException:
                 with contextlib.suppress(OSError):
@@ -1324,7 +1371,9 @@ class VOSpaceFileSystem(AsyncFileSystem):
         path2 = self._strip_protocol(path2)
         # Resolve the source first so a missing source fails before any
         # destination container is created (no orphaned parent on error).
-        source_is_dir = (await self._info(path1))["type"] == "directory"
+        source_is_dir = (
+            await self._validate_read_target(path1)
+        ).node_type == "container"
         # Then materialize the destination's parent, for both a directory and a
         # file target, so copying into a not-yet-created subtree (for example a
         # recursive glob into ``target/newdir``) never orphans an intermediate
@@ -1340,7 +1389,11 @@ class VOSpaceFileSystem(AsyncFileSystem):
         # the round-trip md5.
         temp_path = staging.new_temp_path()
         try:
-            await self._get_file(path1, temp_path)
+            await self._download_file(
+                path1,
+                temp_path,
+                target_validated=True,
+            )
             await self._put_file(temp_path, path2, mode="overwrite")
         finally:
             with contextlib.suppress(OSError):

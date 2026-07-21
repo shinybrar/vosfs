@@ -259,9 +259,11 @@ Listings contain immediate children only and are unpaged. Client traversal
 target has the discovered VOSpace authority; an external LinkNode **MUST**
 raise `NotImplementedError`.
 
-Copying a LinkNode materializes its target bytes as a DataNode. Client-derived
-move of a LinkNode is unsupported and **MUST** raise `NotImplementedError`
-before copy or delete mutation.
+Copying an internal LinkNode whose target has the discovered VOSpace authority
+materializes its target bytes as a DataNode. Copying an external or non-VOS
+LinkNode **MUST** raise `NotImplementedError` before destination mutation.
+Client-derived move of any LinkNode is unsupported and **MUST** raise
+`NotImplementedError` before copy or delete mutation.
 
 Generic property writes, permission mutation, public link creation, `chmod`,
 and `chown` are unsupported.
@@ -565,7 +567,7 @@ Hermetic tests **MUST** cover:
    environment credential reconstruction; and
 8. all scientific-stack gates in section 14.
 
-The current hermetic baseline collects 548 tests: 542 pass and six skip. All
+The current hermetic baseline collects 560 tests: 554 pass and six skip. All
 six skips belong to the reusable-suite ledger below, which is exact for fsspec
 2026.6.0 and `vosfs` v0.4.0:
 
