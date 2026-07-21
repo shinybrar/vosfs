@@ -7,10 +7,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: release-main
-  cancel-in-progress: false
-
 jobs:
   orchestrate:
     permissions:

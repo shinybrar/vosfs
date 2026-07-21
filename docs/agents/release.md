@@ -46,11 +46,15 @@ a partial upload, publication, or failed documentation dispatch. A different
 tag, SHA, package, or unexpected asset fails validation.
 
 Every `main` push separately dispatches `dev` documentation for its exact
-`github.sha`. Versioned documentation is causally downstream of successful
-`vosfs` publication: only the completed `vosfs` publisher dispatches the exact
-`vX.Y.Z` tag and SHA to Pages. `fsspec-cli` publication never dispatches
-versioned documentation. Pages accepts repository dispatches only; it has no
-manual release path.
+`github.sha`; release orchestration never coalesces these pushes. Pages isolates
+each `dev` run by that SHA, so a late stale dispatch cannot cancel a newer run.
+It requires the dispatched SHA to equal current `origin/main` both after
+checkout and immediately before publication, making `dev` latest-wins.
+Versioned documentation is causally downstream of successful `vosfs`
+publication: only the completed `vosfs` publisher dispatches the exact
+`vX.Y.Z` tag and SHA to Pages. Versioned runs are isolated per tag and never
+cancelled. `fsspec-cli` publication never dispatches versioned documentation.
+Pages accepts repository dispatches only; it has no manual release path.
 
 Every generated release pull request remains subject to CI, review, and
 squash-merge gates. Release Please owns `CHANGELOG.md` for `vosfs` and
