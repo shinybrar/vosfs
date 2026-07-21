@@ -242,7 +242,7 @@ async def test_cancellation_propagates(router: respx.Router) -> None:
     router.route(url__regex=rf"^{BASE_URL}/files").mock(
         side_effect=lambda _r: httpx.Response(200, content=slow_stream()),
     )
-    VOSpaceSim().install(router)
+    VOSpaceSim().add_file("/slow").install(router)
     fs = make_fs(router, asynchronous=True)
     task = asyncio.create_task(fs._cat_file("/slow"))
     await asyncio.sleep(0.05)

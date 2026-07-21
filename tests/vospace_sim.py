@@ -48,9 +48,13 @@ class VOSpaceSim:
         self.wire_types: dict[str, str] = {}
         self.authorities: dict[str, str] = {}
         self.blobs: dict[str, bytes] = {}
+        self.targets: dict[str, str] = {}
         self.properties: dict[str, dict[str, str]] = {}
         self.node_update_requests: list[httpx.Request] = []
+        self.byte_requests: list[httpx.Request] = []
         self.node_update_status = 200
+        self.delete_requests: list[str] = []
+        self.delete_statuses: dict[str, int] = {}
         self._transition_node("/", wire_type="ContainerNode")
 
     def add_container(self, path: str) -> VOSpaceSim:
@@ -73,6 +77,11 @@ class VOSpaceSim:
         )
         return self
 
+    def add_link(self, path: str, target: str) -> VOSpaceSim:
+        """Seed a LinkNode and return self for chaining."""
+        self._transition_node(path, wire_type="LinkNode", target=target)
+        return self
+
     def with_authority(self, path: str, authority: str) -> VOSpaceSim:
         """Override one node URI authority and return self for chaining."""
         self.authorities[path] = authority
@@ -84,6 +93,7 @@ class VOSpaceSim:
         *,
         wire_type: str | None,
         content: bytes | None = None,
+        target: str | None = None,
         preserve_identity: bool = False,
     ) -> None:
         """Create, replace, or delete a node across every per-path state map."""
@@ -92,11 +102,14 @@ class VOSpaceSim:
             self.wire_types.pop(path, None)
             self.authorities.pop(path, None)
             self.blobs.pop(path, None)
+            self.targets.pop(path, None)
             self.properties.pop(path, None)
             return
         properties = self.properties.get(path) if preserve_identity else None
         authority = self.authorities.get(path) if preserve_identity else None
-        self.nodes[path] = "container" if content is None else "data"
+        self.nodes[path] = (
+            "link" if target is not None else "container" if content is None else "data"
+        )
         self.wire_types[path] = wire_type
         if authority is None:
             self.authorities.pop(path, None)
@@ -106,6 +119,10 @@ class VOSpaceSim:
             self.blobs.pop(path, None)
         else:
             self.blobs[path] = content
+        if target is None:
+            self.targets.pop(path, None)
+        else:
+            self.targets[path] = target
         self.properties[path] = dict(properties or {})
 
     def install(self, router: respx.Router) -> None:
@@ -124,7 +141,7 @@ class VOSpaceSim:
 
     # -- node operations -----------------------------------------------------
 
-    def _node_op(self, request: httpx.Request) -> httpx.Response:
+    def _node_op(self, request: httpx.Request) -> httpx.Response:  # noqa: PLR0911
         path = self._node_path(request)
         if request.method == "GET":
             return self._node_get(path)
@@ -134,6 +151,9 @@ class VOSpaceSim:
         if request.method == "POST":
             return self._node_post(path, request)
         if request.method == "DELETE":
+            self.delete_requests.append(path)
+            if status := self.delete_statuses.get(path):
+                return httpx.Response(status)
             if path not in self.nodes:
                 return httpx.Response(404)
             self._transition_node(path, wire_type=None)
@@ -189,6 +209,11 @@ class VOSpaceSim:
         return self._data_element(path)
 
     def _data_element(self, path: str) -> str:
+        if self.nodes[path] == "link":
+            return (
+                f'<vos:node {_NS} xsi:type="vos:LinkNode" uri="{self._uri(path)}">'
+                f"<vos:target>{escape(self.targets[path])}</vos:target></vos:node>"
+            )
         length = len(self.blobs.get(path, b""))
         length_uri = "ivo://ivoa.net/vospace/core#length"
         wire_type = self.wire_types[path]
@@ -221,6 +246,7 @@ class VOSpaceSim:
         return httpx.Response(200, content=transfer_details(endpoint))
 
     def _byte_op(self, request: httpx.Request) -> httpx.Response:
+        self.byte_requests.append(request)
         path = request.url.params["p"]
         if request.method == "PUT":
             self._transition_node(
@@ -230,6 +256,9 @@ class VOSpaceSim:
                 preserve_identity=True,
             )
             return httpx.Response(201)
+        if path in self.targets:
+            target = urlsplit(self.targets[path])
+            path = target.path or "/"
         content = self.blobs.get(path)
         if content is None:
             return httpx.Response(404)

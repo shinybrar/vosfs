@@ -1,17 +1,81 @@
 """Tests for the namespace and mutation contract (section 10)."""
 
+from urllib.parse import unquote
+
+import httpx
 import pytest
 import respx
-from conftest import AUTHORITY, NODES_URL, make_fs
+from conftest import (
+    AUTHORITY,
+    BASE_URL,
+    NODES_URL,
+    make_fs,
+    mock_capabilities,
+    mock_transfers,
+)
 from defusedxml import ElementTree
 from vospace_sim import VOSpaceSim
 
+from vosfs import errors, paths
 from vosfs.nodes import LENGTH_PROPERTY_URI, VOSPACE_NS, XML_HEADERS
 
 
 def _fs(router, sim, *, asynchronous=True):
     sim.install(router)
     return make_fs(router, asynchronous=asynchronous)
+
+
+def _install_percent_mutation_routes(
+    router: respx.Router,
+    files: dict[str, bytes],
+    *,
+    listings: dict[str, bytes] | None = None,
+    data_nodes: set[str] | None = None,
+) -> tuple[set[str], list[str]]:
+    """Install a percent-aware node store with a misleading ``100A`` alias."""
+    created: set[str] = set()
+    deleted: list[str] = []
+    listings = listings or {}
+    data_nodes = data_nodes or set(files)
+
+    def node_op(request: httpx.Request) -> httpx.Response:
+        encoded = str(request.url).split(NODES_URL, 1)[1]
+        internal = unquote(encoded)
+        if request.method == "GET":
+            document = listings.get(internal)
+            if document is None and (internal in files or internal in data_nodes):
+                document = (
+                    f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+                    f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+                    f'xsi:type="vos:DataNode" uri="vos://{AUTHORITY}{encoded}">'
+                    f"<vos:properties><vos:property "
+                    f'uri="ivo://ivoa.net/vospace/core#length">'
+                    f"{len(files.get(internal, b''))}</vos:property>"
+                    f"</vos:properties></vos:node>"
+                ).encode()
+            if document is not None:
+                return httpx.Response(200, content=document)
+            if encoded in created or "100A" in encoded:
+                document = (
+                    f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+                    f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+                    f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}{encoded}">'
+                    f"<vos:properties/><vos:nodes/></vos:node>"
+                ).encode()
+                return httpx.Response(200, content=document)
+            return httpx.Response(404)
+        if request.method == "PUT":
+            created.add(encoded)
+            return httpx.Response(201)
+        if request.method == "DELETE":
+            deleted.append(internal)
+            files.pop(internal, None)
+            return httpx.Response(200)
+        return httpx.Response(405)
+
+    router.route(url__regex=rf"^{NODES_URL}/").mock(side_effect=node_op)
+    mock_transfers(router, files)
+    return created, deleted
 
 
 async def test_update_node_posts_property_and_refreshes_metadata(
@@ -154,7 +218,7 @@ async def test_update_node_maps_service_failure_without_changing_metadata(
     with pytest.raises(FileExistsError):
         await fs._update_node("/data.bin", {property_uri: "rejected"})
 
-    assert "/" in fs.dircache
+    assert "/" not in fs.dircache
     assert property_uri not in (await fs._info("/data.bin"))["properties"]
     await fs.aclose()
 
@@ -264,6 +328,70 @@ async def test_recursive_rm_deletes_leaves_first(router: respx.Router) -> None:
     await fs.aclose()
 
 
+@pytest.mark.parametrize(
+    ("parent", "child_uri"),
+    [
+        ("/tree", f"vos://{AUTHORITY}/tree/sub/escape"),
+        ("/tree", f"vos://{AUTHORITY}/tree/%2E%2E/escape"),
+        ("/tree", f"vos://{AUTHORITY}/sibling"),
+        ("/", f"vos://{AUTHORITY}/top/escape"),
+        ("/", f"vos://{AUTHORITY}/%2E%2E"),
+        ("/", "vos://other.example!vault/escape"),
+    ],
+)
+async def test_recursive_rm_rejects_non_immediate_listing_children(
+    router: respx.Router, parent: str, child_uri: str
+) -> None:
+    suffix = "" if parent == "/" else parent
+    document = f"""<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}{suffix}">
+      <vos:properties/><vos:nodes>
+        <vos:node xsi:type="vos:DataNode" uri="{child_uri}">
+          <vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">1</vos:property></vos:properties>
+        </vos:node>
+      </vos:nodes>
+    </vos:node>""".encode()
+    mock_capabilities(router)
+    router.get(NODES_URL + suffix).mock(
+        return_value=httpx.Response(200, content=document)
+    )
+    deletes = router.delete(url__regex=rf"^{NODES_URL}").mock(
+        return_value=httpx.Response(200)
+    )
+    fs = make_fs(router, asynchronous=True)
+
+    with pytest.raises(OSError, match="recursive removal failed") as excinfo:
+        await fs._rm(parent, recursive=True)
+
+    assert excinfo.value.completed == []
+    assert excinfo.value.failed == [parent]
+    assert deletes.call_count == 0
+    await fs.aclose()
+
+
+async def test_recursive_rm_reports_leaves_first_partial_completion(
+    router: respx.Router,
+) -> None:
+    sim = (
+        VOSpaceSim()
+        .add_container("/tree")
+        .add_file("/tree/a", b"a")
+        .add_file("/tree/b", b"b")
+    )
+    sim.delete_statuses["/tree/b"] = 500
+    fs = _fs(router, sim)
+
+    with pytest.raises(OSError, match="recursive removal failed") as excinfo:
+        await fs._rm("/tree", recursive=True)
+
+    assert excinfo.value.completed == ["/tree/a"]
+    assert excinfo.value.failed == ["/tree/b"]
+    assert sim.delete_requests == ["/tree/a", "/tree/b"]
+    assert "/tree" in sim.nodes
+    await fs.aclose()
+
+
 async def test_non_recursive_rm_on_non_empty_fails(router: respx.Router) -> None:
     sim = VOSpaceSim().add_container("/d").add_file("/d/f", b"x")
     fs = _fs(router, sim)
@@ -292,6 +420,81 @@ async def test_cp_file_relays_bytes(router: respx.Router) -> None:
     await fs.aclose()
 
 
+def test_copy_preserves_literal_percent_destination_and_parent(
+    router: respx.Router,
+) -> None:
+    files = {"/source": b"copy-me"}
+    created, _deleted = _install_percent_mutation_routes(router, files)
+    fs = make_fs(router)
+
+    destination = paths.strip_protocol("vos://root/100%2541/copied")
+    fs.copy("/source", destination)
+
+    assert files["/source"] == b"copy-me"
+    assert files["/root/100%41/copied"] == b"copy-me"
+    assert "/root/100%2541" in created
+    assert not any("100A" in path for path in created)
+    byte_puts = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "PUT"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ]
+    assert byte_puts == [f"{BASE_URL}/files?p=/root/100%2541/copied"]
+    fs.close()
+
+
+def test_copy_raw_percent_urls_decode_source_and_destination_once(
+    router: respx.Router,
+) -> None:
+    source_root = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/src%2541">'
+        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:DataNode" '
+        f'uri="vos://{AUTHORITY}/src%2541/child"><vos:properties>'
+        f'<vos:property uri="ivo://ivoa.net/vospace/core#length">5</vos:property>'
+        f"</vos:properties></vos:node></vos:nodes></vos:node>"
+    ).encode()
+    files = {"/src%41/file": b"scalar", "/src%41/child": b"child"}
+    created, _deleted = _install_percent_mutation_routes(
+        router,
+        files,
+        listings={"/src%41": source_root},
+    )
+    fs = make_fs(router)
+
+    fs.copy("vos://src%2541/file", "vos://dest%2542/copied")
+    fs.copy("vos://src%2541", "vos://tree%2542", recursive=True)
+
+    assert files["/dest%42/copied"] == b"scalar"
+    assert files["/tree%42/child"] == b"child"
+    assert all("/vos:" not in path for path in files)
+    assert "/tree%2542" in created
+    byte_urls = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method in {"GET", "PUT"}
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ]
+    assert any("p=/src%2541/file" in url for url in byte_urls)
+    assert any("p=/dest%2542/copied" in url for url in byte_urls)
+    assert any("p=/tree%2542/child" in url for url in byte_urls)
+    fs.close()
+
+
+def test_mkdir_preserves_literal_percent_parent(router: respx.Router) -> None:
+    created, _deleted = _install_percent_mutation_routes(router, {})
+    fs = make_fs(router)
+
+    fs.mkdir("vos://root/100%2541/new", create_parents=True)
+
+    assert "/root/100%2541" in created
+    assert "/root/100%2541/new" in created
+    assert not any("100A" in path for path in created)
+    fs.close()
+
+
 def test_recursive_copy_creates_tree(router: respx.Router) -> None:
     sim = (
         VOSpaceSim()
@@ -311,7 +514,141 @@ def test_recursive_copy_creates_tree(router: respx.Router) -> None:
     fs.close()
 
 
+def test_copy_internal_link_materializes_target_bytes(router: respx.Router) -> None:
+    target = f"vos://{AUTHORITY}/target"
+    sim = VOSpaceSim().add_file("/target", b"linked").add_link("/src", target)
+    sim.install(router)
+    fs = make_fs(router)
+
+    fs.copy("/src", "/dst")
+
+    assert sim.nodes["/dst"] == "data"
+    assert sim.blobs["/dst"] == b"linked"
+    assert sim.nodes["/src"] == "link"
+    fs.close()
+
+
+def test_copy_rejects_external_link_before_destination_mutation(
+    router: respx.Router,
+) -> None:
+    target = "vos://external.example!vault/target?token=secret-token"
+    sim = VOSpaceSim().add_link("/src", target)
+    sim.install(router)
+    fs = make_fs(router, token="service-token")
+
+    with pytest.raises(NotImplementedError, match="external LinkNode"):
+        fs.copy("/src", "/new-parent/dst")
+
+    assert "/new-parent" not in sim.nodes
+    assert "/new-parent/dst" not in sim.nodes
+    assert sim.byte_requests == []
+    assert not any(call.request.url.path == "/arc/synctrans" for call in router.calls)
+    assert not any(
+        call.request.url.host != "staging.canfar.net" for call in router.calls
+    )
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert "secret-token" not in str(router.calls)
+    fs.close()
+
+
 # --- move -----------------------------------------------------------------------
+
+
+async def test_mv_file_copies_then_deletes_data(router: respx.Router) -> None:
+    sim = VOSpaceSim().add_file("/src", b"moved")
+    fs = _fs(router, sim)
+
+    await fs._mv_file("/src", "/dst")
+
+    assert sim.blobs["/dst"] == b"moved"
+    assert "/src" not in sim.nodes
+    await fs.aclose()
+
+
+async def test_mv_file_same_data_path_is_noop(router: respx.Router) -> None:
+    sim = VOSpaceSim().add_file("/src", b"source")
+    fs = _fs(router, sim)
+
+    await fs._mv_file("/src", "/src")
+
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "data"
+    assert sim.blobs["/src"] == b"source"
+    assert sim.delete_requests == []
+    await fs.aclose()
+
+
+@pytest.mark.parametrize("destination", ["/src", "/src/dest"])
+async def test_mv_file_rejects_container_before_mutation(
+    router: respx.Router,
+    destination: str,
+) -> None:
+    sim = VOSpaceSim().add_container("/src").add_file("/src/a", b"a")
+    fs = _fs(router, sim)
+
+    with pytest.raises(IsADirectoryError, match="source is a container"):
+        await fs._mv_file("/src", destination)
+
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "container"
+    assert sim.blobs["/src/a"] == b"a"
+    assert destination == "/src" or destination not in sim.nodes
+    assert sim.delete_requests == []
+    await fs.aclose()
+
+
+async def test_mv_file_rejects_existing_data_destination_before_mutation(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_file("/src", b"source").add_file("/dst", b"existing")
+    fs = _fs(router, sim)
+
+    with pytest.raises(FileExistsError, match="move destination already exists"):
+        await fs._mv_file("/src", "/dst")
+
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "data"
+    assert sim.blobs["/src"] == b"source"
+    assert sim.nodes["/dst"] == "data"
+    assert sim.blobs["/dst"] == b"existing"
+    assert sim.delete_requests == []
+    await fs.aclose()
+
+
+@pytest.mark.parametrize("destination_state", ["absent", "existing", "same"])
+async def test_mv_file_rejects_link_before_mutation(
+    router: respx.Router,
+    destination_state: str,
+) -> None:
+    target = f"vos://{AUTHORITY}/target"
+    sim = VOSpaceSim().add_file("/target", b"target").add_link("/src", target)
+    destination = "/src" if destination_state == "same" else "/dst"
+    if destination_state == "existing":
+        sim.add_file(destination, b"existing")
+    fs = _fs(router, sim)
+
+    with pytest.raises(NotImplementedError, match="moving a LinkNode"):
+        await fs._mv_file("/src", destination)
+
+    node_requests = [
+        call.request
+        for call in router.calls
+        if str(call.request.url).startswith(NODES_URL)
+    ]
+    assert ("GET", f"{NODES_URL}/src") in [
+        (request.method, str(request.url)) for request in node_requests
+    ]
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "link"
+    assert sim.targets["/src"] == target
+    if destination_state == "absent":
+        assert destination not in sim.nodes
+        assert destination not in sim.blobs
+    elif destination_state == "existing":
+        assert sim.nodes[destination] == "data"
+        assert sim.blobs[destination] == b"existing"
+    assert sim.delete_requests == []
+    await fs.aclose()
 
 
 def test_move_requires_absent_destination(router: respx.Router) -> None:
@@ -333,12 +670,267 @@ def test_move_copies_then_deletes_source(router: respx.Router) -> None:
     fs.close()
 
 
+def test_move_rejects_link_before_mutation(router: respx.Router) -> None:
+    target = f"vos://{AUTHORITY}/target"
+    sim = VOSpaceSim().add_file("/target", b"target").add_link("/src", target)
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(NotImplementedError, match="moving a LinkNode"):
+        fs.mv("/src", "/dst")
+
+    node_requests = [
+        call.request
+        for call in router.calls
+        if str(call.request.url).startswith(NODES_URL)
+    ]
+    assert ("GET", f"{NODES_URL}/src") in [
+        (request.method, str(request.url)) for request in node_requests
+    ]
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "link"
+    assert sim.targets["/src"] == target
+    assert "/dst" not in sim.nodes
+    assert "/dst" not in sim.blobs
+    assert sim.delete_requests == []
+    fs.close()
+
+
+def test_move_rejects_link_before_existing_destination_check(
+    router: respx.Router,
+) -> None:
+    target = f"vos://{AUTHORITY}/target"
+    sim = (
+        VOSpaceSim()
+        .add_file("/target", b"target")
+        .add_link("/src", target)
+        .add_file("/dst", b"existing")
+    )
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(NotImplementedError, match="moving a LinkNode"):
+        fs.mv("/src", "/dst")
+
+    node_requests = [
+        call.request
+        for call in router.calls
+        if str(call.request.url).startswith(NODES_URL)
+    ]
+    assert ("GET", f"{NODES_URL}/src") in [
+        (request.method, str(request.url)) for request in node_requests
+    ]
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "link"
+    assert sim.targets["/src"] == target
+    assert sim.nodes["/dst"] == "data"
+    assert sim.blobs["/dst"] == b"existing"
+    assert sim.delete_requests == []
+    fs.close()
+
+
+def test_move_rejects_link_before_same_path_noop(router: respx.Router) -> None:
+    target = f"vos://{AUTHORITY}/target"
+    sim = VOSpaceSim().add_file("/target", b"target").add_link("/src", target)
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(NotImplementedError, match="moving a LinkNode"):
+        fs.mv("/src", "/src")
+
+    node_requests = [
+        call.request
+        for call in router.calls
+        if str(call.request.url).startswith(NODES_URL)
+    ]
+    assert ("GET", f"{NODES_URL}/src") in [
+        (request.method, str(request.url)) for request in node_requests
+    ]
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "link"
+    assert sim.targets["/src"] == target
+    assert sim.delete_requests == []
+    fs.close()
+
+
+def test_move_preserves_literal_percent_destination_before_source_delete(
+    router: respx.Router,
+) -> None:
+    files = {"/move-source": b"moved"}
+    _created, deleted = _install_percent_mutation_routes(router, files)
+    fs = make_fs(router)
+
+    fs.mv("/move-source", "vos://moved%2541")
+
+    assert files == {"/moved%41": b"moved"}
+    assert deleted == ["/move-source"]
+    assert all("movedA" not in str(call.request.url) for call in router.calls)
+    byte_puts = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "PUT"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ]
+    assert byte_puts == [f"{BASE_URL}/files?p=/moved%2541"]
+    fs.close()
+
+
+def test_recursive_move_keeps_source_when_one_child_copy_fails(
+    router: respx.Router,
+) -> None:
+    source_listing = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/src">'
+        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:DataNode" '
+        f'uri="vos://{AUTHORITY}/src/a"><vos:properties/></vos:node>'
+        f'<vos:node xsi:type="vos:DataNode" uri="vos://{AUTHORITY}/src/b">'
+        f"<vos:properties/></vos:node></vos:nodes></vos:node>"
+    ).encode()
+    files = {"/src/a": b"a"}
+    _created, deleted = _install_percent_mutation_routes(
+        router,
+        files,
+        listings={"/src": source_listing},
+        data_nodes={"/src/a", "/src/b"},
+    )
+    fs = make_fs(router)
+
+    with pytest.raises(errors.VOSpaceError, match="copy failed") as excinfo:
+        fs.mv("/src", "/dest", recursive=True)
+
+    assert excinfo.value.completed == ["/dest", "/dest/a"]
+    assert excinfo.value.failed == ["/dest/b"]
+    assert deleted == []
+    assert files["/src/a"] == b"a"
+    fs.close()
+
+
+def test_recursive_move_keeps_source_when_copy_omits_one_child(
+    router: respx.Router,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sim = (
+        VOSpaceSim()
+        .add_container("/src")
+        .add_file("/src/a", b"a")
+        .add_file("/src/b", b"b")
+    )
+    sim.install(router)
+    fs = make_fs(router)
+    copy = fs.copy
+
+    def incomplete_copy(*_args: object, **_kwargs: object) -> None:
+        fs.mkdir("/dest")
+        copy("/src/a", "/dest/a")
+
+    monkeypatch.setattr(fs, "copy", incomplete_copy)
+
+    with pytest.raises(errors.VOSpaceError, match="incomplete") as excinfo:
+        fs.mv("/src", "/dest", recursive=True)
+
+    assert excinfo.value.completed == ["/dest", "/dest/a"]
+    assert excinfo.value.failed == ["/dest/b"]
+    assert sim.nodes["/dest"] == "container"
+    assert sim.blobs["/dest/a"] == b"a"
+    assert "/dest/b" not in sim.nodes
+    assert sim.blobs["/src/a"] == b"a"
+    assert sim.blobs["/src/b"] == b"b"
+    assert sim.delete_requests == []
+    fs.close()
+
+
+def test_recursive_move_maxdepth_retains_excluded_descendants(
+    router: respx.Router,
+) -> None:
+    sim = (
+        VOSpaceSim()
+        .add_container("/src")
+        .add_file("/src/top", b"top")
+        .add_container("/src/sub")
+        .add_file("/src/sub/deep", b"deep")
+    )
+    sim.install(router)
+    fs = make_fs(router)
+
+    fs.mv("/src", "/dest", recursive=True, maxdepth=1)
+
+    assert sim.blobs["/dest/top"] == b"top"
+    assert sim.nodes["/dest/sub"] == "container"
+    assert "/dest/sub/deep" not in sim.nodes
+    assert sim.blobs["/src/sub/deep"] == b"deep"
+    assert sim.nodes["/src"] == "container"
+    assert sim.nodes["/src/sub"] == "container"
+    assert "/src/top" not in sim.nodes
+    assert sim.delete_requests == ["/src/top"]
+    fs.close()
+
+
+def test_move_rejects_destination_within_source_before_mutation(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_container("/src").add_file("/src/a", b"a")
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(ValueError, match="within the source"):
+        fs.mv("/src", "/src/dest", recursive=True)
+
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.blobs["/src/a"] == b"a"
+    assert "/src/dest" not in sim.nodes
+    assert sim.delete_requests == []
+    fs.close()
+
+
+def test_recursive_move_rejects_child_link_before_mutation(
+    router: respx.Router,
+) -> None:
+    target = f"vos://{AUTHORITY}/target"
+    sim = (
+        VOSpaceSim()
+        .add_file("/target", b"target")
+        .add_container("/src")
+        .add_file("/src/a", b"a")
+        .add_link("/src/link", target)
+    )
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(NotImplementedError, match="moving a LinkNode"):
+        fs.mv("/src", "/dest", recursive=True)
+
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src/link"] == "link"
+    assert sim.blobs["/src/a"] == b"a"
+    assert "/dest" not in sim.nodes
+    assert sim.delete_requests == []
+    fs.close()
+
+
 def test_move_same_path_is_noop(router: respx.Router) -> None:
     sim = VOSpaceSim().add_file("/src", b"x")
     sim.install(router)
     fs = make_fs(router)
     fs.mv("/src", "/src")
     assert sim.blobs["/src"] == b"x"
+    fs.close()
+
+
+def test_move_nonempty_directory_same_path_is_rejected_before_mutation(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_container("/src").add_file("/src/a", b"a")
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(FileExistsError, match="destination already exists"):
+        fs.mv("/src", "/src")
+
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "container"
+    assert sim.blobs["/src/a"] == b"a"
+    assert sim.delete_requests == []
     fs.close()
 
 
@@ -377,3 +969,61 @@ async def test_rm_file_refuses_a_container(router: respx.Router) -> None:
     with pytest.raises(IsADirectoryError):
         await fs._rm_file("/dir")
     await fs.aclose()
+
+
+async def test_uncertain_node_mutation_invalidates_cached_state(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_file("/data.bin", b"data")
+    sim.node_update_status = 500
+    fs = _fs(router, sim)
+    await fs._ls("/", detail=True)
+    assert "/" in fs.dircache
+
+    with pytest.raises(OSError, match="HTTP 500"):
+        await fs._update_node("/data.bin", {"ivo://example.org/props#x": "value"})
+
+    assert "/" not in fs.dircache
+    await fs.aclose()
+
+
+async def test_incomplete_listing_refresh_evicts_stale_cached_entry(
+    router: respx.Router,
+) -> None:
+    malformed = f"""<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/tree">
+      <vos:properties/><vos:nodes>
+        <vos:node xsi:type="vos:DataNode" uri="vos://{AUTHORITY}/tree/sub/escape">
+          <vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">1</vos:property></vos:properties>
+        </vos:node>
+      </vos:nodes>
+    </vos:node>""".encode()
+    mock_capabilities(router)
+    router.get(f"{NODES_URL}/tree").mock(
+        return_value=httpx.Response(200, content=malformed)
+    )
+    fs = make_fs(router, asynchronous=True)
+    complete = [{"name": "/tree/known", "type": "file", "size": 1}]
+    fs.dircache["/tree"] = complete
+
+    with pytest.raises(OSError, match="immediate descendant"):
+        await fs._fetch_listing("/tree")
+
+    assert "/tree" not in fs.dircache
+    await fs.aclose()
+
+
+def test_invalidate_cache_clears_path_or_all_without_io(router: respx.Router) -> None:
+    fs = make_fs(router)
+    fs.dircache["/"] = []
+    fs.dircache["/tree"] = []
+    fs.dircache["/tree/sub"] = []
+    fs.dircache["/other"] = []
+
+    fs.invalidate_cache("/tree")
+    assert list(fs.dircache) == ["/other"]
+    fs.invalidate_cache()
+    assert list(fs.dircache) == []
+    assert len(router.calls) == 0
+    fs.close()

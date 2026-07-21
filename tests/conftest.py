@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 import pytest
@@ -91,6 +91,28 @@ def target_path(content: bytes | None) -> str:
     return match.group(1).strip()[len(prefix) :] or "/"
 
 
+def data_node_response(
+    request: httpx.Request, files: dict[str, bytes]
+) -> httpx.Response:
+    """Return root or DataNode metadata for the transfer test helper."""
+    raw_path = request.url.raw_path.split(b"?", 1)[0].decode()
+    suffix = unquote(raw_path.removeprefix(urlsplit(NODES_URL).path))
+    path = suffix or "/"
+    if path == "/":
+        return httpx.Response(200, content=ROOT_CONTAINER)
+    if path not in files:
+        return httpx.Response(404)
+    length_uri = "ivo://ivoa.net/vospace/core#length"
+    document = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:DataNode" uri="vos://{AUTHORITY}{path}">'
+        f'<vos:properties><vos:property uri="{length_uri}">'
+        f"{len(files[path])}</vos:property></vos:properties></vos:node>"
+    ).encode()
+    return httpx.Response(200, content=document)
+
+
 def mock_transfers(router: respx.Router, files: dict[str, bytes]) -> None:
     """Wire path-aware synchronous negotiation and byte endpoints.
 
@@ -98,7 +120,10 @@ def mock_transfers(router: respx.Router, files: dict[str, bytes]) -> None:
     endpoint; the negotiation POST and transfer-details GET route to it.
     """
     mock_capabilities(router)
-    router.get(NODES_URL).mock(return_value=httpx.Response(200, content=ROOT_CONTAINER))
+
+    router.get(url__regex=rf"^{re.escape(NODES_URL)}(?:/.*)?$").mock(
+        side_effect=lambda request: data_node_response(request, files)
+    )
 
     def negotiate_post(request: httpx.Request) -> httpx.Response:
         details = f"{BASE_URL}/details?t={quote(target_path(request.content))}"

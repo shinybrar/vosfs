@@ -1,11 +1,16 @@
 """Tests for the read contract (section 8)."""
 
+import asyncio
+import tempfile
 from pathlib import Path
 
 import httpx
 import pytest
 import respx
 from conftest import BASE_URL, make_fs, mock_transfers
+from vospace_sim import VOSpaceSim
+
+from vosfs import staging
 
 
 async def test_get_file_streams_to_disk(router: respx.Router, tmp_path: Path) -> None:
@@ -31,6 +36,132 @@ async def test_cat_file_whole(router: respx.Router) -> None:
     fs = make_fs(router, asynchronous=True)
     assert await fs._cat_file("/f") == b"abcdef"
     await fs.aclose()
+
+
+@pytest.mark.parametrize("operation", ["cat_file", "get_file", "open"])
+def test_internal_link_byte_reads(
+    router: respx.Router, tmp_path: Path, operation: str
+) -> None:
+    sim = (
+        VOSpaceSim()
+        .add_file("/target", b"linked bytes")
+        .add_link("/link", "vos://example.test!vault/target")
+    )
+    sim.install(router)
+    fs = make_fs(router)
+
+    if operation == "cat_file":
+        assert fs.cat_file("/link") == b"linked bytes"
+    elif operation == "get_file":
+        local = tmp_path / "linked.bin"
+        fs.get_file("/link", local)
+        assert local.read_bytes() == b"linked bytes"
+    else:
+        with fs.open("/link", "rb") as handle:
+            assert handle.read() == b"linked bytes"
+
+    fs.close()
+
+
+@pytest.mark.parametrize("operation", ["cat_file", "get_file", "open"])
+def test_external_link_byte_reads_are_rejected_before_transfer(
+    router: respx.Router, tmp_path: Path, operation: str
+) -> None:
+    sim = VOSpaceSim().add_link("/link", "vos://external.example!vault/target")
+    sim.install(router)
+    fs = make_fs(router, token="service-token")
+
+    def attempt_read() -> None:
+        if operation == "cat_file":
+            fs.cat_file("/link")
+        elif operation == "get_file":
+            fs.get_file("/link", tmp_path / "external.bin")
+        else:
+            with fs.open("/link", "rb"):
+                pass
+
+    with pytest.raises(NotImplementedError, match="external LinkNode"):
+        attempt_read()
+
+    assert sim.byte_requests == []
+    assert not any(call.request.url.path == "/arc/synctrans" for call in router.calls)
+    external_calls = [
+        call for call in router.calls if call.request.url.host != "staging.canfar.net"
+    ]
+    assert external_calls == []
+    assert list(tmp_path.iterdir()) == []
+    fs.close()
+
+
+@pytest.mark.parametrize(
+    ("target", "secrets"),
+    [
+        (
+            "vos://user:password@external.example!vault/target",
+            ("user", "password"),
+        ),
+        (
+            "https://external.example/files/preauth:secret-token/data?token=query-token",
+            ("secret-token", "query-token"),
+        ),
+    ],
+)
+def test_external_link_error_redacts_target(
+    router: respx.Router, target: str, secrets: tuple[str, ...]
+) -> None:
+    sim = VOSpaceSim().add_link("/link", target)
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(NotImplementedError) as caught:
+        fs.cat_file("/link")
+
+    for rendered in (str(caught.value), repr(caught.value)):
+        assert target not in rendered
+        assert all(secret not in rendered for secret in secrets)
+    fs.close()
+
+
+@pytest.mark.parametrize("operation", ["cat_ranges", "open"])
+def test_external_link_rejection_precedes_staging(
+    router: respx.Router,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    sim = VOSpaceSim().add_link("/link", "vos://external.example!vault/target")
+    sim.install(router)
+    fs = make_fs(router)
+    temp_calls = 0
+    unlink_calls = 0
+    original_new_temp_path = staging.new_temp_path
+    original_unlink = Path.unlink
+
+    def counted_new_temp_path() -> str:
+        nonlocal temp_calls
+        temp_calls += 1
+        return original_new_temp_path()
+
+    def counted_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        nonlocal unlink_calls
+        unlink_calls += 1
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(staging, "new_temp_path", counted_new_temp_path)
+    monkeypatch.setattr(Path, "unlink", counted_unlink)
+
+    def attempt_read() -> None:
+        if operation == "cat_ranges":
+            fs.cat_ranges(["/link"], [0], [1], on_error="raise")
+        else:
+            with fs.open("/link", "rb"):
+                pass
+
+    with pytest.raises(NotImplementedError, match="external LinkNode"):
+        attempt_read()
+
+    assert temp_calls == 0
+    assert unlink_calls == 0
+    fs.close()
 
 
 @pytest.mark.parametrize(
@@ -69,6 +200,111 @@ async def test_cat_ranges_groups_multiple_objects(router: respx.Router) -> None:
     fs = make_fs(router, asynchronous=True)
     result = await fs._cat_ranges(["/a", "/b", "/a"], [0, 1, 2], [2, 3, 4])
     assert result == [b"aa", b"bb", b"aa"]
+    await fs.aclose()
+
+
+@pytest.mark.parametrize(
+    ("call_batch_size", "filesystem_batch_size", "expected_active"),
+    [(2, None, 2), (-1, None, 3), (None, -1, 3)],
+)
+async def test_cat_ranges_bounds_active_staged_objects(  # noqa: PLR0913 - parametrized public seam
+    router: respx.Router,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    call_batch_size: int | None,
+    filesystem_batch_size: int | None,
+    expected_active: int,
+) -> None:
+    active = 0
+    maximum_active = 0
+    maximum_temps = 0
+    release = asyncio.Event()
+
+    def temp_count() -> int:
+        return sum(path.name.startswith("vosfs-") for path in tmp_path.iterdir())
+
+    class BlockingStream(httpx.AsyncByteStream):
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        async def __aiter__(self):
+            nonlocal active, maximum_active, maximum_temps
+            active += 1
+            maximum_active = max(maximum_active, active)
+            maximum_temps = max(maximum_temps, temp_count())
+            if active == expected_active:
+                release.set()
+            await release.wait()
+            try:
+                yield self.content
+            finally:
+                active -= 1
+
+    router.route(url__regex=rf"^{BASE_URL}/files").mock(
+        side_effect=lambda request: httpx.Response(
+            200,
+            stream=BlockingStream(request.url.params["p"].encode() * 4),
+        )
+    )
+    mock_transfers(router, {"/a": b"", "/b": b"", "/c": b""})
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    fs = make_fs(router, asynchronous=True, batch_size=filesystem_batch_size)
+
+    result = await asyncio.wait_for(
+        fs._cat_ranges(
+            ["/a", "/b", "/c", "/a"],
+            [0, 0, 0, 1],
+            [2, 2, 2, 3],
+            batch_size=call_batch_size,
+        ),
+        timeout=1,
+    )
+
+    assert result == [b"/a", b"/b", b"/c", b"a/"]
+    assert maximum_active == expected_active
+    assert maximum_temps == expected_active
+    assert temp_count() == 0
+    await fs.aclose()
+
+
+async def test_cat_ranges_rejects_invalid_batch_size_before_io(
+    router: respx.Router,
+) -> None:
+    fs = make_fs(router, asynchronous=True)
+    with pytest.raises(ValueError, match="batch_size"):
+        await fs._cat_ranges(["/a"], [0], [1], batch_size=0)
+    assert len(router.calls) == 0
+    await fs.aclose()
+
+
+async def test_cat_ranges_honors_invalid_filesystem_batch_size_before_io(
+    router: respx.Router,
+) -> None:
+    fs = make_fs(router, asynchronous=True, batch_size=0)
+    with pytest.raises(ValueError, match="batch_size"):
+        await fs._cat_ranges(["/a"], [0], [1])
+    assert len(router.calls) == 0
+    await fs.aclose()
+
+
+@pytest.mark.parametrize("on_error", ["ignore", "omit"])
+async def test_cat_ranges_rejects_invalid_on_error_before_io(
+    router: respx.Router, on_error: str
+) -> None:
+    fs = make_fs(router, asynchronous=True)
+    with pytest.raises(ValueError, match="on_error"):
+        await fs._cat_ranges(["/a"], [0], [1], on_error=on_error)
+    assert len(router.calls) == 0
+    await fs.aclose()
+
+
+async def test_cat_ranges_rejects_cardinality_mismatch_before_io(
+    router: respx.Router,
+) -> None:
+    fs = make_fs(router, asynchronous=True)
+    with pytest.raises(ValueError, match="same length"):
+        await fs._cat_ranges(["/a", "/b"], [0], [1, 2])
+    assert len(router.calls) == 0
     await fs.aclose()
 
 
@@ -175,28 +411,266 @@ def test_cat_head_tail(router: respx.Router) -> None:
     fs.close()
 
 
-def test_direct_byte_endpoint_303_is_unsupported(router: respx.Router) -> None:
-    # A 303 whose Location is a direct byte endpoint (non-XML) is not yet
-    # negotiated (issue #63): distinguishing it from transfer details without
-    # consuming a possibly single-use or large endpoint needs a streaming
-    # discriminator validated against representative response shapes. Until
-    # then it surfaces as a transfer-details parse error rather than being used.
-    import re
+def test_literal_percent_targets_survive_scalar_list_and_bulk_coordinators(
+    router: respx.Router,
+) -> None:
+    from conftest import BASE_URL, SYNC_URL, target_path
 
-    from conftest import NODES_URL, ROOT_CONTAINER, SYNC_URL, mock_capabilities
+    internal = "/authority/dir/100%41"
+    mock_transfers(router, {internal: b"literal-percent"})
+    fs = make_fs(router)
+
+    assert fs.cat("vos://authority/dir/100%2541") == b"literal-percent"
+    assert fs.cat(["vos://authority/dir/100%2541"]) == {internal: b"literal-percent"}
+    assert fs.cat_ranges(["vos://authority/dir/100%2541"], [0], [7]) == [b"literal"]
+
+    assert [
+        target_path(call.request.content)
+        for call in router.calls
+        if call.request.method == "POST" and str(call.request.url) == SYNC_URL
+    ] == [internal, internal, internal]
+    assert [
+        call.request.url.params["p"]
+        for call in router.calls
+        if call.request.method == "GET"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ] == [internal, internal, internal]
+    assert [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "GET"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ] == [f"{BASE_URL}/files?p=/authority/dir/100%2541"] * 3
+    fs.close()
+
+
+def test_literal_percent_target_survives_wildcard_expansion(
+    router: respx.Router,
+) -> None:
+    from conftest import AUTHORITY, BASE_URL, NODES_URL
+
+    internal = "/authority/dir/100%41"
+    listing = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/authority/dir">'
+        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:DataNode" '
+        f'uri="vos://{AUTHORITY}/authority/dir/100%2541">'
+        f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
+        f"15</vos:property></vos:properties></vos:node></vos:nodes></vos:node>"
+    ).encode()
+    router.get(f"{NODES_URL}/authority/dir").mock(
+        return_value=httpx.Response(200, content=listing)
+    )
+    mock_transfers(router, {internal: b"literal-percent"})
+    fs = make_fs(router)
+
+    matches = fs.glob("vos://authority/dir/*")
+    assert matches == [internal]
+    assert isinstance(matches[0], str)
+    assert fs.cat("vos://authority/dir/*") == {internal: b"literal-percent"}
+    assert fs.cat(matches[0]) == b"literal-percent"
+    byte_urls = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "GET"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ]
+    assert byte_urls == [f"{BASE_URL}/files?p=/authority/dir/100%2541"] * 2
+    fs.close()
+
+
+def test_literal_percent_target_survives_recursive_wildcard_get(
+    router: respx.Router,
+    tmp_path: Path,
+) -> None:
+    from conftest import AUTHORITY, BASE_URL, NODES_URL
+
+    internal = "/authority/dir/100%41"
+    listing = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/authority/dir">'
+        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:DataNode" '
+        f'uri="vos://{AUTHORITY}/authority/dir/100%2541">'
+        f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
+        f"15</vos:property></vos:properties></vos:node></vos:nodes></vos:node>"
+    ).encode()
+    child = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:DataNode" uri="vos://{AUTHORITY}/authority/dir/100%2541">'
+        f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
+        f"15</vos:property></vos:properties></vos:node>"
+    ).encode()
+    router.get(f"{NODES_URL}/authority/dir").mock(
+        return_value=httpx.Response(200, content=listing)
+    )
+    correct_node = router.get(f"{NODES_URL}/authority/dir/100%2541").mock(
+        return_value=httpx.Response(200, content=child)
+    )
+    wrong_node = router.get(f"{NODES_URL}/authority/dir/100A").mock(
+        return_value=httpx.Response(404)
+    )
+    mock_transfers(router, {internal: b"literal-percent"})
+    fs = make_fs(router)
+
+    fs.get("vos://authority/dir/*", str(tmp_path) + "/", recursive=True)
+
+    assert (tmp_path / "100%41").read_bytes() == b"literal-percent"
+    assert correct_node.called
+    assert not wrong_node.called
+    byte_urls = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "GET"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ]
+    assert byte_urls == [f"{BASE_URL}/files?p=/authority/dir/100%2541"]
+    fs.close()
+
+
+def test_literal_percent_directory_survives_recursive_get(
+    router: respx.Router,
+    tmp_path: Path,
+) -> None:
+    from conftest import AUTHORITY, BASE_URL, NODES_URL
+
+    root_listing = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/root">'
+        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:ContainerNode" '
+        f'uri="vos://{AUTHORITY}/root/100%2541"><vos:properties/>'
+        f"</vos:node></vos:nodes></vos:node>"
+    ).encode()
+    percent_listing = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/root/100%2541">'
+        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:DataNode" '
+        f'uri="vos://{AUTHORITY}/root/100%2541/child">'
+        f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
+        f"5</vos:property></vos:properties></vos:node></vos:nodes></vos:node>"
+    ).encode()
+    child = (
+        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        f'xsi:type="vos:DataNode" uri="vos://{AUTHORITY}/root/100%2541/child">'
+        f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
+        f"5</vos:property></vos:properties></vos:node>"
+    ).encode()
+    router.get(f"{NODES_URL}/root").mock(
+        return_value=httpx.Response(200, content=root_listing)
+    )
+    correct_dir = router.get(f"{NODES_URL}/root/100%2541").mock(
+        return_value=httpx.Response(200, content=percent_listing)
+    )
+    router.get(f"{NODES_URL}/root/100%2541/child").mock(
+        return_value=httpx.Response(200, content=child)
+    )
+    wrong_dir = router.get(f"{NODES_URL}/root/100A").mock(
+        return_value=httpx.Response(404)
+    )
+    mock_transfers(router, {"/root/100%41/child": b"child"})
+    fs = make_fs(router)
+
+    expected_globs = {
+        "*": ["/root/100%41/child"],
+        "[c]hild": ["/root/100%41/child"],
+        "**": ["/root/100%41", "/root/100%41/child"],
+    }
+    for pattern, expected in expected_globs.items():
+        assert fs.glob(f"vos://root/100%2541/{pattern}") == expected
+    assert fs.expand_path("vos://root", recursive=True) == [
+        "/root",
+        "/root/100%41",
+        "/root/100%41/child",
+    ]
+    target = tmp_path / "download"
+    fs.get("vos://root", str(target), recursive=True)
+
+    assert (target / "100%41" / "child").read_bytes() == b"child"
+    assert correct_dir.called
+    assert not wrong_dir.called
+    byte_urls = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "GET"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ]
+    assert byte_urls == [f"{BASE_URL}/files?p=/root/100%2541/child"]
+    fs.close()
+
+
+def test_direct_byte_endpoint_303_is_consumed_once_without_credentials(
+    router: respx.Router,
+) -> None:
+    from conftest import (
+        AUTHORITY,
+        NODES_URL,
+        ROOT_CONTAINER,
+        SYNC_URL,
+        mock_capabilities,
+    )
 
     mock_capabilities(router)
     router.get(NODES_URL).mock(return_value=httpx.Response(200, content=ROOT_CONTAINER))
-    endpoint = f"{BASE_URL}/files/preauth:TESTTOKEN/d.bin"
-    router.post(SYNC_URL).mock(
+    router.get(f"{NODES_URL}/d.bin").mock(
+        return_value=httpx.Response(
+            200,
+            content=(
+                f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+                f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+                f'xsi:type="vos:DataNode" uri="vos://{AUTHORITY}/d.bin">'
+                "<vos:properties/></vos:node>"
+            ).encode(),
+        )
+    )
+    endpoint = "http://download.test/files/preauth:TESTTOKEN/d.bin"
+    post = router.post(SYNC_URL).mock(
         return_value=httpx.Response(303, headers={"Location": endpoint})
     )
-    router.route(url__regex=rf"^{re.escape(BASE_URL)}/files").mock(
-        return_value=httpx.Response(200, content=b"not-xml-payload")
-    )
+    seen_auth: list[str | None] = []
+
+    class DirectBytes(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            yield b"direct-bytes"
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    stream = DirectBytes()
+
+    def byte_get(request: httpx.Request) -> httpx.Response:
+        seen_auth.append(request.headers.get("authorization"))
+        return httpx.Response(200, stream=stream)
+
+    direct = router.get(endpoint).mock(side_effect=byte_get)
+    fs = make_fs(router, token="service-token")
+    assert fs.cat_file("/d.bin") == b"direct-bytes"
+    assert post.call_count == 1
+    assert direct.call_count == 1
+    assert seen_auth == [None]
+    assert stream.closed
+    fs.close()
+
+
+def test_failed_staged_read_removes_temporary_file(
+    router: respx.Router,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_transfers(router, {})
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     fs = make_fs(router)
-    with pytest.raises(ValueError, match="XML"):
-        fs.cat_file("/d.bin")
+
+    with pytest.raises(FileNotFoundError):
+        fs.open("/missing", "rb")
+
+    assert list(tmp_path.glob("vosfs-*")) == []
     fs.close()
 
 

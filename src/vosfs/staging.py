@@ -32,6 +32,12 @@ def new_temp_path() -> str:
     return path
 
 
+def unlink_temp_path(path: str) -> None:
+    """Best-effort unlink one operation-owned temporary file."""
+    with contextlib.suppress(OSError):
+        Path(path).unlink()
+
+
 class StagedReadFile(io.BufferedReader):
     """A seekable read-only view over a downloaded temporary file.
 
@@ -43,16 +49,21 @@ class StagedReadFile(io.BufferedReader):
     def __init__(self, path: str) -> None:
         """Open ``path`` for binary reading; it is unlinked on close."""
         self._path = path
-        super().__init__(io.FileIO(path, "rb"))
-        self.size = Path(path).stat().st_size
+        raw = io.FileIO(path, "rb")
+        try:
+            super().__init__(raw)
+            self.size = os.fstat(self.fileno()).st_size
+        except BaseException:
+            raw.close()
+            unlink_temp_path(path)
+            raise
 
     def close(self) -> None:
         """Close the staged file and remove its temporary backing file."""
         try:
             super().close()
         finally:
-            with contextlib.suppress(OSError):
-                Path(self._path).unlink()
+            unlink_temp_path(self._path)
 
 
 class StagedWriteFile(io.BufferedRandom):
@@ -100,8 +111,7 @@ class StagedWriteFile(io.BufferedRandom):
             if upload:
                 self._on_commit(self._path)
         finally:
-            with contextlib.suppress(OSError):
-                Path(self._path).unlink()
+            unlink_temp_path(self._path)
 
     def _handoff_to_outer(self) -> None:
         """Give an outer wrapper ownership of the terminal upload decision."""

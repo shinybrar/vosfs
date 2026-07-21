@@ -146,6 +146,26 @@ async def test_negotiate_read_returns_endpoint(router: respx.Router) -> None:
     await fs.aclose()
 
 
+async def test_negotiate_accepts_direct_open_cadc_byte_endpoint(
+    router: respx.Router,
+) -> None:
+    mock_capabilities(router)
+    router.get(NODES_URL).mock(return_value=httpx.Response(200, content=ROOT))
+    endpoint = f"{BASE_URL}/files/preauth:token/file.txt"
+    router.post(SYNC_URL).mock(
+        return_value=httpx.Response(303, headers={"Location": endpoint}),
+    )
+    fs = make_fs(router, asynchronous=True, token="service-token")
+
+    negotiated = await fs._negotiate(
+        "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
+    )
+
+    assert negotiated == NegotiatedEndpoint(endpoint, ANONYMOUS_METHOD)
+    assert not any(call.request.url == endpoint for call in router.calls)
+    await fs.aclose()
+
+
 async def test_negotiate_follows_transfer_result_redirect(
     router: respx.Router,
 ) -> None:
