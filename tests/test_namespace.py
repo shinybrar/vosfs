@@ -1,18 +1,73 @@
 """Tests for the namespace and mutation contract (section 10)."""
 
+from urllib.parse import unquote
+
 import httpx
 import pytest
 import respx
-from conftest import AUTHORITY, NODES_URL, make_fs, mock_capabilities
+from conftest import (
+    AUTHORITY,
+    BASE_URL,
+    NODES_URL,
+    make_fs,
+    mock_capabilities,
+    mock_transfers,
+)
 from defusedxml import ElementTree
 from vospace_sim import VOSpaceSim
 
+from vosfs import paths
 from vosfs.nodes import LENGTH_PROPERTY_URI, VOSPACE_NS, XML_HEADERS
 
 
 def _fs(router, sim, *, asynchronous=True):
     sim.install(router)
     return make_fs(router, asynchronous=asynchronous)
+
+
+def _install_percent_mutation_routes(
+    router: respx.Router,
+    files: dict[str, bytes],
+) -> tuple[set[str], list[str]]:
+    """Install a percent-aware node store with a misleading ``100A`` alias."""
+    created: set[str] = set()
+    deleted: list[str] = []
+    mock_transfers(router, files)
+
+    def node_op(request: httpx.Request) -> httpx.Response:
+        encoded = str(request.url).split(NODES_URL, 1)[1]
+        internal = unquote(encoded)
+        if request.method == "GET":
+            if internal in files:
+                document = (
+                    f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+                    f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+                    f'xsi:type="vos:DataNode" uri="vos://{AUTHORITY}{encoded}">'
+                    f"<vos:properties><vos:property "
+                    f'uri="ivo://ivoa.net/vospace/core#length">'
+                    f"{len(files[internal])}</vos:property></vos:properties></vos:node>"
+                ).encode()
+                return httpx.Response(200, content=document)
+            if encoded in created or "100A" in encoded:
+                document = (
+                    f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+                    f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+                    f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}{encoded}">'
+                    f"<vos:properties/><vos:nodes/></vos:node>"
+                ).encode()
+                return httpx.Response(200, content=document)
+            return httpx.Response(404)
+        if request.method == "PUT":
+            created.add(encoded)
+            return httpx.Response(201)
+        if request.method == "DELETE":
+            deleted.append(internal)
+            files.pop(internal, None)
+            return httpx.Response(200)
+        return httpx.Response(405)
+
+    router.route(url__regex=rf"^{NODES_URL}/").mock(side_effect=node_op)
+    return created, deleted
 
 
 async def test_update_node_posts_property_and_refreshes_metadata(
@@ -357,6 +412,42 @@ async def test_cp_file_relays_bytes(router: respx.Router) -> None:
     await fs.aclose()
 
 
+def test_copy_preserves_literal_percent_destination_and_parent(
+    router: respx.Router,
+) -> None:
+    files = {"/source": b"copy-me"}
+    created, _deleted = _install_percent_mutation_routes(router, files)
+    fs = make_fs(router)
+
+    destination = paths.strip_protocol("vos://root/100%2541/copied")
+    fs.copy("/source", destination)
+
+    assert files["/source"] == b"copy-me"
+    assert files["/root/100%41/copied"] == b"copy-me"
+    assert "/root/100%2541" in created
+    assert not any("100A" in path for path in created)
+    byte_puts = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "PUT"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ]
+    assert byte_puts == [f"{BASE_URL}/files?p=/root/100%2541/copied"]
+    fs.close()
+
+
+def test_mkdir_preserves_literal_percent_parent(router: respx.Router) -> None:
+    created, _deleted = _install_percent_mutation_routes(router, {})
+    fs = make_fs(router)
+
+    fs.mkdir("vos://root/100%2541/new", create_parents=True)
+
+    assert "/root/100%2541" in created
+    assert "/root/100%2541/new" in created
+    assert not any("100A" in path for path in created)
+    fs.close()
+
+
 def test_recursive_copy_creates_tree(router: respx.Router) -> None:
     sim = (
         VOSpaceSim()
@@ -593,6 +684,28 @@ def test_move_rejects_link_before_same_path_noop(router: respx.Router) -> None:
     assert sim.nodes["/src"] == "link"
     assert sim.targets["/src"] == target
     assert sim.delete_requests == []
+    fs.close()
+
+
+def test_move_preserves_literal_percent_destination_before_source_delete(
+    router: respx.Router,
+) -> None:
+    files = {"/move-source": b"moved"}
+    _created, deleted = _install_percent_mutation_routes(router, files)
+    fs = make_fs(router)
+
+    fs.mv("/move-source", "vos://moved%2541")
+
+    assert files == {"/moved%41": b"moved"}
+    assert deleted == ["/move-source"]
+    assert all("movedA" not in str(call.request.url) for call in router.calls)
+    byte_puts = [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "PUT"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ]
+    assert byte_puts == [f"{BASE_URL}/files?p=/moved%2541"]
     fs.close()
 
 

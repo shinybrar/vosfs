@@ -249,6 +249,27 @@ class _InheritedWriteAdapter:
         )
 
 
+class _InheritedCopyAdapter:
+    """Restore normalized destinations after fsspec remaps copy paths."""
+
+    def __init__(
+        self,
+        filesystem: VOSpaceFileSystem,
+        *,
+        mark_destinations: bool,
+    ) -> None:
+        self._filesystem = filesystem
+        self._mark_destinations = mark_destinations
+
+    def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - fsspec hook surface
+        return getattr(self._filesystem, name)
+
+    async def _cp_file(self, path1: str, path2: str, **kwargs: Any) -> None:  # noqa: ANN401
+        if self._mark_destinations:
+            path2 = paths.mark_normalized(path2)
+        await self._filesystem._cp_file(path1, path2, **kwargs)  # noqa: SLF001
+
+
 class VOSpaceFileSystem(AsyncFileSystem):
     """An asynchronous fsspec filesystem for the OpenCADC VOSpace profile.
 
@@ -1468,6 +1489,35 @@ class VOSpaceFileSystem(AsyncFileSystem):
             raise FileExistsError(msg)
         await self._cp_file(source, destination)
         await self._rm_file(source)
+
+    async def _copy(  # noqa: PLR0913 - fsspec hook signature
+        self,
+        path1: str | list[str],
+        path2: str | list[str],
+        recursive: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
+        on_error: str | None = None,
+        maxdepth: int | None = None,
+        batch_size: int | None = None,
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> None:
+        """Use fsspec's copy coordinator without losing destination provenance."""
+        adapter = cast(
+            "AsyncFileSystem",
+            _InheritedCopyAdapter(
+                self,
+                mark_destinations=isinstance(path2, str) and paths.is_normalized(path2),
+            ),
+        )
+        await AsyncFileSystem._copy(  # noqa: SLF001 - inherited hook seam
+            adapter,
+            path1,
+            path2,
+            recursive=recursive,
+            on_error=on_error,
+            maxdepth=maxdepth,
+            batch_size=batch_size,
+            **kwargs,
+        )
 
     def mv(
         self,

@@ -32,6 +32,15 @@ class _NormalizedPath(str):
         value = super().__getitem__(key)
         return _NormalizedPath(value) if isinstance(key, slice) else value
 
+    def replace(
+        self,
+        old: str,
+        new: str,
+        count: SupportsIndex = -1,
+    ) -> _NormalizedPath:
+        """Preserve normalization provenance across fsspec path remapping."""
+        return _NormalizedPath(super().replace(old, new, count))
+
 
 def strip_protocol(path: str) -> str:
     """Return the canonical internal path for ``path``.
@@ -86,6 +95,11 @@ def mark_normalized(path: str) -> str:
     return path
 
 
+def is_normalized(path: str) -> bool:
+    """Return whether ``path`` retains one-decode provenance."""
+    return isinstance(path, _NormalizedPath)
+
+
 def _strip_scheme(path: str) -> str:
     """Remove a leading ``vos:`` scheme marker, case-insensitively."""
     if path[: len(_SCHEME_PREFIX)].lower() == _SCHEME_PREFIX:
@@ -135,7 +149,7 @@ def parent(path: str) -> str:
     if path == "/":
         return "/"
     head = path.rsplit("/", 1)[0]
-    return head or "/"
+    return mark_normalized(head or "/")
 
 
 def segments(path: str) -> list[str]:
