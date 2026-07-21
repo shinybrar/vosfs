@@ -390,6 +390,37 @@ async def test_mv_file_copies_then_deletes_data(router: respx.Router) -> None:
     await fs.aclose()
 
 
+async def test_mv_file_same_data_path_is_noop(router: respx.Router) -> None:
+    sim = VOSpaceSim().add_file("/src", b"source")
+    fs = _fs(router, sim)
+
+    await fs._mv_file("/src", "/src")
+
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "data"
+    assert sim.blobs["/src"] == b"source"
+    assert sim.delete_requests == []
+    await fs.aclose()
+
+
+async def test_mv_file_rejects_existing_data_destination_before_mutation(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_file("/src", b"source").add_file("/dst", b"existing")
+    fs = _fs(router, sim)
+
+    with pytest.raises(FileExistsError, match="move destination already exists"):
+        await fs._mv_file("/src", "/dst")
+
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "data"
+    assert sim.blobs["/src"] == b"source"
+    assert sim.nodes["/dst"] == "data"
+    assert sim.blobs["/dst"] == b"existing"
+    assert sim.delete_requests == []
+    await fs.aclose()
+
+
 @pytest.mark.parametrize("destination_state", ["absent", "existing", "same"])
 async def test_mv_file_rejects_link_before_mutation(
     router: respx.Router,
