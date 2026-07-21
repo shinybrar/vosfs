@@ -1364,13 +1364,13 @@ class VOSpaceFileSystem(AsyncFileSystem):
         destination = self._strip_protocol(path2)
         if source == destination:
             return
-        if self.exists(destination):
-            msg = f"move destination already exists: {destination}"
-            raise FileExistsError(msg)
         source_info = self.info(source)
         if source_info.get("islink"):
             msg = "moving a LinkNode is unsupported"
             raise NotImplementedError(msg)
+        if self.exists(destination):
+            msg = f"move destination already exists: {destination}"
+            raise FileExistsError(msg)
         recursive = recursive or source_info["type"] == "directory"
         self.copy(source, destination, recursive=recursive, maxdepth=maxdepth, **kwargs)
         if not self.exists(destination):
