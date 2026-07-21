@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, NoReturn
 
 import pytest
 import typer
+from fsspec_cli._rm import _write_verbose_line
 
 from ._support import _invoke_rm, _RecordingSource, _source_must_not_run
 
@@ -1487,6 +1488,34 @@ def test_rm_verbose_reports_short_write_and_stops_later_mutation(
     assert result.exit_code == 1
     assert result.stderr == "rm: output: output failure (OSError): short write\n"
     assert [event[2] for event in events if event[0] == "rm_file"] == ["/docs/a.txt"]
+
+
+def test_rm_verbose_line_uses_shared_binary_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[object, ...]] = []
+
+    class _Stdout:
+        def write(self, chunk: bytes) -> int:
+            raise AssertionError(chunk)
+
+        def flush(self) -> None:
+            events.append(("flush",))
+
+    stdout = _Stdout()
+
+    def write_binary(writer: object, payload: bytes) -> None:
+        events.append(("write", writer, payload))
+
+    monkeypatch.setattr("fsspec_cli._rm._binary_stdout", lambda: stdout)
+    monkeypatch.setattr("fsspec_cli._rm._write_binary", write_binary)
+
+    _write_verbose_line("memory:/docs/notes.txt")
+
+    assert events == [
+        ("write", stdout, b"memory:/docs/notes.txt\n"),
+        ("flush",),
+    ]
 
 
 def test_rm_verbose_keeps_broken_pipe_silent_but_reports_exit_failure(

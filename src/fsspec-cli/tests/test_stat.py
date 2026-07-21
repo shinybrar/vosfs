@@ -8,7 +8,7 @@ import re
 
 import pytest
 import typer
-from fsspec_cli._stat import _format_mtime, _preflight
+from fsspec_cli._stat import _format_mtime, _preflight, _write_line
 
 from ._support import _invoke_stat, _RecordingSource, _source_must_not_run
 
@@ -392,6 +392,34 @@ def test_stat_stops_after_stdout_short_write(
     assert [event[2] for event in events if event[0] == "info"] == [
         "/stat-a",
         "/stat-b",
+    ]
+
+
+def test_stat_line_uses_shared_binary_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[object, ...]] = []
+
+    class _Stdout:
+        def write(self, chunk: bytes) -> int:
+            raise AssertionError(chunk)
+
+        def flush(self) -> None:
+            events.append(("flush",))
+
+    stdout = _Stdout()
+
+    def write_binary(writer: object, payload: bytes) -> None:
+        events.append(("write", writer, payload))
+
+    monkeypatch.setattr("fsspec_cli._stat._binary_stdout", lambda: stdout)
+    monkeypatch.setattr("fsspec_cli._stat._write_binary", write_binary)
+
+    _write_line(b"stat output\n")
+
+    assert events == [
+        ("write", stdout, b"stat output\n"),
+        ("flush",),
     ]
 
 
