@@ -459,10 +459,10 @@ def test_literal_percent_target_survives_wildcard_expansion(
         f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
         f"15</vos:property></vos:properties></vos:node></vos:nodes></vos:node>"
     ).encode()
-    mock_transfers(router, {internal: b"literal-percent"})
     router.get(f"{NODES_URL}/authority/dir").mock(
         return_value=httpx.Response(200, content=listing)
     )
+    mock_transfers(router, {internal: b"literal-percent"})
     fs = make_fs(router)
 
     matches = fs.glob("vos://authority/dir/*")
@@ -503,7 +503,6 @@ def test_literal_percent_target_survives_recursive_wildcard_get(
         f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
         f"15</vos:property></vos:properties></vos:node>"
     ).encode()
-    mock_transfers(router, {internal: b"literal-percent"})
     router.get(f"{NODES_URL}/authority/dir").mock(
         return_value=httpx.Response(200, content=listing)
     )
@@ -513,6 +512,7 @@ def test_literal_percent_target_survives_recursive_wildcard_get(
     wrong_node = router.get(f"{NODES_URL}/authority/dir/100A").mock(
         return_value=httpx.Response(404)
     )
+    mock_transfers(router, {internal: b"literal-percent"})
     fs = make_fs(router)
 
     fs.get("vos://authority/dir/*", str(tmp_path) + "/", recursive=True)
@@ -560,7 +560,6 @@ def test_literal_percent_directory_survives_recursive_get(
         f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
         f"5</vos:property></vos:properties></vos:node>"
     ).encode()
-    mock_transfers(router, {"/root/100%41/child": b"child"})
     router.get(f"{NODES_URL}/root").mock(
         return_value=httpx.Response(200, content=root_listing)
     )
@@ -573,6 +572,7 @@ def test_literal_percent_directory_survives_recursive_get(
     wrong_dir = router.get(f"{NODES_URL}/root/100A").mock(
         return_value=httpx.Response(404)
     )
+    mock_transfers(router, {"/root/100%41/child": b"child"})
     fs = make_fs(router)
 
     expected_globs = {

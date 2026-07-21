@@ -37,7 +37,6 @@ def _install_percent_mutation_routes(
     deleted: list[str] = []
     listings = listings or {}
     data_nodes = data_nodes or set(files)
-    mock_transfers(router, files)
 
     def node_op(request: httpx.Request) -> httpx.Response:
         encoded = str(request.url).split(NODES_URL, 1)[1]
@@ -75,6 +74,7 @@ def _install_percent_mutation_routes(
         return httpx.Response(405)
 
     router.route(url__regex=rf"^{NODES_URL}/").mock(side_effect=node_op)
+    mock_transfers(router, files)
     return created, deleted
 
 

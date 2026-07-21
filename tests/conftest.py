@@ -95,7 +95,8 @@ def data_node_response(
     request: httpx.Request, files: dict[str, bytes]
 ) -> httpx.Response:
     """Return root or DataNode metadata for the transfer test helper."""
-    suffix = unquote(request.url.path.removeprefix(urlsplit(NODES_URL).path))
+    raw_path = request.url.raw_path.split(b"?", 1)[0].decode()
+    suffix = unquote(raw_path.removeprefix(urlsplit(NODES_URL).path))
     path = suffix or "/"
     if path == "/":
         return httpx.Response(200, content=ROOT_CONTAINER)
