@@ -173,48 +173,73 @@ def test_pages_accepts_only_causal_repository_dispatch_payloads() -> None:
 def test_pages_retries_atomic_gh_pages_pushes() -> None:
     workflow = _PAGES.read_text()
     publish = _step(workflow, "Publish documentation")
-    attempt = publish.split("          for attempt in 1 2 3; do\n", 1)[1]
+    retry_loop = publish.split("          for attempt in 1 2 3; do\n", 1)[1]
 
     assert "--push" not in publish
     assert publish.count("git push origin gh-pages") == 1
-    assert "git ls-remote --heads origin refs/heads/gh-pages" in attempt
-    assert "gh-pages:refs/remotes/origin/gh-pages" in attempt
-    assert "git update-ref refs/heads/gh-pages refs/remotes/origin/gh-pages" in attempt
-    assert "git update-ref -d refs/heads/gh-pages" in attempt
-    assert attempt.index("gh-pages:refs/remotes/origin/gh-pages") < attempt.index(
+    assert "git ls-remote --heads origin refs/heads/gh-pages" in retry_loop
+    assert "gh-pages:refs/remotes/origin/gh-pages" in retry_loop
+    assert (
+        "git update-ref refs/heads/gh-pages refs/remotes/origin/gh-pages" in retry_loop
+    )
+    assert "git update-ref -d refs/remotes/origin/gh-pages" in retry_loop
+    assert "git update-ref -d refs/heads/gh-pages" in retry_loop
+    assert retry_loop.index("gh-pages:refs/remotes/origin/gh-pages") < retry_loop.index(
         "uv run --locked mike deploy"
     )
-    assert attempt.index("uv run --locked mike deploy") < attempt.index(
+    assert retry_loop.index("uv run --locked mike deploy") < retry_loop.index(
         "git push origin gh-pages"
     )
     assert (
-        attempt.index('"$VERSION" latest')
-        < attempt.index("uv run --locked mike set-default")
-        < attempt.index("git push origin gh-pages")
+        retry_loop.index('"$VERSION" latest')
+        < retry_loop.index("uv run --locked mike set-default")
+        < retry_loop.index("git push origin gh-pages")
     )
-    assert '"$push_output" != *"(non-fast-forward)"*' in attempt
-    assert '"$push_output" != *"(fetch first)"*' in attempt
-    assert '[[ "$attempt" == 3 ]]' in attempt
-    assert "gh-pages push conflicted after 3 attempts" in attempt
+    assert '"$push_output" != *"(non-fast-forward)"*' in retry_loop
+    assert '"$push_output" != *"(fetch first)"*' in retry_loop
+    assert '[[ "$attempt" == 3 ]]' in retry_loop
+    assert "gh-pages push conflicted after 3 attempts" in retry_loop
 
 
 def test_pages_dev_revalidates_current_main_before_build_and_push() -> None:
     workflow = _PAGES.read_text()
     publish = _step(workflow, "Publish documentation")
-    attempt = publish.split("          for attempt in 1 2 3; do\n", 1)[1]
+    retry_loop = publish.split("          for attempt in 1 2 3; do\n", 1)[1]
     current_main_check = '"$VALIDATED_SHA" != "$(git rev-parse origin/main)"'
-    first_check = attempt.index(current_main_check)
-    second_check = attempt.index(current_main_check, first_check + 1)
-    first_fetch = attempt.index("git fetch --no-tags origin main:")
-    second_fetch = attempt.index("git fetch --no-tags origin main:", first_fetch + 1)
-    build = attempt.index("uv run --locked zensical build --strict --clean")
-    dev_deploy = attempt.index("uv run --locked mike deploy", build)
-    push = attempt.index("git push origin gh-pages")
+    first_check = retry_loop.index(current_main_check)
+    second_check = retry_loop.index(current_main_check, first_check + 1)
+    first_fetch = retry_loop.index("git fetch --no-tags origin main:")
+    build = retry_loop.index("uv run --locked zensical build --strict --clean")
+    push = retry_loop.index("git push origin gh-pages")
+    release_conditional = retry_loop.split(
+        '            if [[ "$RELEASE" == "true" ]]; then\n', 1
+    )[1]
+    dev_branch, after_release_conditional = release_conditional.split(
+        "\n            else\n", 1
+    )[1].split("\n            fi\n", 1)
+    dev_deploy = dev_branch.index("uv run --locked mike deploy")
+    second_fetch = dev_branch.index("git fetch --no-tags origin main:")
+    pre_push_check = dev_branch.index(current_main_check)
+    guard = f"              if [[ {current_main_check} ]]; then\n"
+    guard_tail = "\n".join(
+        line.strip()
+        for line in dev_branch.split(guard, 1)[1].splitlines()
+        if line.strip()
+    )
+    push_statement = (
+        '            if push_output="$(git push origin gh-pages 2>&1)"; then'
+    )
 
     assert publish.count("git fetch --no-tags origin main:") == 2
     assert publish.count("dev documentation superseded by newer main; skipping") == 2
+    assert publish.count("exit 0") == 2
     assert first_fetch < first_check < build
-    assert dev_deploy < second_fetch < second_check < push
+    assert dev_deploy < second_fetch < pre_push_check
+    assert guard_tail == (
+        'echo "dev documentation superseded by newer main; skipping"\nexit 0\nfi'
+    )
+    assert not after_release_conditional.split(push_statement, 1)[0].strip()
+    assert second_check < push
 
 
 def test_completion_workflows_and_docs_have_no_package_registry_lane() -> None:
