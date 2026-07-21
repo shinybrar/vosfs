@@ -1,6 +1,6 @@
 [project]
 name = "fsspec-cli"
-version = "0.2.1"
+version = "0.3.0"
 description = "Library-only POSIX-shaped commands for async fsspec filesystems"
 readme = "README.md"
 authors = [
