@@ -76,17 +76,19 @@ The implementation frontier may qualify only the matrix's exact initial source
 forms:
 
 - `local / adapted async`:
-  `AsyncFileSystemWrapper(LocalFileSystem(skip_instance_cache=True), asynchronous=True)`;
+  `AsyncFileSystemWrapper(LocalFileSystem(), asynchronous=True)`;
 - `memory / adapted async`:
-  `AsyncFileSystemWrapper(MemoryFileSystem(), asynchronous=True)` with isolated
-  store, pseudo-directory, and instance-cache state; and
+  `AsyncFileSystemWrapper(MemoryFileSystem(), asynchronous=True)`; and
 - `vosfs / native async`: a fresh
   `VOSpaceFileSystem(asynchronous=True, skip_instance_cache=True)` closed on
   the invocation loop.
 
-All ordered pairs and both same-name and distinct-name routing require their
-own matrix row. A missing row remains `unverified`, not unsupported. Raw sync,
-wrong-mode async, and host-owned reusable instances remain unsupported by
+Hermetic tests isolate Local temporary roots and Memory store,
+pseudo-directory, and instance-cache state without changing either canonical
+source-form identity. All ordered pairs and both same-name and distinct-name
+routing require their own matrix row. A missing row remains `unverified`, not
+unsupported. Raw sync, wrong-mode async, and host-owned reusable instances
+remain unsupported by
 [ADR 0002](../adr/0002-own-async-filesystems-per-invocation.md) and MUST fail
 source validation before filesystem work or mutation.
 
@@ -229,46 +231,151 @@ atomicity, characteristic preservation, or exact mirror.
 
 ## 8. Failure, residue, cancellation, and precedence
 
-Command diagnostics have shape:
+In this section, `S` means the exact source mapped-operand spelling and `D`
+means the exact destination mapped-operand spelling. Inserted values use the
+shared diagnostic escaping rules. Every command diagnostic has one of these
+exact shapes:
 
 ```text
-cp: <mapped operand>: <stable category>
+cp: S: <stable category>
+cp: D: <stable category>
 ```
 
-| Phase or condition | Stable category | Destination state |
+### 8.1 Source-free preflight
+
+Section 4 owns every source-free failure. Each writes empty stdout, exactly
+one listed stderr line, exits `2`, enters zero sources, creates no staging
+file, and leaves the destination unchanged. A duplicate or mixed second
+recursive option is the unsupported `<option token>`; no option is silently
+coalesced.
+
+### 8.2 Source lifecycle
+
+Lifecycle failure rendering is the ADR 0003 contract with command name `cp`:
+
+| Reachable failure | Exact first stderr line | Status and residue |
 | --- | --- | --- |
-| Missing source or destination parent | `not found` | Unchanged |
-| Permission failure before mutation | `permission denied` | Unchanged |
-| Source not a directory | `not a directory` | Unchanged |
-| Destination-inside-source guard | `destination is inside source` | Unchanged |
-| Missing required coroutine or `NotImplementedError` before mutation | `unsupported operation` | Unchanged |
-| Malformed walk or metadata result | `incompatible result` | Unchanged |
-| Link or special entry | `unsupported entry type` | Unchanged |
-| More than 10,000 source entries | `source tree exceeds 10000 entries` | Unchanged |
-| Existing destination type conflict | `destination type conflict` | Unchanged |
-| Staging creation or local stat failure | `staging failure (<class>); destination residue may remain` | Prior destination mutation may remain |
-| Directory creation, download, or upload failure after first mutation | `mutation failure; destination residue may remain` | Prior or current residue may remain |
-| Staged size mismatch | `source changed; destination residue may remain` | Prior or current residue may remain |
-| Final source-manifest mismatch | `source changed; destination residue may remain` | Copied destination may remain |
-| Destination proof mismatch | `verification failure; destination residue may remain` | Copied destination may remain |
-| Staging cleanup failure without an earlier command failure | `staging cleanup failure (<class>); destination residue may remain` | Host staging and destination residue may remain |
+| Source factory raises | `cp: <name>: source factory failure (<class>): <message>` | Empty stdout; status `1`; no filesystem or staging mutation. |
+| Factory returns incompatible context manager | `cp: <name>: source factory returned incompatible async context manager` | Empty stdout; status `1`; no filesystem or staging mutation. |
+| Context entry raises | `cp: <name>: source entry failure (<class>): <message>` | Empty stdout; status `1`; no filesystem or staging mutation. |
+| Entered source yields incompatible filesystem | `cp: <name>: source yielded incompatible async filesystem` | Empty stdout; status `1`; no filesystem or staging mutation. |
+| Source exit raises after otherwise successful command | `cp: <name>: source exit failure (<class>): <message>` | Empty stdout; status `1`; fully verified destination remains. |
 
-All ordinary failures exit `1` and keep stdout empty. Acquisition failures use
-ADR 0003's lifecycle diagnostics and may be followed by reverse-entry cleanup
-diagnostics; they emit no command diagnostic. After successful acquisition,
-the first ordinary command failure in deterministic operation order is primary
-and stops new work. It emits exactly one command diagnostic. A staging-cleanup
-failure does not mask or add to an existing command failure. Source-exit
-diagnostics then follow in ADR 0003 reverse-entry order. No destination entry
-is removed to simulate rollback.
+An acquisition failure is primary. Already-entered sources then emit any exit
+diagnostics in reverse-entry order. After a command failure, exit diagnostics
+follow command and staging-cleanup diagnostics. Every such ordinary outcome
+exits `1`; no lifecycle failure changes the command's recorded destination or
+host-staging residue.
 
-Each walk materialization and each filesystem operation is owned by one
-command task. On `CancelledError`, `KeyboardInterrupt`, `SystemExit`, or other
+### 8.3 Read-only command phases
+
+The following table is exhaustive before the first `_mkdir` call. Every row
+writes empty stdout, exactly the listed primary stderr line followed only by
+ADR 0003 reverse-entry source-exit diagnostics, exits `1`, creates no staging
+file, and leaves the destination unchanged. A destination `_info`
+`FileNotFoundError` for the resolved root or a corresponding manifest entry is
+expected absence, not failure; a missing resolved parent is the listed
+destination `not found` failure.
+
+| Phase and reached condition | Attributed operand | Exact primary stderr line |
+| --- | --- | --- |
+| Initial source `_info`: `FileNotFoundError` | `S` | `cp: S: not found` |
+| Initial source `_info`: `PermissionError` | `S` | `cp: S: permission denied` |
+| Initial source `_info`: `NotImplementedError` or missing required coroutine | `S` | `cp: S: unsupported operation` |
+| Initial source `_info`: malformed result | `S` | `cp: S: incompatible result` |
+| Initial source `_info`: file instead of directory | `S` | `cp: S: not a directory` |
+| Initial source `_info`: link or other type | `S` | `cp: S: unsupported entry type` |
+| Initial source `_info`: any other `Exception` | `S` | `cp: S: backend failure (<class>): <message>` |
+| Destination root or parent `_info`: `PermissionError` | `D` | `cp: D: permission denied` |
+| Destination root or parent `_info`: `NotImplementedError` or missing required coroutine | `D` | `cp: D: unsupported operation` |
+| Destination root or parent `_info`: malformed result | `D` | `cp: D: incompatible result` |
+| Resolved parent missing | `D` | `cp: D: not found` |
+| Resolved parent is not a non-link directory | `D` | `cp: D: not a directory` |
+| Existing resolved root is a link or other type | `D` | `cp: D: unsupported entry type` |
+| Existing resolved root is a file | `D` | `cp: D: destination type conflict` |
+| Same namespace exact or contained target | `D` | `cp: D: destination is inside source` |
+| Destination root or parent `_info`: any other `Exception` | `D` | `cp: D: backend failure (<class>): <message>` |
+| Initial source `_walk`: `FileNotFoundError` | `S` | `cp: S: not found` |
+| Initial source `_walk`: `PermissionError` | `S` | `cp: S: permission denied` |
+| Initial source `_walk`: `NotImplementedError` or missing required coroutine | `S` | `cp: S: unsupported operation` |
+| Initial source `_walk`: invocation, await, or iteration raises another `Exception` | `S` | `cp: S: backend failure (<class>): <message>` |
+| Initial source `_walk`: wrong awaitable/iterator or malformed manifest | `S` | `cp: S: incompatible result` |
+| Initial manifest contains link or other type | `S` | `cp: S: unsupported entry type` |
+| Initial manifest reaches entry 10,001 | `S` | `cp: S: source tree exceeds 10000 entries` |
+| Corresponding destination `_info`: `PermissionError` | `D` | `cp: D: permission denied` |
+| Corresponding destination `_info`: `NotImplementedError` or missing required coroutine | `D` | `cp: D: unsupported operation` |
+| Corresponding destination `_info`: malformed result | `D` | `cp: D: incompatible result` |
+| Corresponding destination entry is a link or other type | `D` | `cp: D: unsupported entry type` |
+| Corresponding destination entry has conflicting file/directory type | `D` | `cp: D: destination type conflict` |
+| Corresponding destination `_info`: any other `Exception` | `D` | `cp: D: backend failure (<class>): <message>` |
+
+### 8.4 Mutating and proof phases
+
+After the first `_mkdir` attempt, rollback is forbidden. Every ordinary row
+below writes empty stdout, emits exactly its primary stderr line, attempts
+current staging cleanup when a staging path exists, then emits any staging
+cleanup diagnostic and ADR 0003 source-exit diagnostics in that order, and
+exits `1`.
+
+| Phase and reached condition | Attributed operand | Exact primary stderr line | Destination and host-staging residue |
+| --- | --- | --- | --- |
+| Destination `_mkdir` raises any `Exception` | `D` | `cp: D: mutation failure; destination residue may remain` | Earlier directories remain; current directory may be absent or complete; no staging file. |
+| Secure staging creation or descriptor close raises | `S` | `cp: S: staging failure (<class>); destination residue may remain` | Earlier destination entries remain; a created host staging path may remain only when cleanup also fails. |
+| Source `_get_file` raises any `Exception` | `S` | `cp: S: transfer failure; destination residue may remain` | Earlier destination entries remain; current destination file was not uploaded; partial host staging is removed unless cleanup fails. |
+| Local staging stat raises | `S` | `cp: S: staging failure (<class>); destination residue may remain` | Earlier destination entries remain; host staging is removed unless cleanup fails. |
+| Staged size differs from frozen size | `S` | `cp: S: source changed; destination residue may remain` | Earlier destination entries remain; current destination file was not uploaded; host staging is removed unless cleanup fails. |
+| Destination `_put_file` raises any `Exception` | `D` | `cp: D: mutation failure; destination residue may remain` | Earlier entries remain; current destination file may be absent, partial, or complete; host staging is removed unless cleanup fails. |
+| Final source `_walk` cannot be invoked, awaited, iterated, bounded, or validated | `S` | `cp: S: source revalidation failure; destination residue may remain` | Every attempted destination entry remains; no staging file. |
+| Final source manifest differs from frozen projection | `S` | `cp: S: source changed; destination residue may remain` | Every attempted destination entry remains; no staging file. |
+| Destination proof `_info` raises, is malformed, or reports any mismatch | `D` | `cp: D: verification failure; destination residue may remain` | Every attempted destination entry remains; no staging file. |
+
+### 8.5 Staging cleanup combinations
+
+An ordinary staging cleanup failure has exactly this source-attributed line:
+
+```text
+cp: S: staging cleanup failure (<class>); host staging residue may remain; destination residue may remain
+```
+
+- With no earlier command failure or escaping control flow, it becomes the
+  primary diagnostic; stdout is empty, status is `1`, the uploaded current
+  destination plus earlier destination entries remain, and host staging may
+  remain.
+- With an ordinary command failure, the command diagnostic remains primary and
+  is emitted first. The cleanup line is emitted second. Status remains `1`;
+  both lines' residue statements apply.
+- With active escaping control flow, the cleanup line is emitted before any
+  reverse-entry source-exit diagnostics; the original control-flow object is
+  then propagated unchanged with no numeric command status.
+
+A staging-cleanup `BaseException` is never converted to a diagnostic. With no
+earlier escaping control flow it propagates unchanged; with earlier escaping
+control flow the earlier object wins. Any already emitted ordinary primary
+diagnostic remains visible. Host staging and destination residue may remain.
+
+### 8.6 Cancellation and other escaping control flow
+
+Each walk materialization and filesystem operation is owned by one command
+task. On `CancelledError`, `KeyboardInterrupt`, `SystemExit`, or another
 escaping `BaseException`, the command stops scheduling new work, drains the
-current operation, removes the current staging file, begins source cleanup,
-then propagates the original object unchanged. It emits no command diagnostic
-and returns no numeric command status. Completed destination entries and a
-current upload's residue may remain.
+current operation, performs current staging cleanup, begins source cleanup,
+then propagates the original object unchanged. A drained operation's ordinary
+failure never replaces or adds a command diagnostic to the control flow.
+
+Stdout is always empty. There is no cancellation diagnostic and no numeric
+command status. Stderr order is: any ordinary command diagnostic already
+emitted before control flow arose; an ordinary staging-cleanup diagnostic; then
+ADR 0003 source-exit diagnostics in reverse-entry order.
+
+| Interrupted phase | Destination and host-staging residue after drain and cleanup |
+| --- | --- |
+| Acquisition, initial source `_info`/`_walk`, target resolution, or destination preflight | Destination unchanged; no staging file. |
+| Destination `_mkdir` | Earlier directories remain; current directory may be absent or complete; no staging file. |
+| Staging creation or source download | Earlier destination entries remain; current destination file was not uploaded; staging is removed unless cleanup fails. |
+| Destination upload | Earlier entries remain; current destination file may be absent, partial, or complete; staging is removed unless cleanup fails. |
+| Final source revalidation or destination proof | Every attempted destination entry remains; no staging file. |
+
+No destination entry is removed to simulate rollback.
 
 This required current-operation drain is a recursive-copy-specific exception
 to ADR 0003's present tree-only worker rule. Issue #286 MUST update ADR 0003 in
@@ -281,8 +388,11 @@ cleanup.
 The [tested command matrix](fsspec-cli-tested-command-matrix.md) replaces the
 old command-preflight `unsupported` row with explicit same-name and
 distinct-name rows for every ordered pair of the three initial source forms.
-Every new row is `unverified`; research inspection is not qualifying command
-evidence.
+A `source` scope row means both operands use the same configured name. A
+`source pair` scope row means distinct configured names, and its source-form
+cell records the ordered source-to-destination forms. Source-form text exactly
+matches Section 3 of the matrix. Every new row is `unverified`; research
+inspection is not qualifying command evidence.
 
 Issue #286 may promote a row only after hermetic tests through
 `App(sources).typer_app` cover:
