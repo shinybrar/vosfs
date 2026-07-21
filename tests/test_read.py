@@ -411,6 +411,39 @@ def test_cat_head_tail(router: respx.Router) -> None:
     fs.close()
 
 
+def test_literal_percent_targets_survive_scalar_list_and_bulk_coordinators(
+    router: respx.Router,
+) -> None:
+    from conftest import BASE_URL, SYNC_URL, target_path
+
+    internal = "/authority/dir/100%41"
+    mock_transfers(router, {internal: b"literal-percent"})
+    fs = make_fs(router)
+
+    assert fs.cat("vos://authority/dir/100%2541") == b"literal-percent"
+    assert fs.cat(["vos://authority/dir/100%2541"]) == {internal: b"literal-percent"}
+    assert fs.cat_ranges(["vos://authority/dir/100%2541"], [0], [7]) == [b"literal"]
+
+    assert [
+        target_path(call.request.content)
+        for call in router.calls
+        if call.request.method == "POST" and str(call.request.url) == SYNC_URL
+    ] == [internal, internal, internal]
+    assert [
+        call.request.url.params["p"]
+        for call in router.calls
+        if call.request.method == "GET"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ] == [internal, internal, internal]
+    assert [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == "GET"
+        and str(call.request.url).startswith(f"{BASE_URL}/files")
+    ] == [f"{BASE_URL}/files?p=/authority/dir/100%2541"] * 3
+    fs.close()
+
+
 def test_direct_byte_endpoint_303_is_consumed_once_without_credentials(
     router: respx.Router,
 ) -> None:

@@ -102,6 +102,12 @@ def test_helpers_do_not_decode_literal_percent() -> None:
     assert paths.encode_url_path(once) == "/dir/100%2541"
 
 
+def test_normalized_literal_percent_is_not_decoded_again() -> None:
+    once = paths.strip_protocol("vos://authority/dir/100%2541")
+
+    assert paths.strip_protocol(once) == "/authority/dir/100%41"
+
+
 def test_encode_url_path_reencodes_a_decoded_space() -> None:
     # vos://dir/file%2520name normalizes once to the literal name "file%20name";
     # encoding it for the URL must target that object, not a second-decoded space.

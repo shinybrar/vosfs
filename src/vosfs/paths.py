@@ -17,6 +17,12 @@ _SCHEME_PREFIX = f"{PROTOCOL}:"
 _ENCODED_SEPARATORS = ("%2f", "%5c")
 
 
+class _NormalizedPath(str):
+    """A filesystem path that has already passed one percent decode."""
+
+    __slots__ = ()
+
+
 def strip_protocol(path: str) -> str:
     """Return the canonical internal path for ``path``.
 
@@ -35,6 +41,8 @@ def strip_protocol(path: str) -> str:
         ValueError: If the path contains a query, fragment, userinfo, NUL byte,
             an encoded path separator, or a ``..`` segment.
     """
+    if isinstance(path, _NormalizedPath):
+        return path
     if "\x00" in path:
         msg = "path must not contain a NUL byte"
         raise ValueError(msg)
@@ -50,10 +58,14 @@ def strip_protocol(path: str) -> str:
     # Collapse any run of leading slashes into a single root slash.
     remainder = "/" + remainder.lstrip("/")
 
-    decoded = [_decode_segment(segment) for segment in remainder.split("/") if segment]
+    encoded = [segment for segment in remainder.split("/") if segment]
+    decoded = [_decode_segment(segment) for segment in encoded]
     if not decoded:
         return "/"
-    return "/" + "/".join(decoded)
+    normalized = "/" + "/".join(decoded)
+    if decoded != encoded:
+        return _NormalizedPath(normalized)
+    return normalized
 
 
 def _strip_scheme(path: str) -> str:

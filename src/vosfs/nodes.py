@@ -177,7 +177,7 @@ def to_info(node: Node, name: str) -> dict[str, Any]:
         ``islink`` and ``target``.
     """
     info: dict[str, Any] = {
-        "name": name,
+        "name": str(name),
         "type": _INFO_TYPE_BY_NODE_TYPE[node.node_type],
         "size": node.size,
         "uri": node.uri,
