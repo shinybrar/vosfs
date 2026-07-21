@@ -1584,6 +1584,9 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = "moving a LinkNode is unsupported"
             raise NotImplementedError(msg)
         if source == destination:
+            if source_info["type"] == "directory":
+                msg = f"move destination already exists: {destination}"
+                raise FileExistsError(msg)
             return
         if source == "/" or destination.startswith(f"{source}/"):
             msg = f"move destination is within the source: {destination}"

@@ -898,6 +898,23 @@ def test_move_same_path_is_noop(router: respx.Router) -> None:
     fs.close()
 
 
+def test_move_nonempty_directory_same_path_is_rejected_before_mutation(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_container("/src").add_file("/src/a", b"a")
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(FileExistsError, match="destination already exists"):
+        fs.mv("/src", "/src")
+
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "container"
+    assert sim.blobs["/src/a"] == b"a"
+    assert sim.delete_requests == []
+    fs.close()
+
+
 def test_move_empty_directory_creates_destination(router: respx.Router) -> None:
     # Regression: a non-recursive move of an empty container must not delete the
     # source without creating the destination (a data-loss bug).
