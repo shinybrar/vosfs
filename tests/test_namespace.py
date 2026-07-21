@@ -398,6 +398,32 @@ def test_move_copies_then_deletes_source(router: respx.Router) -> None:
     fs.close()
 
 
+def test_move_rejects_link_before_mutation(router: respx.Router) -> None:
+    target = f"vos://{AUTHORITY}/target"
+    sim = VOSpaceSim().add_file("/target", b"target").add_link("/src", target)
+    sim.install(router)
+    fs = make_fs(router)
+
+    with pytest.raises(NotImplementedError, match="moving a LinkNode"):
+        fs.mv("/src", "/dst")
+
+    node_requests = [
+        call.request
+        for call in router.calls
+        if str(call.request.url).startswith(NODES_URL)
+    ]
+    assert ("GET", f"{NODES_URL}/src") in [
+        (request.method, str(request.url)) for request in node_requests
+    ]
+    assert [call.request for call in router.calls if call.request.method != "GET"] == []
+    assert sim.nodes["/src"] == "link"
+    assert sim.targets["/src"] == target
+    assert "/dst" not in sim.nodes
+    assert "/dst" not in sim.blobs
+    assert sim.delete_requests == []
+    fs.close()
+
+
 def test_move_same_path_is_noop(router: respx.Router) -> None:
     sim = VOSpaceSim().add_file("/src", b"x")
     sim.install(router)

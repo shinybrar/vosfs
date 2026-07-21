@@ -109,8 +109,8 @@ until a source-owned complete-result contract exists.
 | `rmdir` | **D** | List and require an empty ContainerNode, then DELETE. The emptiness check and delete are non-atomic. Non-empty raises `OSError`. |
 | `cp_file` / `_cp_file` | **D** | Negotiated whole-object GET-to-PUT relay; no native `copyNode`. Overwrite an existing DataNode. Preserve bytes, not server-only properties; copying an internal LinkNode materializes its target bytes as a DataNode. |
 | `copy`, `cp` / `_copy` | **D** | fsspec list/glob/recursive expansion over the relay; create containers as needed and honour `maxdepth`. There is no atomic recursive copy. |
-| `_mv_file` | **D** | Require an absent destination, copy the DataNode bytes or recreate the LinkNode, then DELETE the source only after destination success. A failed source delete can leave both paths. |
-| `mv`, `move`, `rename` | **D** | Coordinate recursive copy then leaves-first source removal for containers. The move is non-atomic, reports partial completion, and never invokes `/transfers`. |
+| `_mv_file` | **D** | Require an absent destination, copy the DataNode bytes, then DELETE the source only after destination success. A failed source delete can leave both paths. LinkNode move is unsupported. |
+| `mv`, `move`, `rename` | **D / U** | Coordinate recursive copy then leaves-first source removal for DataNodes and ContainerNodes. Resolve LinkNode source metadata, then raise `NotImplementedError` before copy or delete mutation. The supported move path is non-atomic, reports partial completion, and never invokes `/transfers`. |
 | move with overwrite; cross-service move | **U** | Reject an existing destination and cross-filesystem orchestration. |
 | `touch(truncate=True)` | **N** | Whole PUT of zero bytes, creating or truncating the DataNode. |
 | `touch(truncate=False)` | **U** | Cavern has no content-preserving timestamp-touch primitive. |

@@ -260,7 +260,8 @@ target has the discovered VOSpace authority; an external LinkNode **MUST**
 raise `NotImplementedError`.
 
 Copying a LinkNode materializes its target bytes as a DataNode. Client-derived
-move recreates the LinkNode at the destination before deleting the source.
+move of a LinkNode is unsupported and **MUST** raise `NotImplementedError`
+before copy or delete mutation.
 
 Generic property writes, permission mutation, public link creation, `chmod`,
 and `chown` are unsupported.
@@ -392,9 +393,11 @@ multipart upload are unsupported.
   properties.
 - Recursive copy **MUST** create containers and relay files client-side. It is
   non-atomic.
-- Move **MUST** require an absent destination, copy or recreate the source,
-  and delete the source only after destination success. It **MUST NOT** call
-  `/transfers`.
+- Move of a DataNode or ContainerNode **MUST** require an absent destination,
+  copy or recreate the source, and delete the source only after destination
+  success. It **MUST NOT** call `/transfers`.
+- Move of a LinkNode is unsupported and **MUST** raise `NotImplementedError`
+  after resolving source metadata but before copy or delete mutation.
 - `touch(truncate=True)` **MUST** PUT zero bytes. `touch(truncate=False)` is
   unsupported.
 
@@ -445,7 +448,8 @@ the directory cache.
 | `rm_file` | Native | Delete one non-container node. |
 | `rm`, `rmdir` | Client-derived | Empty-check or leaves-first client deletion; no async UWS. |
 | `cp_file`, `copy`, `cp` | Client-derived | Bounded byte relay and client recursion. |
-| `mv`, `move`, `rename` | Client-derived | Non-atomic copy/recreate then delete; no overwrite. |
+| `mv`, `move`, `rename` (DataNode and ContainerNode) | Client-derived | Non-atomic copy/recreate then delete; no overwrite. |
+| `mv`, `move`, `rename` (LinkNode) | Unsupported | Resolve source metadata, then raise `NotImplementedError` before copy or delete mutation. |
 | `touch(truncate=True)` | Native | Create or truncate to zero bytes. |
 | `touch(truncate=False)` | Unsupported | Raise `NotImplementedError`. |
 | Blocking facade | Client-derived | fsspec mirrors supported coroutine hooks when `asynchronous=False`. |
