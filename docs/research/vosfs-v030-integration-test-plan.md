@@ -307,7 +307,7 @@ The exact downstream acceptance set is:
 
 | Consumer | Required behavior |
 | --- | --- |
-| fsspec | Run the reusable abstract `open`, `pipe`, `copy`, `get`, and `put` suites plus dedicated `mv` tests through their supported seams. The current hermetic baseline collects 560 tests: 554 passed and six skipped. The abstract subset is 131 passed and the same six `fil?1` copy/get/put skips because the existing path grammar reserves `?` as a query delimiter. |
+| fsspec | Run the reusable abstract `open`, `pipe`, `copy`, `get`, and `put` suites plus dedicated `mv` tests through their supported seams. The current hermetic baseline collects 592 tests: 586 passed and six skipped. The abstract subset is 131 passed and the same six `fil?1` copy/get/put skips because the existing path grammar reserves `?` as a query delimiter. |
 | pandas | Write a DataFrame with `to_csv("vos://...")`, reconstruct the filesystem in a fresh process, and read it with `read_csv`; assert columns, dtypes used by the fixture, row order, and values. |
 | NumPy | Round-trip `.npy` and `.npz` data through `fs.open`, and read a text array through a file object. Direct arbitrary-URL dispatch and remote `mmap_mode` remain outside the claim. |
 | Dask | Write and read CSV with `blocksize=None` through a fresh process/worker boundary; assert fsspec serialization and partition contents. No distributed range-read claim is made. |

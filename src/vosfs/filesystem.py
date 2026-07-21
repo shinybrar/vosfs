@@ -26,6 +26,7 @@ from fsspec.asyn import AsyncFileSystem, _get_batch_size, _run_coros_in_chunks, 
 from fsspec.callbacks import DEFAULT_CALLBACK
 from fsspec.compression import compr
 from fsspec.core import get_compression
+from fsspec.utils import other_paths
 
 from vosfs import capabilities, config, errors, negotiate, nodes, paths, staging
 from vosfs.transport import ClientPool, build_timeout
@@ -200,8 +201,14 @@ class _DeferredBranchCallback:
 class _InheritedWriteAdapter:
     """Make inherited bulk hooks build inert per-file awaitables."""
 
-    def __init__(self, filesystem: VOSpaceFileSystem) -> None:
+    def __init__(
+        self,
+        filesystem: VOSpaceFileSystem,
+        *,
+        mark_put_destinations: bool = False,
+    ) -> None:
         self._filesystem = filesystem
+        self._mark_put_destinations = mark_put_destinations
 
     def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - fsspec hook surface
         return getattr(self._filesystem, name)
@@ -216,6 +223,57 @@ class _InheritedWriteAdapter:
             self._filesystem,
             partial(self._filesystem._pipe_file, path, value, **kwargs),  # noqa: SLF001
         )
+
+    def _put_file(
+        self,
+        lpath: str,
+        rpath: str,
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> _DeferredAwaitable:
+        if self._mark_put_destinations:
+            rpath = paths.mark_normalized(rpath)
+        return _DeferredAwaitable(
+            self._filesystem,
+            partial(self._filesystem._put_file, lpath, rpath, **kwargs),  # noqa: SLF001
+        )
+
+    def _makedirs(
+        self,
+        path: str,
+        exist_ok: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
+    ) -> _DeferredAwaitable:
+        if self._mark_put_destinations:
+            path = paths.mark_normalized(path)
+        return _DeferredAwaitable(
+            self._filesystem,
+            partial(self._filesystem._makedirs, path, exist_ok=exist_ok),  # noqa: SLF001
+        )
+
+
+class _InheritedCopyAdapter:
+    """Restore normalized destinations after fsspec remaps copy paths."""
+
+    def __init__(
+        self,
+        filesystem: VOSpaceFileSystem,
+        *,
+        mark_destinations: bool,
+    ) -> None:
+        self._filesystem = filesystem
+        self._mark_destinations = mark_destinations
+
+    def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - fsspec hook surface
+        return getattr(self._filesystem, name)
+
+    def cp_file(self, path1: str, path2: str, **kwargs: Any) -> None:  # noqa: ANN401
+        if self._mark_destinations:
+            path2 = paths.mark_normalized(path2)
+        self._filesystem.cp_file(path1, path2, **kwargs)
+
+    async def _cp_file(self, path1: str, path2: str, **kwargs: Any) -> None:  # noqa: ANN401
+        if self._mark_destinations:
+            path2 = paths.mark_normalized(path2)
+        await self._filesystem._cp_file(path1, path2, **kwargs)  # noqa: SLF001
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -766,6 +824,22 @@ class VOSpaceFileSystem(AsyncFileSystem):
             **kwargs,
         )
 
+    async def _expand_path(
+        self,
+        path: str | list[str],
+        recursive: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
+        maxdepth: int | None = None,
+        assume_literal: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
+    ) -> list[str]:
+        """Keep fsspec-expanded paths from being percent-decoded again."""
+        expanded = await super()._expand_path(
+            path,
+            recursive=recursive,
+            maxdepth=maxdepth,
+            assume_literal=assume_literal,
+        )
+        return [paths.mark_normalized(item) for item in expanded]
+
     async def _get_file(
         self,
         rpath: str,
@@ -1030,7 +1104,14 @@ class VOSpaceFileSystem(AsyncFileSystem):
     ) -> list[Any] | None:
         """Use fsspec's upload coordinator with one shared parent-creation scope."""
         async with _write_scope(self):
-            adapter = cast("AsyncFileSystem", _InheritedWriteAdapter(self))
+            paired_paths = isinstance(lpath, list) and isinstance(rpath, list)
+            adapter = cast(
+                "AsyncFileSystem",
+                _InheritedWriteAdapter(
+                    self,
+                    mark_put_destinations=not paired_paths,
+                ),
+            )
             return await AsyncFileSystem._put(  # noqa: SLF001 - inherited hook seam
                 adapter,
                 lpath,
@@ -1407,6 +1488,8 @@ class VOSpaceFileSystem(AsyncFileSystem):
         if source_info.get("islink"):
             msg = "moving a LinkNode is unsupported"
             raise NotImplementedError(msg)
+        if source_info["type"] == "directory":
+            raise IsADirectoryError(errno.EISDIR, "move source is a container", source)
         if source == destination:
             return
         if await self._exists(destination):
@@ -1414,6 +1497,71 @@ class VOSpaceFileSystem(AsyncFileSystem):
             raise FileExistsError(msg)
         await self._cp_file(source, destination)
         await self._rm_file(source)
+
+    def copy(
+        self,
+        path1: str | list[str],
+        path2: str | list[str],
+        recursive: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
+        maxdepth: int | None = None,
+        on_error: str | None = None,
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> None:
+        """Normalize destinations before fsspec remaps them onto sources."""
+
+        def normalize_destination(path: str) -> str:
+            normalized = self._strip_protocol(path)
+            if path.endswith("/") and normalized != "/":
+                return f"{normalized}/"
+            return normalized
+
+        destinations = (
+            [normalize_destination(path) for path in path2]
+            if isinstance(path2, list)
+            else normalize_destination(path2)
+        )
+        adapter = cast(
+            "AsyncFileSystem",
+            _InheritedCopyAdapter(self, mark_destinations=True),
+        )
+        AsyncFileSystem.copy(
+            adapter,
+            path1,
+            destinations,
+            recursive=recursive,
+            maxdepth=maxdepth,
+            on_error=on_error,
+            **kwargs,
+        )
+
+    async def _copy(  # noqa: PLR0913 - fsspec hook signature
+        self,
+        path1: str | list[str],
+        path2: str | list[str],
+        recursive: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
+        on_error: str | None = None,
+        maxdepth: int | None = None,
+        batch_size: int | None = None,
+        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+    ) -> None:
+        """Use fsspec's copy coordinator without losing destination provenance."""
+        adapter = cast(
+            "AsyncFileSystem",
+            _InheritedCopyAdapter(
+                self,
+                mark_destinations=isinstance(path2, str) and paths.is_normalized(path2),
+            ),
+        )
+        await AsyncFileSystem._copy(  # noqa: SLF001 - inherited hook seam
+            adapter,
+            path1,
+            path2,
+            recursive=recursive,
+            on_error=on_error,
+            maxdepth=maxdepth,
+            batch_size=batch_size,
+            **kwargs,
+        )
 
     def mv(
         self,
@@ -1438,18 +1586,126 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = "moving a LinkNode is unsupported"
             raise NotImplementedError(msg)
         if source == destination:
+            if source_info["type"] == "directory":
+                msg = f"move destination already exists: {destination}"
+                raise FileExistsError(msg)
             return
+        if source == "/" or destination.startswith(f"{source}/"):
+            msg = f"move destination is within the source: {destination}"
+            raise ValueError(msg)
+        recursive = recursive or source_info["type"] == "directory"
+        source_paths = self.expand_path(
+            source,
+            recursive=recursive,
+            maxdepth=maxdepth,
+        )
+        source_manifest = [(path, self.info(path)) for path in source_paths]
+        if any(info.get("islink") for _, info in source_manifest):
+            msg = "moving a LinkNode is unsupported"
+            raise NotImplementedError(msg)
         if self.exists(destination):
             msg = f"move destination already exists: {destination}"
             raise FileExistsError(msg)
-        recursive = recursive or source_info["type"] == "directory"
-        self.copy(source, destination, recursive=recursive, maxdepth=maxdepth, **kwargs)
-        if not self.exists(destination):
-            msg = f"move did not create the destination: {destination}; source is kept"
-            raise errors.VOSpaceError(msg)
-        self.rm(source, recursive=recursive)
+        destination_paths = [
+            paths.mark_normalized(path)
+            for path in other_paths(source_paths, destination)
+        ]
+        kwargs["on_error"] = "raise"
+        try:
+            self.copy(
+                source_paths,
+                destination_paths,
+                recursive=recursive,
+                maxdepth=maxdepth,
+                **kwargs,
+            )
+        except Exception as exc:
+            completed, failed = self._verify_move_destinations(
+                source_manifest,
+                destination_paths,
+            )
+            self._invalidate(destination)
+            msg = f"move copy failed ({len(completed)} completed, {len(failed)} failed)"
+            raise errors.VOSpaceError(
+                msg,
+                completed=completed,
+                failed=failed,
+            ) from exc
+        completed, failed = self._verify_move_destinations(
+            source_manifest,
+            destination_paths,
+        )
+        if failed:
+            self._invalidate(destination)
+            msg = (
+                f"move copy is incomplete ({len(completed)} completed, "
+                f"{len(failed)} failed); source is kept"
+            )
+            raise errors.VOSpaceError(
+                msg,
+                completed=completed,
+                failed=failed,
+            )
+        self._remove_moved_sources(
+            source_manifest,
+            allow_nonempty=maxdepth is not None,
+        )
         self._invalidate(source)
         self._invalidate(destination)
+
+    def _verify_move_destinations(
+        self,
+        source_manifest: list[tuple[str, dict[str, Any]]],
+        destination_paths: list[str],
+    ) -> tuple[list[str], list[str]]:
+        """Return destination paths whose type and file size did or did not verify."""
+        completed: list[str] = []
+        failed: list[str] = []
+        for (_, expected), copied_path in zip(
+            source_manifest,
+            destination_paths,
+            strict=True,
+        ):
+            try:
+                copied = self.info(copied_path)
+            except OSError:
+                copied = None
+            type_matches = copied is not None and copied["type"] == expected["type"]
+            size_matches = type_matches and (
+                expected["type"] == "directory" or copied["size"] == expected["size"]
+            )
+            (completed if size_matches else failed).append(copied_path)
+        return completed, failed
+
+    def _remove_moved_sources(
+        self,
+        source_manifest: list[tuple[str, dict[str, Any]]],
+        *,
+        allow_nonempty: bool,
+    ) -> None:
+        """Remove verified moved entries leaves-first, retaining bounded descendants."""
+        completed: list[str] = []
+        for path, _ in sorted(
+            source_manifest,
+            key=lambda item: item[0].count("/"),
+            reverse=True,
+        ):
+            try:
+                self.rm(path, recursive=False)
+            except OSError as exc:
+                if allow_nonempty and exc.errno == errno.ENOTEMPTY:
+                    continue
+                self._invalidate(path)
+                msg = (
+                    "move source deletion failed "
+                    f"({len(completed)} completed, 1 failed)"
+                )
+                raise errors.VOSpaceError(
+                    msg,
+                    completed=completed,
+                    failed=[path],
+                ) from exc
+            completed.append(path)
 
     def _invalidate(self, path: str) -> None:
         """Invalidate the directory cache for ``path``, its subtree, and parent.
@@ -1556,7 +1812,7 @@ def _ancestors_top_down(path: str) -> list[str]:
     result: list[str] = []
     current = ""
     for segment in paths.segments(path):
-        current = f"{current}/{segment}"
+        current = paths.mark_normalized(f"{current}/{segment}")
         result.append(current)
     return result
 

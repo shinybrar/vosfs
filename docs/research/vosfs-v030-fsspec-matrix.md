@@ -161,7 +161,7 @@ v0.3.0 is compatible only when all **N** and **D** rows above pass against an `o
 
 This matrix is the complete v0.3.0 fsspec/scientific-stack capability boundary. Broader VOSpace portability, true ranged reads, conditional writes, append/update, native copy, cross-service transfer, block caching, and FUSE are future contracts.
 
-At the 2026-07-21 reconciliation, the hermetic suite collected 560 tests: 554
+At the 2026-07-21 reconciliation, the hermetic suite collected 592 tests: 586
 passed and six skipped. The reusable fsspec 2026.6.0 subset collected 137 cases:
 131 supported cases passed and the same six question-mark glob rows skipped
 with the path-grammar reason above. Copy, get, and put each contribute the same

@@ -102,6 +102,12 @@ def test_helpers_do_not_decode_literal_percent() -> None:
     assert paths.encode_url_path(once) == "/dir/100%2541"
 
 
+def test_normalized_literal_percent_is_not_decoded_again() -> None:
+    once = paths.strip_protocol("vos://authority/dir/100%2541")
+
+    assert paths.strip_protocol(once) == "/authority/dir/100%41"
+
+
 def test_encode_url_path_reencodes_a_decoded_space() -> None:
     # vos://dir/file%2520name normalizes once to the literal name "file%20name";
     # encoding it for the URL must target that object, not a second-decoded space.
@@ -116,3 +122,101 @@ def test_encoded_separator_in_decoded_name_is_addressable() -> None:
     once = paths.strip_protocol("vos://dir/data%252fpart")
     assert once == "/dir/data%2fpart"
     assert paths.encode_url_path(once) == "/dir/data%252fpart"
+
+
+@pytest.mark.parametrize("bad", ["/dir/bad%2Fname", "/dir/bad?name"])
+def test_public_assume_literal_still_validates_raw_paths(bad: str) -> None:
+    from vosfs import VOSpaceFileSystem
+
+    fs = VOSpaceFileSystem("https://example.invalid", skip_instance_cache=True)
+    with pytest.raises(ValueError):  # noqa: PT011 - profile boundary, not message text
+        fs.expand_path([bad], assume_literal=True)
+    fs.close()
+
+
+@pytest.mark.parametrize("replacement", ["?", "#", "%2F", "%5C"])
+def test_replacing_normalized_path_drops_trust(replacement: str) -> None:
+    from vosfs import VOSpaceFileSystem
+
+    normalized = paths.strip_protocol("vos://root/100%2541")
+    tainted = normalized.replace("%41", replacement)
+    fs = VOSpaceFileSystem("https://example.invalid", skip_instance_cache=True)
+    with pytest.raises(ValueError):  # noqa: PT011 - profile boundary, not message text
+        fs.expand_path([tainted], assume_literal=True)
+    fs.close()
+
+
+def test_safely_replacing_normalized_path_preserves_percent_suffix() -> None:
+    normalized = paths.strip_protocol("vos://root/100%2541")
+
+    remapped = normalized.replace("/root", "/destination")
+
+    assert paths.is_normalized(remapped)
+    assert remapped == "/destination/100%41"
+
+
+def test_noop_replacing_normalized_path_preserves_provenance() -> None:
+    normalized = paths.strip_protocol("vos://root/100%2541")
+
+    unchanged = normalized.replace("missing", "?")
+
+    assert paths.is_normalized(unchanged)
+    assert unchanged == normalized
+
+
+@pytest.mark.parametrize(
+    ("raw", "composed"),
+    [
+        ("vos://root/x%252-F", "/root/x%2F"),
+        ("vos://root/x%255-C", "/root/x%5C"),
+    ],
+)
+def test_replacing_normalized_path_drops_newly_composed_separator(
+    raw: str,
+    composed: str,
+) -> None:
+    from vosfs import VOSpaceFileSystem
+
+    normalized = paths.strip_protocol(raw)
+    tainted = normalized.replace("-", "")
+
+    assert tainted == composed
+    assert not paths.is_normalized(tainted)
+    fs = VOSpaceFileSystem("https://example.invalid", skip_instance_cache=True)
+    with pytest.raises(ValueError):  # noqa: PT011 - profile boundary, not message text
+        fs.expand_path([tainted], assume_literal=True)
+    fs.close()
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("vos://root/x%252F", "/destination/x%2F"),
+        ("vos://root/x%255C", "/destination/x%5C"),
+    ],
+)
+def test_safe_replace_retains_existing_literal_separator(
+    raw: str,
+    expected: str,
+) -> None:
+    normalized = paths.strip_protocol(raw)
+
+    remapped = normalized.replace("/root", "/destination")
+
+    assert paths.is_normalized(remapped)
+    assert remapped == expected
+
+
+def test_replace_drops_recomposed_separator_when_hazard_count_is_unchanged() -> None:
+    from vosfs import VOSpaceFileSystem
+
+    normalized = paths.strip_protocol("vos://alpha%252F/beta%252-F")
+
+    tainted = normalized.replace("F/beta%2-", "", 1)
+
+    assert tainted == "/alpha%2F"
+    assert not paths.is_normalized(tainted)
+    fs = VOSpaceFileSystem("https://example.invalid", skip_instance_cache=True)
+    with pytest.raises(ValueError):  # noqa: PT011 - profile boundary, not message text
+        fs.expand_path([tainted], assume_literal=True)
+    fs.close()
