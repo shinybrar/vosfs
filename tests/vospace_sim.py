@@ -51,6 +51,8 @@ class VOSpaceSim:
         self.properties: dict[str, dict[str, str]] = {}
         self.node_update_requests: list[httpx.Request] = []
         self.node_update_status = 200
+        self.delete_requests: list[str] = []
+        self.delete_statuses: dict[str, int] = {}
         self._transition_node("/", wire_type="ContainerNode")
 
     def add_container(self, path: str) -> VOSpaceSim:
@@ -124,7 +126,7 @@ class VOSpaceSim:
 
     # -- node operations -----------------------------------------------------
 
-    def _node_op(self, request: httpx.Request) -> httpx.Response:
+    def _node_op(self, request: httpx.Request) -> httpx.Response:  # noqa: PLR0911
         path = self._node_path(request)
         if request.method == "GET":
             return self._node_get(path)
@@ -134,6 +136,9 @@ class VOSpaceSim:
         if request.method == "POST":
             return self._node_post(path, request)
         if request.method == "DELETE":
+            self.delete_requests.append(path)
+            if status := self.delete_statuses.get(path):
+                return httpx.Response(status)
             if path not in self.nodes:
                 return httpx.Response(404)
             self._transition_node(path, wire_type=None)

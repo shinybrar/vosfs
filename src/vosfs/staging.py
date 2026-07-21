@@ -43,8 +43,15 @@ class StagedReadFile(io.BufferedReader):
     def __init__(self, path: str) -> None:
         """Open ``path`` for binary reading; it is unlinked on close."""
         self._path = path
-        super().__init__(io.FileIO(path, "rb"))
-        self.size = Path(path).stat().st_size
+        raw = io.FileIO(path, "rb")
+        try:
+            super().__init__(raw)
+            self.size = os.fstat(self.fileno()).st_size
+        except BaseException:
+            raw.close()
+            with contextlib.suppress(OSError):
+                Path(path).unlink()
+            raise
 
     def close(self) -> None:
         """Close the staged file and remove its temporary backing file."""

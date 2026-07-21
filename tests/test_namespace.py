@@ -1,8 +1,9 @@
 """Tests for the namespace and mutation contract (section 10)."""
 
+import httpx
 import pytest
 import respx
-from conftest import AUTHORITY, NODES_URL, make_fs
+from conftest import AUTHORITY, NODES_URL, make_fs, mock_capabilities
 from defusedxml import ElementTree
 from vospace_sim import VOSpaceSim
 
@@ -154,7 +155,7 @@ async def test_update_node_maps_service_failure_without_changing_metadata(
     with pytest.raises(FileExistsError):
         await fs._update_node("/data.bin", {property_uri: "rejected"})
 
-    assert "/" in fs.dircache
+    assert "/" not in fs.dircache
     assert property_uri not in (await fs._info("/data.bin"))["properties"]
     await fs.aclose()
 
@@ -261,6 +262,70 @@ async def test_recursive_rm_deletes_leaves_first(router: respx.Router) -> None:
     fs = _fs(router, sim)
     await fs._rm("/tree", recursive=True)
     assert not any(p.startswith("/tree") for p in sim.nodes)
+    await fs.aclose()
+
+
+@pytest.mark.parametrize(
+    ("parent", "child_uri"),
+    [
+        ("/tree", f"vos://{AUTHORITY}/tree/sub/escape"),
+        ("/tree", f"vos://{AUTHORITY}/tree/%2E%2E/escape"),
+        ("/tree", f"vos://{AUTHORITY}/sibling"),
+        ("/", f"vos://{AUTHORITY}/top/escape"),
+        ("/", f"vos://{AUTHORITY}/%2E%2E"),
+        ("/", "vos://other.example!vault/escape"),
+    ],
+)
+async def test_recursive_rm_rejects_non_immediate_listing_children(
+    router: respx.Router, parent: str, child_uri: str
+) -> None:
+    suffix = "" if parent == "/" else parent
+    document = f"""<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}{suffix}">
+      <vos:properties/><vos:nodes>
+        <vos:node xsi:type="vos:DataNode" uri="{child_uri}">
+          <vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">1</vos:property></vos:properties>
+        </vos:node>
+      </vos:nodes>
+    </vos:node>""".encode()
+    mock_capabilities(router)
+    router.get(NODES_URL + suffix).mock(
+        return_value=httpx.Response(200, content=document)
+    )
+    deletes = router.delete(url__regex=rf"^{NODES_URL}").mock(
+        return_value=httpx.Response(200)
+    )
+    fs = make_fs(router, asynchronous=True)
+
+    with pytest.raises(OSError, match="recursive removal failed") as excinfo:
+        await fs._rm(parent, recursive=True)
+
+    assert excinfo.value.completed == []
+    assert excinfo.value.failed == [parent]
+    assert deletes.call_count == 0
+    await fs.aclose()
+
+
+async def test_recursive_rm_reports_leaves_first_partial_completion(
+    router: respx.Router,
+) -> None:
+    sim = (
+        VOSpaceSim()
+        .add_container("/tree")
+        .add_file("/tree/a", b"a")
+        .add_file("/tree/b", b"b")
+    )
+    sim.delete_statuses["/tree/b"] = 500
+    fs = _fs(router, sim)
+
+    with pytest.raises(OSError, match="recursive removal failed") as excinfo:
+        await fs._rm("/tree", recursive=True)
+
+    assert excinfo.value.completed == ["/tree/a"]
+    assert excinfo.value.failed == ["/tree/b"]
+    assert sim.delete_requests == ["/tree/a", "/tree/b"]
+    assert "/tree" in sim.nodes
     await fs.aclose()
 
 
@@ -377,3 +442,61 @@ async def test_rm_file_refuses_a_container(router: respx.Router) -> None:
     with pytest.raises(IsADirectoryError):
         await fs._rm_file("/dir")
     await fs.aclose()
+
+
+async def test_uncertain_node_mutation_invalidates_cached_state(
+    router: respx.Router,
+) -> None:
+    sim = VOSpaceSim().add_file("/data.bin", b"data")
+    sim.node_update_status = 500
+    fs = _fs(router, sim)
+    await fs._ls("/", detail=True)
+    assert "/" in fs.dircache
+
+    with pytest.raises(OSError, match="HTTP 500"):
+        await fs._update_node("/data.bin", {"ivo://example.org/props#x": "value"})
+
+    assert "/" not in fs.dircache
+    await fs.aclose()
+
+
+async def test_incomplete_listing_refresh_preserves_complete_cached_entry(
+    router: respx.Router,
+) -> None:
+    malformed = f"""<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/tree">
+      <vos:properties/><vos:nodes>
+        <vos:node xsi:type="vos:DataNode" uri="vos://{AUTHORITY}/tree/sub/escape">
+          <vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">1</vos:property></vos:properties>
+        </vos:node>
+      </vos:nodes>
+    </vos:node>""".encode()
+    mock_capabilities(router)
+    router.get(f"{NODES_URL}/tree").mock(
+        return_value=httpx.Response(200, content=malformed)
+    )
+    fs = make_fs(router, asynchronous=True)
+    complete = [{"name": "/tree/known", "type": "file", "size": 1}]
+    fs.dircache["/tree"] = complete
+
+    with pytest.raises(OSError, match="immediate descendant"):
+        await fs._fetch_listing("/tree")
+
+    assert fs.dircache["/tree"] == complete
+    await fs.aclose()
+
+
+def test_invalidate_cache_clears_path_or_all_without_io(router: respx.Router) -> None:
+    fs = make_fs(router)
+    fs.dircache["/"] = []
+    fs.dircache["/tree"] = []
+    fs.dircache["/tree/sub"] = []
+    fs.dircache["/other"] = []
+
+    fs.invalidate_cache("/tree")
+    assert list(fs.dircache) == ["/other"]
+    fs.invalidate_cache()
+    assert list(fs.dircache) == []
+    assert len(router.calls) == 0
+    fs.close()
