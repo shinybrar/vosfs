@@ -35,6 +35,7 @@ utility exists as a command.
 | Disposition | Meaning |
 | --- | --- |
 | `admitted` | Shipped through `App(sources).typer_app` under a locked profile; matrix rows record evidence honestly. |
+| `profiled` | Locked positive command contract awaiting production implementation and qualifying matrix evidence. |
 | `rejected` | Deliberate source-free or runtime rejection with a locked rejection profile and negative evidence. |
 | `unavailable` | Architecture or capability forbids the utility; docs-only; no command stub. |
 | `deferred` | May be profiled later; docs-only until an exact capability profile exists. |
@@ -71,7 +72,7 @@ for source-form claims (`pass` / `fail` / `unsupported` / `unverified`).
 | Same-source two-operand file `cp` | `admitted` | [same-source cp](fsspec-cli-same-source-cp-command-profile.md) | source rows; see audit |
 | Cross-source two-operand file `cp` | `admitted` | [cross-source cp](fsspec-cli-cross-source-cp-command-profile.md) | source-pair rows |
 | Multi-source file `cp` into directory | `admitted` | [multi-source cp](fsspec-cli-multi-source-cp-command-profile.md) | source rows |
-| Same-source / cross-source `cp -R` | `rejected` | [recursive cp rejection](fsspec-cli-recursive-cp-rejection-profile.md) | preflight `unsupported` |
+| Same-source / cross-source `cp -R` | `profiled` | [verified recursive cp](fsspec-cli-recursive-cp-rejection-profile.md) | source and source-pair rows remain `unverified` until #286 |
 | Same-source two-operand file `mv` | `admitted` | [same-source mv](fsspec-cli-same-source-mv-command-profile.md) | exact `_mv` rows; often `unverified` |
 | Same-source multi-file `mv` into directory | `admitted` | [multi-file mv](fsspec-cli-same-source-multi-file-mv-command-profile.md) | exact `_mv` rows; often `unverified` |
 | Same-source directory `mv` | `rejected` | [same-source mv directory boundary](fsspec-cli-same-source-mv-command-profile.md) | runtime/directory rejection |
@@ -123,7 +124,7 @@ Not Issue 8 filesystem utilities under this catalog. Not added.
 | --- | --- |
 | `file` | `outside catalog` (content classification) |
 | `mount`, `sync`, `install`, `truncate`, `mktemp` | `outside catalog` |
-| `find`, walk, glob, traversal engines | `outside catalog` (fsspec owns composites) |
+| Standalone `find`, walk, and glob utilities | `outside catalog` (a command profile may own bounded internal traversal) |
 | `cksum`, `cmp`, `dd`, `head`, `od`, `pax`, `split`, `strings`, `tail`, `tee`, `test`, `wc` | `outside catalog` (content/stream/archive utilities) |
 
 ## 7. Closing issue 120
