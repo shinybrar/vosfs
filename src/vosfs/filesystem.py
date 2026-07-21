@@ -295,6 +295,22 @@ class VOSpaceFileSystem(AsyncFileSystem):
         self._bindings_lock: asyncio.Lock | None = None
         self._authority: str | None = None
 
+    def _ensure_usable(self) -> None:
+        """Reject closed or fork-inherited runtime state before using it."""
+        if self._pid != os.getpid():
+            msg = (
+                "VOSpaceFileSystem cannot be used after fork; reconstruct it "
+                "in the child process from pickle or fsspec JSON"
+            )
+            raise RuntimeError(msg)
+        if self._pool.closed:
+            msg = "I/O operation on closed filesystem"
+            raise ValueError(msg)
+
+    def __dask_tokenize__(self) -> tuple[Any, tuple[Any, ...], dict[str, Any]]:
+        """Tokenize primitive constructor state, independent of worker identity."""
+        return type(self), self.storage_args, self.storage_options
+
     @overload
     @classmethod
     def _strip_protocol(cls, path: str) -> str: ...
@@ -326,6 +342,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         I/O, is never refreshed by directory-cache invalidation, and is rebuilt
         only by reconstruction.
         """
+        self._ensure_usable()
         if self._bindings is not None:
             return self._bindings
         if self._bindings_lock is None:
@@ -439,6 +456,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         Container listings are served from and stored in the standard fsspec
         directory cache; mutations invalidate the affected entries.
         """
+        self._ensure_usable()
         path = self._strip_protocol(path)
         try:
             entries = self.dircache[path]
@@ -1247,6 +1265,8 @@ class VOSpaceFileSystem(AsyncFileSystem):
         After this call the instance is removed from fsspec's instance cache and
         any later HTTP I/O fails as closed.
         """
+        if self._pid != os.getpid():
+            self._ensure_usable()
         await self._pool.aclose()
         # Evict just this instance; fsspec's public API only clears the whole cache.
         type(self)._cache.pop(self._fs_token, None)  # noqa: SLF001

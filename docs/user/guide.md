@@ -402,7 +402,15 @@ precise match is raised as the single public `vosfs.VOSpaceError`.
 ## Closing
 
 `aclose()` (async) and `close()` (sync) release every HTTP client, evict the
-instance from fsspec's cache, and make later I/O fail as closed.
+instance from fsspec's cache, and make later I/O fail as closed. Both calls are
+idempotent.
+
+A live filesystem belongs to the process that constructed it. Do not use an
+inherited instance after `fork()`; reconstruct it in the child or worker from
+pickle, fsspec JSON, or the original storage options. Reconstruction creates
+fresh event-loop, lock, HTTP-client, service-binding, and cache state. Dask
+tokenization depends only on the serialized constructor options, not that live
+runtime state.
 
 Close a filesystem deterministically when its work is finished:
 
