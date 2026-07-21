@@ -314,8 +314,9 @@ OpenCADC's own limits (§4).
 
 The **single most important correctness gap, F1, is resolved**: the TRD and
 implementation now classify LinkNode move as unsupported and raise
-`NotImplementedError` after source resolution but before mutation. Copying a
-LinkNode still materializes target bytes, while LinkNode creation and
+`NotImplementedError` after source resolution but before mutation. Copying an
+internal LinkNode whose target has the discovered VOSpace authority materializes
+its target bytes as a DataNode; copying an external or non-VOS LinkNode raises
+`NotImplementedError` before destination mutation. LinkNode creation and
 link-preserving move remain outside the current profile. Everything else is
-fidelity polish (F2-F4, F8), exclusion documentation (F5), or roadmap
-(F6-F7-F10).
+fidelity polish (F2-F4, F8), exclusion documentation (F5), or roadmap (F6-F7-F10).
