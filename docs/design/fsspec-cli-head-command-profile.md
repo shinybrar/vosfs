@@ -125,4 +125,4 @@ Native `vosfs` evidence MUST observe its truthful whole-object GET without a
 `Range` header while separately asserting the bounded CLI hook request.
 
 This ticket records its matrix rows as `unverified` until immutable qualifying
-evidence exists. It makes no live OpenCADC claim.
+evidence exists. Evidence remains limited to the named source forms.

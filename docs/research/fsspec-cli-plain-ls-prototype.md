@@ -1,5 +1,9 @@
 # Plain `ls` interoperability prototype
 
+> **Historical, non-normative.** Issue
+> [#242](https://github.com/shinybrar/vosfs/issues/242) retired the live-testing
+> lane recorded here. It defines no current CI, release, or support requirement.
+
 <!-- pyml disable line-length -->
 
 Prototyped: 2026-07-15

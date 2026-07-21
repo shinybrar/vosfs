@@ -165,4 +165,4 @@ file and empty roots, parser/help behavior, atomic hostile-result rejection,
 iteration failures, output failures, control flow, and cleanup.
 
 This ticket records its matrix rows as `unverified` until immutable qualifying
-evidence exists. It makes no live OpenCADC claim.
+evidence exists. Evidence remains limited to the named source forms.

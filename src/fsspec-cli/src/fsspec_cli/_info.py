@@ -13,20 +13,16 @@ from ._command import (
     _binary_stdout,
     _Failure,
     _MappedOperand,
-    _parse_mapped_operand,
+    _preflight_single_mapped_operand,
     _RawCommand,
     _render_failure,
     _render_output_failure,
-    _usage_error,
     _write_binary,
 )
-from ._diagnostics import _render_diagnostic_value
 from ._listing import ListingRow, to_listing
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
-
     from fsspec.asyn import AsyncFileSystem
     from typer._click import Context
     from typer._click.formatting import HelpFormatter
@@ -49,28 +45,6 @@ class _InfoCommand(_RawCommand):
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
         del ctx
         formatter.write_usage("info", "[--] name:/path")
-
-
-def _preflight(
-    command: str,
-    raw_arguments: tuple[str, ...],
-    known_names: Collection[str],
-) -> _MappedOperand:
-    operand = None
-    options_active = True
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            continue
-        if options_active and argument.startswith("-"):
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: unsupported option")
-        if operand is not None:
-            _usage_error(command, "extra operand")
-        operand = _parse_mapped_operand(command, argument, known_names)
-    if operand is None:
-        _usage_error(command, "missing mapped filesystem operand")
-    return operand
 
 
 def _canonical_value(value: object, active: set[int]) -> object:
@@ -204,7 +178,7 @@ async def _run_info(
     raw_arguments: tuple[str, ...],
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    operand = _preflight(command, raw_arguments, sources)
+    operand = _preflight_single_mapped_operand(command, raw_arguments, sources)
     invocation = _SourceInvocation(command, sources)
     succeeded = False
     failure: _Failure | None = None

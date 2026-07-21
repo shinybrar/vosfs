@@ -55,7 +55,7 @@ One matrix row identifies one claim through these fields:
 | Scope | `source` when filesystem behavior is exercised; `command preflight` when rejection completes before source entry; `source-free command` when a lexical command completes without source entry. |
 | Source form | The configured source and whether it yields native or adapted async behavior. For command preflight, this is `not entered`. |
 | Status | Exactly one of `pass`, `fail`, `unsupported`, or `unverified`. |
-| Required gates | The hermetic and, where applicable, live evidence needed for this row. |
+| Required gates | The deterministic evidence needed for this row. |
 | Evidence | `—` for `unverified`; otherwise one or more evidence records satisfying Section 5. |
 
 The initial source forms are:
@@ -90,9 +90,8 @@ A qualifying test reached the command behavior under test and contradicted
 the locked profile. Examples include wrong output, exit status, call sequence,
 result validation, cleanup, or backend-independent behavior.
 
-An infrastructure, credential, service-availability, or test-setup failure
-that prevents the command behavior from being observed is inconclusive and
-therefore `unverified`, not `fail`.
+An infrastructure or test-setup failure that prevents the command behavior
+from being observed is inconclusive and therefore `unverified`, not `fail`.
 
 ### `unsupported`
 
@@ -110,7 +109,7 @@ decision and its negative evidence.
 
 No current qualifying evidence establishes another status. This includes new
 or absent source forms, the pre-implementation state, incomplete required
-gates, version drift, and inconclusive live runs.
+gates, and version drift.
 
 `unverified` is neutral. It does not block adding future or third-party
 backends to the universe of possible sources. It blocks only a release or
@@ -137,7 +136,7 @@ Local and Memory use the fsspec version as their backend implementation
 version. A command-preflight row records the `fsspec-cli` and Typer identities
 but no invented backend version because no source is entered.
 
-Credentials, entry names, tokens, certificates, and other sensitive live data
+Credentials, entry names, tokens, certificates, and other sensitive data
 MUST NOT appear in matrix evidence.
 
 ## 6. Evidence gates
@@ -157,24 +156,8 @@ status. It MUST:
   cannot satisfy the result accidentally.
 
 For an unsupported option whose rejection completes during command preflight,
-the hermetic negative test enters no source. No backend-specific hermetic or
-live execution is invented for that row.
-
-### 6.2 Live OpenCADC gate
-
-A narrow live OpenCADC listing is additionally required for a positive
-`vosfs / native async` plain-`ls` claim. It MUST be read-only, credential-gated,
-run only from a trusted default-branch or manual workflow, and use the same
-production handler as hermetic tests.
-
-The evidence records the sanitized service environment, exact source build,
-observation time, exit status, and call shape. It does not publish directory
-contents or credential material and does not broaden one observation into a
-general OpenCADC or VOSpace guarantee.
-
-Live evidence is not required for Local, Memory, or source-independent
-preflight rejection. A live run supplements hermetic evidence and can never
-replace it.
+the hermetic negative test enters no source. No backend-specific execution is
+invented for that row.
 
 ## 7. Freshness and classification
 
@@ -185,14 +168,13 @@ affected row `unverified` until its required gates run again.
 The declared supported host platforms are Linux and macOS.
 
 There is no arbitrary wall-clock expiry. Every release candidate obtains new
-evidence for its exact build, and live observations always retain their time.
-Git history preserves superseded matrix states; the current matrix does not
-pretend old evidence applies to a new tuple.
+evidence for its exact build. Git history preserves superseded matrix states;
+the current matrix does not pretend old evidence applies to a new tuple.
 
 When classifying a gate result:
 
-1. setup, authentication, connectivity, or service availability prevented the
-   command observation: `unverified`;
+1. test setup or CI infrastructure prevented the command observation:
+   `unverified`;
 2. the command ran and violated a positive or rejection contract: `fail`;
 3. every required positive gate passed: `pass`; or
 4. every required negative rejection gate passed for an explicitly excluded
@@ -208,7 +190,7 @@ Section 9 still requires the release candidate to rerun every required gate.
 | --- | --- | --- | --- | --- | --- | --- |
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
 | [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
-| [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic and live OpenCADC | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110), [L-2026-07-16-29536609626](#l-2026-07-16-29536609626) |
+| [Plain `ls`](fsspec-cli-plain-ls-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic | [H-2026-07-16-29536484110](#h-2026-07-16-29536484110) |
 | [Long listing](fsspec-cli-ls-long-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | — |
 | [Long listing](fsspec-cli-ls-long-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | — |
 | [Long listing](fsspec-cli-ls-long-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | — |
@@ -233,10 +215,14 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Recursive tree](fsspec-cli-tree-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | — |
 | [Recursive tree](fsspec-cli-tree-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | — |
 | [Recursive tree](fsspec-cli-tree-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | — |
-| [Normalized `info`](fsspec-cli-info-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | Hermetic `test_info_command_matrix.py` on this change; no live or cross-backend completeness claim |
-| [Normalized `info`](fsspec-cli-info-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | Hermetic `test_info_command_matrix.py` on this change; no live or cross-backend completeness claim |
-| [Normalized `info`](fsspec-cli-info-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | Strict mocked transport in `test_info_command_matrix.py`; not live OpenCADC evidence |
+| [Normalized `info`](fsspec-cli-info-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | Hermetic `test_info_command_matrix.py` on this change; no cross-backend completeness claim |
+| [Normalized `info`](fsspec-cli-info-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | Hermetic `test_info_command_matrix.py` on this change; no cross-backend completeness claim |
+| [Normalized `info`](fsspec-cli-info-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | Strict mocked transport in `test_info_command_matrix.py`; evidence limited to this source form |
 | [`info` option/operand rejection](fsspec-cli-info-command-profile.md#2-invocation-and-source-free-preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | Hermetic `test_info.py` on this change |
+| [`sign` extension](fsspec-cli-sign-extension-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic | Capability-missing behavior in `test_sign_extension_matrix.py` on this change |
+| [`sign` extension](fsspec-cli-sign-extension-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | Capability-missing behavior in `test_sign_extension_matrix.py` on this change |
+| [`sign` extension](fsspec-cli-sign-extension-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | Capability-missing behavior with zero HTTP probes in `test_sign_extension_matrix.py` on this change |
+| [`sign` option/operand rejection](fsspec-cli-sign-extension-profile.md#2-command-form-and-preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | Hermetic `test_sign_extension.py` on this change |
 | [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
 | [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `memory / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
 | [Base `rmdir`](fsspec-cli-base-rmdir-command-profile.md) | source | `vosfs / native async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29583728890](#h-2026-07-17-29583728890) |
@@ -249,7 +235,7 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [`dirname string`](fsspec-cli-dirname-command-profile.md) option/operand rejection | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | [H-2026-07-17-29586387337](#h-2026-07-17-29586387337) |
 | [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `local / adapted async` | `pass` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `memory / adapted async` | `pass` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
-| [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic and live OpenCADC | Hermetic mocked transport present; live evidence absent |
+| [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | Hermetic mocked transport present; qualifying immutable evidence absent |
 | [Binary stdin and `-` for `cat`](fsspec-cli-cat-stdin-command-profile.md) | stdin / mixed | `memory / adapted async` | `pass` | — | Hermetic | Hermetic `test_cat.py` and `test_cat_process.py` on this change |
 | [`cat -u` strict rejection](fsspec-cli-cat-stdin-command-profile.md#2-operand-preflight) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | Hermetic `test_cat.py` on this change |
 | [Base `mkdir`](fsspec-cli-base-mkdir-command-profile.md) | source | `local / adapted async` | `pass` | `pass` | Hermetic | [H-2026-07-17-29565052441](#h-2026-07-17-29565052441) |
@@ -282,9 +268,9 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [`rm -v`](fsspec-cli-rm-verbose-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic | Hermetic `test_command_matrix.py` on this change |
 | [`rm -v`](fsspec-cli-rm-verbose-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | Hermetic `test_vosfs_command_matrix.py` on this change |
 | [`rm -v` unsupported-option rejection](fsspec-cli-rm-verbose-command-profile.md#1-scope) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | Hermetic `test_rm.py` on this change |
-| [Metadata-verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic size-only boundary | No live evidence |
-| [Metadata-verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic size-only boundary | No live evidence |
-| [Metadata-verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | Hermetic mocked transport present; live evidence absent |
+| [Metadata-verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic size-only boundary | Qualifying immutable evidence absent |
+| [Metadata-verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic size-only boundary | Qualifying immutable evidence absent |
+| [Metadata-verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | Hermetic mocked transport present; qualifying immutable evidence absent |
 | [Metadata-verified same-source `cp` option rejection](fsspec-cli-same-source-cp-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | — |
 | [Same-source `cp -R` rejection](fsspec-cli-recursive-cp-rejection-profile.md) | command preflight | `not entered` | `unsupported` | `unsupported` | Hermetic negative rejection | Existing hermetic `test_command_matrix.py::test_cp_option_rejection_is_source_free` |
 | [Metadata-verified cross-source `cp`](fsspec-cli-cross-source-cp-command-profile.md) | source pair | `local / adapted async` to `memory / adapted async` | `pass` | — | Hermetic size-only boundary | Hermetic `test_command_matrix.py`; isolated-wheel gate includes this matrix |
@@ -310,6 +296,9 @@ Section 9 still requires the release candidate to rerun every required gate.
 
 Other backends and source forms remain implicitly `unverified`. They do not
 block the first release because they are not required release rows.
+
+> **Historical, non-normative evidence.** Records below describe retired CI
+> runs and define no current gate, release requirement, or support claim.
 
 The former source-free `ls -l` rejection row was removed when the locked
 long-listing profile superseded it. Older evidence records below retain that
@@ -625,18 +614,14 @@ and
 
 ## 9. CI and release policy
 
-Pull requests run the hermetic gates for every affected required row. A
-reached-command contract failure blocks the pull request. The credentialed
-live gate remains absent from untrusted pull-request execution.
-
-Trusted default-branch or manual workflows run the narrow live gate. A
+Pull requests, default-branch pushes, and manual workflows run the same full
+deterministic matrix. A reached-command contract failure blocks the change. A
 `fsspec-cli` release candidate MUST, on its exact candidate build:
 
 1. build the independent workspace member's wheel;
 2. install and test that wheel in isolation;
 3. pass every required hermetic positive and negative row;
-4. obtain fresh required live `vosfs` evidence; and
-5. contain no required `fail` or `unverified` row.
+4. contain no required `fail` or `unverified` row.
 
 The release policy applies to the independent `fsspec-cli` release and tag,
 beginning with `fsspec-cli-v0.1.0`. It publishes to GitHub Releases only. It
@@ -684,6 +669,5 @@ establish a matrix status.
 
 [Create the production plain-`ls` tracer and independent package skeleton](https://github.com/shinybrar/vosfs/issues/83)
 owns the first executable matrix transition. It should begin with these rows
-as `unverified`, land the hermetic and isolated-wheel evidence, obtain the
-trusted live observation, and update only the cells whose complete gates
-qualify them.
+as `unverified`, land the hermetic and isolated-wheel evidence, and update only
+the cells whose complete gates qualify them.

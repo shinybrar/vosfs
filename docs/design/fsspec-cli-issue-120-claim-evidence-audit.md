@@ -1,5 +1,8 @@
 # Issue #120 claim and evidence audit
 
+> **Historical, non-normative.** This audit records retired evidence policy and
+> defines no current CI, release, or support requirement.
+
 <!-- pyml disable line-length -->
 
 Status: **Honest post-campaign audit (#147)** — not a greenwash pass

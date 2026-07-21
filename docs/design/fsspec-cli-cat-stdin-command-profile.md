@@ -106,7 +106,7 @@ profile continuation rule. Output failure always stops.
 - [Plain mapped-file `cat`](fsspec-cli-plain-cat-command-profile.md) owns
   mapped-file staging and ownership.
 - [Tested command matrix contract](fsspec-cli-tested-command-matrix.md) owns
-  matrix statuses and hermetic-versus-live evidence rules.
+  matrix statuses and deterministic evidence rules.
 
 ## Primary evidence
 

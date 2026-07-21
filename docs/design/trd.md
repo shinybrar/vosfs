@@ -555,53 +555,12 @@ Hermetic tests **MUST** cover:
 Replay tests **MUST** block unmatched network access and require every expected
 RESpx route to be called.
 
-### 15.2 Authoritative OpenCADC integration gate
+### 15.2 Recorded interaction fixtures
 
-The hard integration endpoint defaults to `https://staging.canfar.net/arc` and
-**MUST** be configurable. The credential-gated live suite **MUST** run on every
-trusted default-branch push and for the exact release commit. A tagged release
-**MUST NOT** proceed without that successful exact-commit run.
-
-Local development MAY use `~/.ssl/cadcproxy.pem` through `VOSFS_CERT_FILE`.
-Trusted GitHub Actions uses username and password secrets to mint a short-lived
-combined proxy PEM with `cadcutils` and `cadc-get-cert`. `cadcutils` is an
-integration-only development dependency, not a runtime dependency.
-
-The CI certificate **MUST** be written under the runner's temporary directory,
-made owner-readable only, passed as `VOSFS_CERT_FILE`, never printed, and
-removed during unconditional cleanup. Certificate minting **MUST** use a
-runner-temporary owner-readable netrc or an equivalently non-logging input
-channel. Passwords **MUST NOT** appear in command arguments or logs.
-
-Live tests **MUST**:
-
-- create a unique run namespace;
-- exercise node create, list, inspect, update, file upload/download, copy,
-  move, non-recursive delete, and recursive client-side cleanup;
-- exercise `/synctrans` and negotiated byte endpoints but no asynchronous UWS
-  resource;
-- compare uploaded and downloaded bytes and metadata;
-- POST one allowed non-administrative property through the private node-update
-  primitive and verify it through public read-only metadata;
-- run both synchronous and asynchronous filesystem entry points where
-  applicable; and
-- run all five supported scientific-stack gates from section 14 against the
-  live namespace; and
-- remove the namespace leaves-first in `finally`, reporting any residue.
-
-Secrets **MUST NOT** be exposed to untrusted fork code. CI **MUST NOT** use
-`pull_request_target` to execute a contribution with these credentials.
-External pull requests run hermetic replay tests; the live gate runs in a
-trusted default-branch push and the protected exact-commit release workflow. A
-manual trusted run MAY provide additional evidence but does not replace either
-required gate.
-
-### 15.3 Recorded interaction fixtures
-
-Live staging interactions MAY be captured through an explicit, opt-in,
-project-owned HTTPX transport recorder. RESpx supplies strict routing,
-pass-through support, call history, and replay; the project owns recording,
-fixture persistence, and sanitization.
+Service interactions MAY be captured through an explicit, opt-in, project-owned
+HTTPX transport recorder. RESpx supplies strict routing, pass-through support,
+call history, and replay; the project owns recording, fixture persistence, and
+sanitization.
 
 Recording is disabled by default and in normal CI. Before a fixture is
 committed, the recorder **MUST** replace or remove:
@@ -615,7 +574,7 @@ committed, the recorder **MUST** replace or remove:
 - any response content not intentionally part of the deterministic test.
 
 Sanitized fixtures **MUST** be manually reviewed. They are regression evidence,
-not a substitute for the live release gate.
+not release evidence.
 
 ## 16. Out of scope and roadmap
 

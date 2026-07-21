@@ -46,8 +46,8 @@ Markdown checks.
   workspace member keeps its package under that member's `src/` directory. Add
   type annotations to public APIs.
 - Use Ruff as the only Python formatter and linter, and ty as the type checker.
-- Add or update pytest tests for observable behavior. Unit tests must be
-  deterministic and offline; mark integration tests that require a service.
+- Add or update pytest tests for observable behavior. Tests must be
+  deterministic and offline.
 - Maintain at least 90% overall branch coverage across `src/vosfs`.
 - Update user-facing Markdown in the same pull request as behavior changes.
   Do not document commands or APIs that do not exist.
@@ -81,32 +81,13 @@ uv build --no-sources --package fsspec-cli
 If a hook changes files, review the changes, stage them, and run the gate again.
 The pull request must pass the same required CI checks before merge.
 
-### Run the live OpenCADC gate
-
-The live suite mutates OpenCADC staging inside a unique temporary namespace and
-removes that namespace leaves-first. Set an existing writable home container
-and exactly one credential source; never point the test root at a container the
-suite owns or at production data.
-
-```bash
-export VOSFS_CERT_FILE=/absolute/path/to/cadcproxy.pem
-export VOSFS_TEST_ROOT=/home/<cadc-username>
-export VOSFS_TEST_ENDPOINT=https://staging.canfar.net/arc
-uv run pytest --no-cov -m integration
-```
-
-`VOSFS_TEST_ENDPOINT` is optional and defaults to the value above. The test is
-skipped unless both the root and a credential are configured. A failed cleanup
-is itself a test failure and reports the unique `vosfs-it-*` namespace that may
-need manual inspection. `--no-cov` is intentional: the focused live suite does
-not execute enough package branches to satisfy the offline suite's 90% global
-coverage threshold.
-
 Pull-request CI validates code, tests, Markdown, and the strict Zensical build.
-After successful `main` CI, Release Please dispatches the validated commit to
-the Pages workflow, which publishes it as `dev`. When Release Please creates a
-tag, a separate docs dispatch publishes that exact tag and points `latest` to
-it. Publication supplements PR validation; it never replaces or weakens it.
+Every push to `main` runs Release Please once and dispatches that exact commit
+to the Pages workflow as `dev`. A package release is published by the single
+retryable publisher for its exact tag and SHA. Only successful `vosfs`
+publication dispatches versioned documentation and updates `latest`;
+`fsspec-cli` publication never does. Publication supplements PR validation; it
+never replaces or weakens it.
 
 ## Commit messages
 

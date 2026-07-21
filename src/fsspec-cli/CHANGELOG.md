@@ -32,6 +32,22 @@
 * Parameterize private command orchestration with concrete command labels
   without adding a supported command or public runner.
 
+## [0.3.0](https://github.com/shinybrar/vosfs/compare/fsspec-cli-v0.2.1...fsspec-cli-v0.3.0) (2026-07-21)
+
+
+### Features
+
+* **fsspec-cli:** add adaptive long listings ([#219](https://github.com/shinybrar/vosfs/issues/219)) ([86df794](https://github.com/shinybrar/vosfs/commit/86df794ce88e909ec5187008a722a783838db480))
+* **fsspec-cli:** add du command ([#221](https://github.com/shinybrar/vosfs/issues/221)) ([eb02501](https://github.com/shinybrar/vosfs/commit/eb025011e85f4c3d742f412123400e349981af9b))
+* **fsspec-cli:** add head and tail commands ([#228](https://github.com/shinybrar/vosfs/issues/228)) ([b16741d](https://github.com/shinybrar/vosfs/commit/b16741d0b35ae583895ed389d55f928bafd3e92e))
+* **fsspec-cli:** add info command ([#230](https://github.com/shinybrar/vosfs/issues/230)) ([69e535b](https://github.com/shinybrar/vosfs/commit/69e535bbb470bcdd0a712044b3034097ebd84872))
+* **fsspec-cli:** add info normalization layer ([#216](https://github.com/shinybrar/vosfs/issues/216)) ([b507a6e](https://github.com/shinybrar/vosfs/commit/b507a6e111405f5f81fd9cf4951957129181e449))
+* **fsspec-cli:** add recursive find command ([#223](https://github.com/shinybrar/vosfs/issues/223)) ([6b657ed](https://github.com/shinybrar/vosfs/commit/6b657ed598a80c03bab229fce182596578bf2417))
+* **fsspec-cli:** add size and test commands ([#226](https://github.com/shinybrar/vosfs/issues/226)) ([a45eeaa](https://github.com/shinybrar/vosfs/commit/a45eeaa6ba15ce63a148457701d0e5e820f5aebc))
+* **fsspec-cli:** add tree command ([#229](https://github.com/shinybrar/vosfs/issues/229)) ([ebb2ae9](https://github.com/shinybrar/vosfs/commit/ebb2ae9d0a1771fabc2cdee3d595217145074fc3))
+* **fsspec-cli:** complete backend-specific extension seam ([#240](https://github.com/shinybrar/vosfs/issues/240)) ([a9ace0f](https://github.com/shinybrar/vosfs/commit/a9ace0f5f630eb32dde5b9f2fde3c1f3b1e2a897))
+* **fsspec-cli:** verify transfers with metadata ([#233](https://github.com/shinybrar/vosfs/issues/233)) ([4934375](https://github.com/shinybrar/vosfs/commit/4934375d10cda11879d739a60fa20ae7cbe729b6))
+
 ## [0.2.1](https://github.com/shinybrar/vosfs/compare/fsspec-cli-v0.2.0...fsspec-cli-v0.2.1) (2026-07-18)
 
 

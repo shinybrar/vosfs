@@ -1,8 +1,7 @@
 """Scientific-stack compatibility gates (section 14).
 
 These are narrow hermetic gates that prove each named consumer round-trips
-through ``vos://`` URLs and the injected transport seam. The fresh-process
-dimension of the contract is exercised by the live integration gate.
+through ``vos://`` URLs and the injected transport seam.
 """
 
 import httpx

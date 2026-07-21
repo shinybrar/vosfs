@@ -241,7 +241,7 @@ Planned rows (implementation ticket lands evidence; research leaves them
 | --- | --- | --- | --- | --- |
 | Reduced BSD/macOS `stat` | source | `local / adapted async` | `pass` only if Local-rich shape + golden vectors hold | Hermetic App-seam + isolated wheel |
 | Reduced BSD/macOS `stat` | source | `memory / adapted async` | expect incompatible/`fail` or remain non-pass; not a silent sparse pass | Hermetic |
-| Reduced BSD/macOS `stat` | source | `vosfs / native async` | expect incompatible/`fail` or remain non-pass without inventing mode/owner | Hermetic (live optional, sanitized) |
+| Reduced BSD/macOS `stat` | source | `vosfs / native async` | expect incompatible/`fail` or remain non-pass without inventing mode/owner | Hermetic |
 | Reduced `stat` option/operand rejection | command preflight | `not entered` | `unsupported` | Hermetic negative rejection |
 
 Canonical matrix rows for planning are recorded in

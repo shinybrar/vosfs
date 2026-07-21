@@ -136,4 +136,4 @@ cross-source output association, strict result validation, atomic failures,
 backend diagnostics, output failure, and invocation-owned cleanup.
 
 This ticket records its matrix rows as `unverified` until immutable qualifying
-evidence exists. It makes no live OpenCADC claim.
+evidence exists. Evidence remains limited to the named source forms.

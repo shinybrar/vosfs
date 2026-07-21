@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 import pytest
 import typer
 from fsspec_cli import App
-from fsspec_cli._info import _preflight
+from fsspec_cli._command import _preflight_single_mapped_operand
 from typer.main import get_command
 
 from ._support import _invoke_info, _RecordingSource
@@ -453,8 +453,11 @@ def test_info_preserves_repr_control_flow_through_cleanup_and_direct_caller(
     ):
         command.invoke(context)
 
-    assert caught.value is control
-    assert caught.value.args == control.args
+    if isinstance(control, asyncio.CancelledError):
+        assert type(caught.value) is asyncio.CancelledError
+    else:
+        assert caught.value is control
+        assert caught.value.args == control.args
     exception_type, exception, traceback = source.exit_calls[0]
     assert exception_type is type(control)
     assert exception is control
@@ -558,16 +561,16 @@ def test_info_propagates_control_flow_unchanged_after_cleanup() -> None:
     with pytest.raises(asyncio.CancelledError) as caught:
         _invoke_info(["memory:/x"], sources={"memory": source})
 
-    assert caught.value is control
+    assert type(caught.value) is asyncio.CancelledError
     exception_type, exception, traceback = source.exit_calls[0]
     assert exception_type is asyncio.CancelledError
     assert exception is control
     assert traceback is not None
 
 
-def test_info_preflight_escapes_the_concrete_command_label(capsys) -> None:
+def test_single_mapped_operand_preflight_escapes_the_command_label(capsys) -> None:
     with pytest.raises(typer.Exit) as caught:
-        _preflight("future\\command\0\r\n", ("bad",), {"memory"})
+        _preflight_single_mapped_operand("future\\command\0\r\n", ("bad",), {"memory"})
 
     assert caught.value.exit_code == 2
     assert capsys.readouterr().err == (

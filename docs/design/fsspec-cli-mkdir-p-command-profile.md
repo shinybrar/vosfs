@@ -150,5 +150,5 @@ tests prove `-m`, `--parents`, mixed option groups, options after operands, and
 other unsupported forms complete during command preflight without entering a
 source.
 
-Live OpenCADC evidence is not required for this profile in v1; native `vosfs`
-hermetic evidence does not broaden into a general service guarantee.
+Native `vosfs` hermetic evidence does not broaden into a general service
+guarantee.

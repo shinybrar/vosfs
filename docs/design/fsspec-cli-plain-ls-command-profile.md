@@ -299,12 +299,11 @@ branches against Local, Memory, and hermetic `VOSpaceFileSystem` instances.
 | Runtime errors | Every stable category, continuation, per-operand atomicity, and final exit `1`. |
 | Bad input/results | Zero operands, bad grammar/name/option, malformed `info`, malformed names-only `ls`, and newline/NUL rejection. |
 | TTY | TTY and redirected output are identical. |
-| Live gate | One narrow, read-only OpenCADC directory listing with no backend-specific handler branch. |
 
 ## 9. Downstream ownership
 
 - [Tested command matrix contract](fsspec-cli-tested-command-matrix.md) owns
-  matrix statuses, versions, and hermetic-versus-live evidence rules.
+  matrix statuses, versions, and deterministic evidence rules.
 - [Long-listing command profile](fsspec-cli-ls-long-command-profile.md) owns the
   explicit `ls -l` / `-lh` and inherent-long `ll` mode; the
   [strict rejection profile](fsspec-cli-ls-long-rejection-profile.md) is
