@@ -62,6 +62,11 @@ def test_release_dispatches_exact_component_payloads_and_dev_docs() -> None:
 
 def test_one_publisher_validates_package_tag_sha_and_release_identity() -> None:
     workflow = _PUBLISH.read_text()
+    validation = _step(
+        workflow,
+        "Validate package release dispatch",
+        "Check out released tag",
+    )
 
     assert not (_WORKFLOWS / "fsspec-cli-publish.yml").exists()
     assert "types: [package-release]" in workflow
@@ -70,9 +75,16 @@ def test_one_publisher_validates_package_tag_sha_and_release_identity() -> None:
     assert "fsspec-cli) expected_tag='^fsspec-cli-v" in workflow
     assert "unknown package: $PACKAGE" in workflow
     assert '[[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]' in workflow
-    assert "releases/tags/$RELEASE_TAG" in workflow
-    assert ".tag_name == $tag" in workflow
-    assert '(.immutable | type == "boolean")' in workflow
+    assert 'gh release view "$RELEASE_TAG"' in validation
+    assert '--repo "$GITHUB_REPOSITORY"' in validation
+    assert "--json tagName,databaseId,isDraft,isImmutable" in validation
+    assert "releases/tags/$RELEASE_TAG" not in validation
+    assert ".tagName == $tag" in validation
+    assert '(.databaseId | type == "number")' in validation
+    assert '(.isDraft | type == "boolean")' in validation
+    assert '(.isImmutable | type == "boolean")' in validation
+    assert "jq -r .isDraft" in validation
+    assert "jq -r .isImmutable" in validation
     assert 'git rev-parse "$RELEASE_TAG^{commit}"' in workflow
     assert 'test "$TAG_SHA" = "$RELEASE_SHA"' in workflow
 

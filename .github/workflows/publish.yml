@@ -43,16 +43,18 @@ jobs:
           fi
 
           RELEASE_JSON="$(
-            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"
+            gh release view "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json tagName,databaseId,isDraft,isImmutable
           )"
           jq -e --arg tag "$RELEASE_TAG" '
-            .tag_name == $tag and
-            (.id | type == "number") and
-            (.draft | type == "boolean") and
-            (.immutable | type == "boolean")
+            .tagName == $tag and
+            (.databaseId | type == "number") and
+            (.isDraft | type == "boolean") and
+            (.isImmutable | type == "boolean")
           ' <<<"$RELEASE_JSON" >/dev/null
-          echo "is_draft=$(jq -r .draft <<<"$RELEASE_JSON")" >> "$GITHUB_OUTPUT"
-          echo "is_immutable=$(jq -r .immutable <<<"$RELEASE_JSON")" >> "$GITHUB_OUTPUT"
+          echo "is_draft=$(jq -r .isDraft <<<"$RELEASE_JSON")" >> "$GITHUB_OUTPUT"
+          echo "is_immutable=$(jq -r .isImmutable <<<"$RELEASE_JSON")" >> "$GITHUB_OUTPUT"
 
       - name: Check out released tag
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
