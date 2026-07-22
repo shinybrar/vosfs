@@ -10,6 +10,8 @@ from types import MappingProxyType, SimpleNamespace
 from typing import NoReturn
 
 import pytest
+from fsspec_cli import App
+from typer.testing import CliRunner
 
 from ._support import (
     _invoke_cp,
@@ -956,8 +958,6 @@ def test_cp_rejects_invalid_multi_source_operand_before_source_entry(
         "-f",
         "-i",
         "-p",
-        "-R",
-        "-r",
         "-H",
         "-L",
         "-P",
@@ -1143,7 +1143,93 @@ def test_cp_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
     assert result.exit_code == 0
     plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
     help_text = " ".join(plain_help.split())
+    assert "Copy files or one directory with -R or -r" in help_text
+
+
+@pytest.mark.parametrize(
+    "capabilities",
+    [
+        None,
+        {},
+        {"recursion": {}},
+        {"recursion": {"remove": True}},
+    ],
+)
+def test_cp_recursive_copy_defaults_enabled_for_partial_capabilities(
+    capabilities,
+) -> None:
+    result = CliRunner().invoke(
+        App(
+            {"memory": _source_must_not_run},
+            capabilities=capabilities,
+        ).typer_app,
+        ["cp", "-R", "memory:/", "memory:/out"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "cp: memory:/: source root unsupported\n",
+    )
+
+
+@pytest.mark.parametrize("recursive_option", ["-R", "-r"])
+def test_cp_disabled_recursive_copy_precedes_operand_validation_without_sources(
+    recursive_option: str,
+) -> None:
+    source_calls = 0
+
+    def source() -> NoReturn:
+        nonlocal source_calls
+        source_calls += 1
+        raise AssertionError
+
+    result = CliRunner().invoke(
+        App(
+            {"memory": source},
+            capabilities={"recursion": {"copy": False}},
+        ).typer_app,
+        ["cp", recursive_option, "bad", "also-bad"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "cp: recursive copy disabled by application\n",
+    )
+    assert source_calls == 0
+
+
+def test_cp_disabled_recursive_copy_retains_file_only_help() -> None:
+    result = CliRunner().invoke(
+        App(
+            {"memory": _source_must_not_run},
+            capabilities={"recursion": {"copy": False}},
+        ).typer_app,
+        ["cp", "--help"],
+    )
+
+    assert result.exit_code == 0
+    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
+    help_text = " ".join(plain_help.split())
     assert "Copy a file (no recursion)" in help_text
+    assert "one directory" not in help_text
+
+
+def test_cp_disabled_recursive_copy_preserves_earlier_option_error() -> None:
+    result = CliRunner().invoke(
+        App(
+            {"memory": _source_must_not_run},
+            capabilities={"recursion": {"copy": False}},
+        ).typer_app,
+        ["cp", "-L", "-R", "bad", "also-bad"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "cp: -L: unsupported option\n",
+    )
 
 
 def test_cp_cancels_without_claiming_success() -> None:

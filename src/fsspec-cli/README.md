@@ -21,7 +21,8 @@ uv add "git+https://github.com/shinybrar/vosfs@main#subdirectory=src/fsspec-cli"
 
 ## Quickstart
 
-The sole stable seam is `App(sources).typer_app`. Each source is an
+The sole stable seam is
+`App(sources, *, capabilities=None, extensions=()).typer_app`. Each source is an
 `AsyncFilesystemSource`: a callable returning a fresh async context manager that
 yields one `AbstractFileSystem` per command invocation. The host owns source
 configuration and cleanup; the library owns the yielded filesystem only for one
@@ -55,6 +56,24 @@ Name a configured source as `name:/path` when running a command:
 python app.py fs ls data:/
 ```
 
+Application capabilities are explicit constructor policy. They are validated
+and deep-snapshotted; no file, environment, plugin, source, or matrix loader is
+provided. Recursive copy defaults on and recursive removal defaults off:
+
+```python
+guarded = App(
+    {"data": data_source},
+    capabilities={"recursion": {"copy": False, "remove": False}},
+)
+```
+
+With `copy` false, `cp -R` and `cp -r` exit `2` before operand or source work
+with `cp: recursive copy disabled by application`; `cp --help` retains the
+file-only wording. The `remove` value reserves the host assertion required by
+the locked recursive-removal profile; recursive removal is not implemented by
+this release. Extensions receive only the immutable source snapshot, never the
+capability policy.
+
 Backend-specific commands are opt-in extensions. For example, add `sign` only
 when the host wants to expose a filesystem's signed-URL capability:
 
@@ -87,7 +106,7 @@ type or protocol.
 | `info` | One normalized metadata dictionary plus backend-specific `extra` values |
 | `sign` (opt-in) | Backend-signed URL when the selected source implements `sign` |
 | `cat` | Concatenate mapped files (and stdin `-`) to stdout |
-| `cp` | Metadata-verified same-source, cross-source, and multi-source file copy (no `-R`) |
+| `cp` | Metadata-verified file copy; verified two-operand directory copy with `-R` / `-r` |
 | `mv` | Metadata-verified same-source file move, single or multi-file into a directory |
 | `mkdir` | Create directories; `-p` creates parents |
 | `rmdir` | Remove empty directories |
@@ -110,6 +129,17 @@ read metadata internally. `find` does not provide predicates, globbing, or
 recursive unless `--maxdepth N` bounds it; remote sources may perform one
 listing request for every reached directory. One top-level `_walk` invocation
 does not mean one remote request.
+
+`cp -R source:/directory destination:/target` and `cp -r` copy one directory
+through a bounded 10,000-entry manifest and one-file host-local staging. The
+command supports same-source and cross-source routes, preserves empty
+directories, rejects links and special entries before mutation, and verifies
+the source manifest plus destination metadata before success. It does not
+promise a snapshot, transaction, rollback, exact mirror, or POSIX metadata
+preservation.
+The operation uses one backend-neutral runner over required async hooks. Matrix
+support remains limited to the exact source forms and versions with qualifying
+evidence; this is not an all-fsspec claim.
 
 `info [--] name:/path` awaits one backend `_info` call and pretty-prints every
 normalized metadata field plus backend-specific values under `extra`. Sparse

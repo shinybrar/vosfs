@@ -891,7 +891,167 @@ def test_cross_source_cp_between_adapted_local_and_memory(
         assert (local_root / "copy.bin").read_bytes() == payload
 
 
-def test_cp_option_rejection_is_source_free() -> None:
+def test_adapted_local_recursive_cp_profile_uses_native_temporary_storage(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    destination_parent = tmp_path / "out"
+    source_root.mkdir()
+    destination_parent.mkdir()
+    (source_root / "empty").mkdir()
+    (source_root / "nested").mkdir()
+    (source_root / "nested" / "notes.txt").write_bytes(b"notes")
+    source = _ProbedSource(
+        lambda: AsyncFileSystemWrapper(
+            LocalFileSystem(skip_instance_cache=True),
+            asynchronous=True,
+        )
+    )
+
+    result = _invoke_cp(
+        App({"local": source}),
+        [
+            "-R",
+            f"local:{_local_command_path(source_root)}",
+            f"local:{_local_command_path(destination_parent / 'copy')}",
+        ],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert (destination_parent / "copy" / "nested" / "notes.txt").read_bytes() == (
+        b"notes"
+    )
+    assert (destination_parent / "copy" / "empty").is_dir()
+    assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
+    assert all(isinstance(fs.sync_fs, LocalFileSystem) for fs in source.filesystems)
+
+
+@pytest.mark.parametrize("entry_kind", ["symlink", "fifo"])
+def test_adapted_local_recursive_cp_rejects_real_link_and_special_entries(
+    tmp_path: Path,
+    entry_kind: str,
+) -> None:
+    source_root = tmp_path / "source"
+    destination_parent = tmp_path / "out"
+    source_root.mkdir()
+    destination_parent.mkdir()
+    if entry_kind == "symlink":
+        outside = tmp_path / "outside.txt"
+        outside.write_bytes(b"outside")
+        (source_root / "entry").symlink_to(outside)
+    else:
+        os.mkfifo(source_root / "entry")
+    source = _ProbedSource(
+        lambda: AsyncFileSystemWrapper(
+            LocalFileSystem(skip_instance_cache=True),
+            asynchronous=True,
+        )
+    )
+
+    result = _invoke_cp(
+        App({"local": source}),
+        [
+            "-R",
+            f"local:{_local_command_path(source_root)}",
+            f"local:{_local_command_path(destination_parent / 'copy')}",
+        ],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        f"cp: local:{_local_command_path(source_root)}: unsupported entry type\n",
+    )
+    assert not (destination_parent / "copy").exists()
+
+
+def test_adapted_memory_recursive_cp_profile_has_isolated_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+    memory = MemoryFileSystem()
+    memory.makedirs("/source/empty")
+    memory.makedirs("/source/nested")
+    memory.pipe_file("/source/nested/notes.txt", b"notes")
+    source = _ProbedSource(lambda: AsyncFileSystemWrapper(memory, asynchronous=True))
+
+    result = _invoke_cp(
+        App({"memory": source}),
+        ["-r", "memory:/source", "memory:/copy"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert memory.cat("/copy/nested/notes.txt") == b"notes"
+    assert memory.isdir("/copy/empty")
+    assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
+    assert all(isinstance(fs.sync_fs, MemoryFileSystem) for fs in source.filesystems)
+
+
+@pytest.mark.parametrize(
+    ("source_form", "destination_form"),
+    [
+        ("local", "local"),
+        ("local", "memory"),
+        ("memory", "local"),
+        ("memory", "memory"),
+    ],
+)
+def test_recursive_cp_between_distinct_adapted_source_names(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_form: str,
+    destination_form: str,
+) -> None:
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+    memory = MemoryFileSystem()
+    local_source = tmp_path / "source"
+    local_destination = tmp_path / "destination"
+    local_source.mkdir()
+    local_destination.mkdir()
+    (local_source / "empty").mkdir()
+    (local_source / "notes.txt").write_bytes(b"notes")
+    memory.makedirs("/source/empty")
+    memory.pipe_file("/source/notes.txt", b"notes")
+    memory.makedirs("/destination")
+
+    def source_factory(form: str) -> AsyncFileSystemWrapper:
+        if form == "local":
+            filesystem = LocalFileSystem(skip_instance_cache=True)
+        else:
+            filesystem = memory
+        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
+
+    source = _ProbedSource(lambda: source_factory(source_form))
+    destination = _ProbedSource(lambda: source_factory(destination_form))
+    source_path = (
+        _local_command_path(local_source) if source_form == "local" else "/source"
+    )
+    destination_path = (
+        _local_command_path(local_destination / "copy")
+        if destination_form == "local"
+        else "/destination/copy"
+    )
+
+    result = _invoke_cp(
+        App({"source": source, "destination": destination}),
+        ["-R", f"source:{source_path}", f"destination:{destination_path}"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    if destination_form == "local":
+        assert (local_destination / "copy" / "notes.txt").read_bytes() == b"notes"
+        assert (local_destination / "copy" / "empty").is_dir()
+    else:
+        assert memory.cat("/destination/copy/notes.txt") == b"notes"
+        assert memory.isdir("/destination/copy/empty")
+    assert source.filesystems[0] is not destination.filesystems[0]
+
+
+def test_cp_unprofiled_option_rejection_is_source_free() -> None:
     source_calls = 0
 
     def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
@@ -902,13 +1062,13 @@ def test_cp_option_rejection_is_source_free() -> None:
     result = _invoke(
         App({"memory": source_must_not_run}),
         "cp",
-        ["-R", "memory:/docs/notes.txt", "memory:/docs/copy.txt"],
+        ["-L", "memory:/docs/notes.txt", "memory:/docs/copy.txt"],
     )
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         2,
         "",
-        "cp: -R: unsupported option\n",
+        "cp: -L: unsupported option\n",
     )
     assert source_calls == 0
 

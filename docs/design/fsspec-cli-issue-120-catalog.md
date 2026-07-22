@@ -72,7 +72,7 @@ for source-form claims (`pass` / `fail` / `unsupported` / `unverified`).
 | Same-source two-operand file `cp` | `admitted` | [same-source cp](fsspec-cli-same-source-cp-command-profile.md) | source rows; see audit |
 | Cross-source two-operand file `cp` | `admitted` | [cross-source cp](fsspec-cli-cross-source-cp-command-profile.md) | source-pair rows |
 | Multi-source file `cp` into directory | `admitted` | [multi-source cp](fsspec-cli-multi-source-cp-command-profile.md) | source rows |
-| Same-source / cross-source `cp -R` | `profiled` | [verified recursive cp](fsspec-cli-recursive-cp-rejection-profile.md) | source and source-pair rows remain `unverified` until #286 |
+| Same-source / cross-source `cp -R` | `admitted` | [verified recursive cp](fsspec-cli-recursive-cp-rejection-profile.md) | source and ordered source-pair rows |
 | Same-source two-operand file `mv` | `admitted` | [same-source mv](fsspec-cli-same-source-mv-command-profile.md) | exact `_mv` rows; often `unverified` |
 | Same-source multi-file `mv` into directory | `admitted` | [multi-file mv](fsspec-cli-same-source-multi-file-mv-command-profile.md) | exact `_mv` rows; often `unverified` |
 | Same-source directory `mv` | `rejected` | [same-source mv directory boundary](fsspec-cli-same-source-mv-command-profile.md) | runtime/directory rejection |

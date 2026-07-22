@@ -6,17 +6,17 @@ Question: [Add the backend-specific extension seam](https://github.com/shinybrar
 
 ## Decision
 
-The current stable v1 host seam remains:
+The stable v1 host seam is:
 
 ```python
-App(sources, *, extensions=[...]).typer_app
+App(sources, *, capabilities=capabilities, extensions=[...]).typer_app
 ```
 
-[ADR 0002](0002-own-async-filesystems-per-invocation.md) now directs #288 to add
-application capabilities to that constructor for core command policy. That
-future parameter does not amend extension behavior. Omitting `extensions`
-preserves the core command surface. `App` snapshots the source mapping,
-registers core commands first, then calls each selected
+[ADR 0002](0002-own-async-filesystems-per-invocation.md) defines application
+capabilities on that constructor for core command policy. That parameter does
+not amend extension behavior. Omitting `extensions` preserves the core command
+surface. `App` snapshots the source mapping, registers core commands first,
+then calls each selected
 `CommandExtension.register(typer_app, sources)` with the same Typer app and an
 immutable view of that snapshot. The extension register signature and
 registration order are unchanged; extensions will not receive the core

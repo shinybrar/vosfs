@@ -2,7 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-Status: **Locked positive contract; production remains source-free rejected until issue #286**
+Status: **Implemented locked positive contract**
 
 Question: [Research verified recursive cp -R across mapped filesystem sources](https://github.com/shinybrar/vosfs/issues/283)
 
@@ -28,9 +28,21 @@ same bounded source manifest, one-file host-local staging, and complete
 source-entry verification. Same-source, Local-to-remote, remote-to-Local, and
 remote-to-remote routes therefore have one observable contract.
 
-This profile deliberately replaces the prior rejection decision. Production
-MUST continue its current source-free rejection until issue #286 implements and
-tests the whole contract. This issue adds no recursive-copy command code.
+`capabilities.recursion.copy` defaults to true when `capabilities`, `recursion`,
+or `copy` is omitted. Explicit false retains file-copy help wording and rejects
+the first valid `-R` or `-r` before recursive operand or path validation, source
+entry, filesystem work, staging, or mutation:
+
+```text
+cp: recursive copy disabled by application
+```
+
+That rejection has empty stdout and status `2`. Capabilities are validated and
+deep-snapshotted constructor input. They are not loaded configuration, a
+per-source registry, or a backend-discovery result.
+
+This profile replaces the prior rejection decision. Issue #286 implements and
+tests the complete contract through the public `App(sources).typer_app` seam.
 
 Multi-source copy, implicit or bare local operands, retries, transfer
 concurrency, progress output, JSON/YAML output, ownership, mode, timestamp or
@@ -67,8 +79,8 @@ The admission rests on these version-pinned seams:
 - Existing two-operand [same-source](fsspec-cli-same-source-cp-command-profile.md) and [cross-source](fsspec-cli-cross-source-cp-command-profile.md) profiles supply the target resolution, secure staging, recognized-token, lifecycle, and residue floors. The pinned [Local/Memory matrix tests](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/fsspec-cli/tests/test_command_matrix.py) and [mocked native `vosfs` tests](https://github.com/shinybrar/vosfs/blob/4d53a5b5ffdf898e50eec95bf6b865ec7ad0cd4f/src/fsspec-cli/tests/test_vosfs_command_matrix.py) establish those public-seam primitives.
 
 These sources establish implementation feasibility, not passing recursive-copy
-matrix evidence. Section 9 keeps every positive row `unverified` until the
-complete implementation gate exists.
+matrix evidence. Section 9 keeps every positive row `unverified` until an
+exact-commit implementation gate has immutable evidence.
 
 ## 3. Source forms
 
@@ -94,6 +106,9 @@ source validation before filesystem work or mutation.
 
 Method presence or inheritance does not admit another source form. A future
 source form needs its own exact-version hermetic and isolated-wheel evidence.
+The backend-neutral public-`App` harness uses minimal native-async and explicitly
+wrapped synchronous adapters to guard the generic hook contract. It adds no
+matrix row and makes no all-fsspec claim.
 
 ## 4. Source-free preflight and lexical paths
 
@@ -121,6 +136,10 @@ semantic effect.
 Every row above exits `2`, writes empty stdout, emits exactly one
 `cp: <category>` line on stderr, and enters zero sources.
 
+When recursive copy is disabled, its application-policy diagnostic precedes
+recursive operand and path validation. An unsupported option that appears
+before the first `-R` or `-r` retains the existing first-option diagnostic.
+
 ## 5. Acquisition, source validation, and target resolution
 
 After preflight, source acquisition follows
@@ -140,11 +159,10 @@ The command then:
    source when both operands use the same configured name.
 
 Distinct configured names remain cross-source even if their yielded objects,
-classes, or protocols match. If two names yield the identical filesystem
-object, the same exact-path and destination-inside-source guards also apply as
-a safety check. Namespace aliasing through distinct filesystem instances is
-host configuration outside the observable source seam and carries no
-snapshot, isolation, or alias-detection claim.
+classes, or protocols match. Production does not inspect object identity.
+Namespace aliasing through distinct configured names is host configuration
+outside the observable source seam and carries no snapshot, isolation, or
+alias-detection claim.
 
 Every failure in this section occurs before mutation. Existing destination
 entries outside the resolved copied subtree are retained and excluded from the
@@ -204,6 +222,13 @@ Mutation is serial and deterministic:
    staging file before advancing; and
 4. never call `_cp_file`, `_copy`, a destination download, a public sync
    facade, retry, concurrent transfer, or source deletion.
+
+One private frozen `_RecursiveCopy` owns target resolution, destination
+preflight, transfer, mutation checks, source revalidation, and destination
+proof. Its only command entry is `run()`. It stores only the command, two
+operands, and invocation-owned source and destination filesystems; phase state
+remains local. Generic walk/materialization helpers and their immutable results
+remain module-level.
 
 Same-source copies deliberately use the same host-local relay as cross-source
 copies. At most one file's bytes occupy command-owned staging. Temporary paths
@@ -377,10 +402,8 @@ ADR 0003 source-exit diagnostics in reverse-entry order.
 
 No destination entry is removed to simulate rollback.
 
-This required current-operation drain is a recursive-copy-specific exception
-to ADR 0003's present tree-only worker rule. Issue #286 MUST update ADR 0003 in
-the same implementation change; the positive command MUST NOT ship while the
-documents conflict. There is no timeout or background worker after source
+This required current-operation drain is the recursive-copy-specific extension
+recorded by ADR 0003. There is no timeout or background worker after source
 cleanup.
 
 ## 9. Matrix delta and implementation gate
@@ -391,10 +414,12 @@ distinct-name rows for every ordered pair of the three initial source forms.
 A `source` scope row means both operands use the same configured name. A
 `source pair` scope row means distinct configured names, and its source-form
 cell records the ordered source-to-destination forms. Source-form text exactly
-matches Section 3 of the matrix. Every new row is `unverified`; research
-inspection is not qualifying command evidence.
+matches Section 3 of the matrix. Research inspection and mutable local runs are
+not qualifying command evidence. Issue #286 adds the required hermetic and
+isolated-wheel tests; rows remain `unverified` until an exact-commit gate has an
+immutable evidence link.
 
-Issue #286 may promote a row only after hermetic tests through
+A later evidence update may promote a row only after hermetic tests through
 `App(sources).typer_app` cover:
 
 - both `-R` and `-r`, every route, target-resolution branch, existing-target
@@ -412,6 +437,14 @@ Issue #286 may promote a row only after hermetic tests through
   facades, retries, deletion, and destination downloads; and
 - adapted Local and Memory plus a fully mocked native `vosfs` transport on the
   supported Python/Linux/macOS matrix.
+
+The public-`App` evidence also covers missing, file, and link resolved parents;
+file and link existing resolved roots; mocked native `vosfs` LinkNodes; real
+Local symlink and special entries; source mutation before upload; staging
+cleanup before reverse source exits during escaping control flow; and explicit
+forbidden-call assertions. The supplemental backend-neutral harness covers
+native async-generator walks, awaitables resolving sync iterators, arbitrary
+names and metadata, and stable pre-mutation read or missing-operation failures.
 
 The isolated-wheel gate MUST build the `fsspec-cli` wheel and source
 distribution plus the `vosfs` wheel, install them outside the workspace with

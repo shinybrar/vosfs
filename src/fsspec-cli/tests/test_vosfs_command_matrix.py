@@ -7,7 +7,11 @@ from urllib.parse import quote, unquote
 
 import httpx
 import pytest
+from fsspec.implementations.asyn_wrapper import AsyncFileSystemWrapper
+from fsspec.implementations.local import LocalFileSystem
+from fsspec.implementations.memory import MemoryFileSystem
 from fsspec_cli import App
+from typer.testing import CliRunner
 
 from vosfs import VOSpaceFileSystem
 
@@ -776,6 +780,7 @@ class _CpMockTransport(httpx.MockTransport):
         self.nodes: dict[str, str] = {
             "/": "container",
             "/docs": "container",
+            "/docs/empty": "container",
             "/docs/target": "container",
             "/docs/notes.txt": "data",
             "/docs/.hidden": "data",
@@ -816,10 +821,26 @@ class _CpMockTransport(httpx.MockTransport):
             rest = child[len(path.rstrip("/")) + 1 :]
             if "/" in rest:
                 continue
-            xsi = "vos:ContainerNode" if kind == "container" else "vos:DataNode"
+            xsi = {
+                "container": "vos:ContainerNode",
+                "data": "vos:DataNode",
+                "link": "vos:LinkNode",
+            }[kind]
+            length = ""
+            if kind == "data":
+                length = (
+                    '<vos:property uri="ivo://ivoa.net/vospace/core#length">'
+                    f"{len(self.blobs[child])}</vos:property>"
+                )
             children.append(
                 f'<vos:node xsi:type="{xsi}" uri="vos://{_AUTHORITY}{child}">'
-                "<vos:properties/></vos:node>"
+                f"<vos:properties>{length}</vos:properties>"
+                + (
+                    f"<vos:target>vos://{_AUTHORITY}/docs/notes.txt</vos:target>"
+                    if kind == "link"
+                    else ""
+                )
+                + "</vos:node>"
             )
         body = "".join(children)
         return f"""<vos:node
@@ -923,6 +944,158 @@ def test_native_vosfs_same_source_cp_profile_uses_only_mocked_transport() -> Non
     assert transports[0].blobs["/docs/notes.txt"] == b"notes.txt"
     assert transports[1].blobs["/docs/target/notes.txt"] == b"notes.txt"
     assert transports[1].blobs["/docs/notes.txt"] == b"notes.txt"
+
+
+def test_native_vosfs_recursive_cp_profile_uses_only_mocked_transport() -> None:
+    transports: list[_CpMockTransport] = []
+
+    def make_filesystem() -> VOSpaceFileSystem:
+        transport = _CpMockTransport()
+        transports.append(transport)
+        return VOSpaceFileSystem(
+            _BASE_URL,
+            transport=transport,
+            asynchronous=True,
+            skip_instance_cache=True,
+            trust_env=False,
+        )
+
+    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+
+    result = CliRunner().invoke(
+        App({"vos": source}).typer_app,
+        ["cp", "-R", "vos:/docs", "vos:/copy"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert transports[0].blobs["/copy/notes.txt"] == b"notes.txt"
+    assert transports[0].nodes["/copy/empty"] == "container"
+    assert transports[0].blobs["/docs/notes.txt"] == b"notes.txt"
+    assert transports[0].closed
+    assert source.filesystems[0]._pool.closed is True
+
+
+def test_native_vosfs_recursive_cp_rejects_mocked_link_node_before_mutation() -> None:
+    transports: list[_CpMockTransport] = []
+
+    def make_filesystem() -> VOSpaceFileSystem:
+        transport = _CpMockTransport()
+        transport.nodes["/docs/shortcut"] = "link"
+        transports.append(transport)
+        return VOSpaceFileSystem(
+            _BASE_URL,
+            transport=transport,
+            asynchronous=True,
+            skip_instance_cache=True,
+            trust_env=False,
+        )
+
+    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+
+    result = CliRunner().invoke(
+        App({"vos": source}).typer_app,
+        ["cp", "-R", "vos:/docs", "vos:/copy"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: vos:/docs: unsupported entry type\n",
+    )
+    assert all(method == "GET" for method, _path in transports[0].requests)
+    assert "/copy" not in transports[0].nodes
+    assert transports[0].closed
+    assert source.filesystems[0]._pool.closed is True
+
+
+@pytest.mark.parametrize(
+    ("source_form", "destination_form"),
+    [
+        ("vos", "vos"),
+        ("vos", "local"),
+        ("vos", "memory"),
+        ("local", "vos"),
+        ("memory", "vos"),
+    ],
+)
+def test_recursive_cp_between_distinct_native_vosfs_and_adapted_sources(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_form: str,
+    destination_form: str,
+) -> None:
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+    memory = MemoryFileSystem()
+    memory.makedirs("/source/empty")
+    memory.pipe_file("/source/notes.txt", b"notes.txt")
+    memory.makedirs("/destination")
+    local_source = tmp_path / "source"
+    local_destination = tmp_path / "destination"
+    local_source.mkdir()
+    local_destination.mkdir()
+    (local_source / "empty").mkdir()
+    (local_source / "notes.txt").write_bytes(b"notes.txt")
+    transports: list[_CpMockTransport] = []
+
+    def make_vosfs() -> VOSpaceFileSystem:
+        transport = _CpMockTransport()
+        transports.append(transport)
+        return VOSpaceFileSystem(
+            _BASE_URL,
+            transport=transport,
+            asynchronous=True,
+            skip_instance_cache=True,
+            trust_env=False,
+        )
+
+    def make_source(form: str) -> _ProbedSource:
+        if form == "vos":
+            return _ProbedSource(make_vosfs, close=_close_vosfs)
+        if form == "local":
+            return _ProbedSource(
+                lambda: AsyncFileSystemWrapper(
+                    LocalFileSystem(skip_instance_cache=True), asynchronous=True
+                )
+            )
+        return _ProbedSource(lambda: AsyncFileSystemWrapper(memory, asynchronous=True))
+
+    source = make_source(source_form)
+    destination = make_source(destination_form)
+    source_path = {
+        "vos": "/docs",
+        "local": local_source.as_posix(),
+        "memory": "/source",
+    }[source_form]
+    destination_path = {
+        "vos": "/copy",
+        "local": (local_destination / "copy").as_posix(),
+        "memory": "/destination/copy",
+    }[destination_form]
+
+    result = CliRunner().invoke(
+        App({"source": source, "destination": destination}).typer_app,
+        [
+            "cp",
+            "-r",
+            f"source:{source_path}",
+            f"destination:{destination_path}",
+        ],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    if destination_form == "vos":
+        destination_transport = transports[-1]
+        assert destination_transport.blobs["/copy/notes.txt"] == b"notes.txt"
+        assert destination_transport.nodes["/copy/empty"] == "container"
+    elif destination_form == "local":
+        assert (local_destination / "copy" / "notes.txt").read_bytes() == b"notes.txt"
+        assert (local_destination / "copy" / "empty").is_dir()
+    else:
+        assert memory.cat("/destination/copy/notes.txt") == b"notes.txt"
+        assert memory.isdir("/destination/copy/empty")
+    assert all(transport.closed for transport in transports)
 
 
 def test_native_vosfs_mv_remains_unverified_without_exact_operation() -> None:

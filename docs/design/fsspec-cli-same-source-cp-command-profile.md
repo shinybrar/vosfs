@@ -74,9 +74,9 @@ Three or more operands are not a usage error; they select the
 [verified multi-source `cp` profile](fsspec-cli-multi-source-cp-command-profile.md),
 which requires an existing destination directory.
 
-`cp -R` and `cp -r` are owned by the separate locked
-[recursive-copy profile](fsspec-cli-recursive-cp-rejection-profile.md). Production
-remains source-free rejected until issue #286 implements that whole profile.
+`cp -R` and `cp -r` select the separate implemented
+[recursive-copy profile](fsspec-cli-recursive-cp-rejection-profile.md) unless
+`capabilities.recursion.copy` is explicitly false.
 
 ## 3. Target resolution
 
