@@ -33,15 +33,24 @@ client-derived behavior supplies them, or the behavior is outside the
 contract's product scope.
 _Avoid_: Unimplemented endpoint
 
+**Application capability**:
+Explicit application policy passed to and snapshotted by the embedded command
+library. It controls admission of core command features, not backend support.
+Copy recursion defaults enabled and remove recursion defaults disabled; no
+registry or configuration loader supplies these values.
+_Avoid_: Backend capability, protocol discovery
+
 **Embedded command library**:
 The separately installable, library-only `fsspec-cli` uv workspace member at
 `src/fsspec-cli`, with its Python package at `src/fsspec-cli/src/fsspec_cli`,
 that turns named async filesystem sources into POSIX-shaped Typer commands. Its
 sole stable v1 seam for host tools is
-`App(sources, *, extensions=[...]).typer_app`; extensions add opt-in commands
-without changing the core surface when omitted. The embedded command library owns each
-yielded filesystem only for one command invocation, while hosts own source
-configuration and cleanup declaration.
+`App(sources, *, capabilities=None, extensions=[...]).typer_app`; capabilities
+are validated application policy for core commands, while extensions add
+opt-in commands without receiving that policy or changing the core surface
+when omitted. The embedded command library owns each yielded filesystem only
+for one command invocation, while hosts own source configuration and cleanup
+declaration.
 _Avoid_: vosfs CLI, fsspec-cli executable
 
 **Async filesystem source**:
