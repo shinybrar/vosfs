@@ -33,6 +33,11 @@
 * **fsspec-cli:** add snapshotted application recursion capabilities. Recursive
   copy defaults on; recursive removal defaults off. Capability policy is
   explicit constructor input, not backend discovery or loaded configuration.
+* **fsspec-cli:** add capability-gated guarded recursive `rm -R` / `rm -r`
+  ([#288](https://github.com/shinybrar/vosfs/issues/288)). The command builds a
+  bounded pre-mutation manifest, uses only four generic async hooks to plan and
+  remove entries, proves final absence, and reports possible residue without
+  promising rollback or atomicity.
 
 ### Changed
 

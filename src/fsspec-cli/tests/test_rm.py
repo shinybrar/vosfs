@@ -233,8 +233,6 @@ def test_rm_force_accepts_repeated_and_grouped_flags(arguments: list[str]) -> No
 @pytest.mark.parametrize(
     "option",
     [
-        "-R",
-        "-r",
         "-i",
         "-l",
         "--force",
@@ -243,9 +241,7 @@ def test_rm_force_accepts_repeated_and_grouped_flags(arguments: list[str]) -> No
         "-A",
         "-h",
         "--help=value",
-        "-fr",
         "-fd",
-        "-Rf",
         "-fi",
         "-fv",
         "-vf",
@@ -262,7 +258,7 @@ def test_rm_rejects_every_option_without_entering_sources(option: str) -> None:
     assert result.stderr == f"rm: {option}: unsupported option\n"
 
 
-@pytest.mark.parametrize("option", ["-R", "-r"])
+@pytest.mark.parametrize("option", ["-R", "-r", "-fr", "-Rf"])
 def test_rm_recursive_options_are_equivalent_source_free_rejections(
     option: str,
 ) -> None:
@@ -277,7 +273,7 @@ def test_rm_recursive_options_are_equivalent_source_free_rejections(
     assert (result.exit_code, result.stdout, result.stderr) == (
         2,
         "",
-        f"rm: {option}: unsupported option\n",
+        "rm: recursive removal disabled by application\n",
     )
     assert events == []
 

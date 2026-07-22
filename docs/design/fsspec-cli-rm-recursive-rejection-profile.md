@@ -1,18 +1,18 @@
 # `fsspec-cli` recursive `rm` rejection profile
 
-Status: **Locked default source-free rejection**
+Status: **Superseded option rejection; locked application-disabled rejection**
 
 Part of [#120](https://github.com/shinybrar/vosfs/issues/120) /
 [#135](https://github.com/shinybrar/vosfs/issues/135)
 
 ## 1. Verdict
 
-In fsspec-cli 0.4.0, `rm -R` and `rm -r` are equivalent, unsupported options.
-After #288 implements the application-level policy, the same rejection remains
-required when `capabilities.recursion.remove` is false or omitted. Each
-invocation fails during command preflight: status `2`, empty stdout, exactly
-one `rm: <option>: unsupported option` diagnostic, zero source factories, and
-zero filesystem mutation.
+In fsspec-cli 0.4.0, `rm -R` and `rm -r` were equivalent unsupported options.
+Issue #288 supersedes that diagnostic while preserving source-free rejection
+when `capabilities.recursion.remove` is false or omitted. A valid recursive
+invocation fails before recursive operand or path validation: status `2`, empty
+stdout, exactly `rm: recursive removal disabled by application`, zero source
+factories, and zero filesystem work or mutation.
 
 The [guarded recursive profile](fsspec-cli-rm-recursive-command-profile.md)
 defines the capability-enabled implementation frontier. It does not weaken or
@@ -71,7 +71,6 @@ manifest contract. The application capability defaults false; true asserts
 that every configured target satisfies that contract. Production code may not
 inspect backend identity or load the tested command matrix to make that choice.
 
-Until [#288](https://github.com/shinybrar/vosfs/issues/288) implements and
-qualifies the guarded profile, this source-free rejection remains the only
-production behavior. Evidence for one source form or another command does not
-open the capability automatically.
+The application-disabled rejection remains the default production behavior.
+Enabling the application capability selects the guarded profile; evidence for
+one source form or another command never opens the capability automatically.

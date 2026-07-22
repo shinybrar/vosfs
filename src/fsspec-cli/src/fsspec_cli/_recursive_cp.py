@@ -10,14 +10,14 @@ from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar, cast
+from typing import TYPE_CHECKING, cast
 
 import typer
 
 from ._command import _MappedOperand, _usage_error
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._path import _lexical_basename
-from ._sources import _SourceInvocation
+from ._sources import _await_current, _SourceInvocation
 
 if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
@@ -32,7 +32,6 @@ _TOKEN_ALIASES = (
     ("content-md5", ("content-md5", "content_md5")),
     ("checksum", ("checksum",)),
 )
-_ValueT = TypeVar("_ValueT")
 
 
 class _IncompatibleResultError(Exception):
@@ -102,20 +101,6 @@ def _canonical_operand(
         rendered = _render_diagnostic_value(operand.spelling)
         _usage_error(command, f"{rendered}: source root unsupported")
     return replace(operand, path=path)
-
-
-async def _await_current(awaitable: Awaitable[_ValueT]) -> _ValueT:
-    """Shield and drain one current operation before propagating control flow."""
-    task = asyncio.ensure_future(awaitable)
-    try:
-        return await asyncio.shield(task)
-    except BaseException:
-        while not task.done():
-            with suppress(BaseException):
-                await asyncio.shield(task)
-        with suppress(BaseException):
-            task.result()
-        raise
 
 
 async def _drain_task(task: asyncio.Task[object]) -> None:

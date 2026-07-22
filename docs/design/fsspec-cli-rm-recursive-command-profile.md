@@ -2,7 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-Status: **Locked implementation contract; production evidence unverified**
+Status: **Implemented contract; immutable production evidence unverified**
 
 Research: [#284](https://github.com/shinybrar/vosfs/issues/284)
 Implementation frontier: [#288](https://github.com/shinybrar/vosfs/issues/288)
@@ -20,8 +20,9 @@ Guarded recursive removal is feasible as an application-capability-gated core
 command. `capabilities.recursion.remove` defaults to `false`. While false,
 `rm -R` and `rm -r` retain the exact source-free rejection in the
 [recursive rejection profile](fsspec-cli-rm-recursive-rejection-profile.md).
-`fsspec-cli` 0.4.0 implements only that rejection; this document adds no
-production behavior.
+The implementation retains that application-disabled rejection and adds the
+capability-enabled behavior below. Immutable exact-commit CI evidence remains
+required before any tested-command-matrix row becomes `pass`.
 
 Setting `capabilities.recursion.remove` to `true` is the embedding host's
 assertion that **every target in the configured source mapping** satisfies this
@@ -51,10 +52,11 @@ source-form-, version-, and host-qualification-specific.
 
 ## 2. Capability and source-free preflight
 
-When `capabilities.recursion.remove` is false or omitted, the first `-R` or
-`-r` option is rejected exactly as the current recursive rejection profile
-requires: status `2`, empty stdout, one unsupported-option diagnostic, zero
-source factories, and zero filesystem work.
+When `capabilities.recursion.remove` is false or omitted, a valid recursive
+invocation is rejected before recursive operand or path validation: status `2`,
+empty stdout, `rm: recursive removal disabled by application`, zero source
+factories, and zero filesystem work. An earlier invalid option retains the base
+first-error rule.
 
 When it is true, short-option tokens before the first operand MAY group only
 `R`, `r`, `f`, and `v`. At least one `R` or `r` is REQUIRED; repeated `R`, `r`,
@@ -233,9 +235,9 @@ The command owns at most one in-flight filesystem-hook task. On escaping
 `BaseException` control flow, it stops scheduling new work, shields and drains
 that current hook before source cleanup, and then propagates the original
 control-flow object unchanged. No post-check, later manifest entry, later
-operand, diagnostic, or normal output is scheduled after interruption. This is
-one backend-neutral recursive-`rm` delta from ADR 0003's tree-only drain
-exception, not a backend worker, timeout, retry, or concurrent deletion policy.
+operand, diagnostic, or normal output is scheduled after interruption. This
+applies ADR 0003's current-operation drain exception to recursive `rm`; it is
+not a backend worker, timeout, retry, or concurrent deletion policy.
 
 The observable state rules are:
 
@@ -303,8 +305,8 @@ root/ancestor replacement race between manifest observation and mutation.
 
 ## 10. Hermetic and isolated-wheel strategy
 
-Issue #288 MUST keep the new rows `unverified` until its exact implementation
-commit supplies qualifying gates. The gate must cover:
+Issue #288 keeps the new rows `unverified` until its exact implementation commit
+supplies qualifying CI gates. The gate must cover:
 
 1. App-seam tests proving the capability defaults false, the current recursive
    rejection stays source-free, true is snapshotted application policy, and no
@@ -331,4 +333,4 @@ commit supplies qualifying gates. The gate must cover:
 The qualifying CI record MUST cite its exact commit, lockfile, package versions,
 native or adapted source forms, Python versions, runner images, observation
 time, test paths, and immutable jobs. No production recursive removal, help,
-README, changelog, or release claim is added by #284.
+README, changelog, or release claim was added by research-only issue #284.

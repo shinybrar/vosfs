@@ -24,6 +24,7 @@ from ._matrix_support import (
     _exercise_mkdir_memory_over_eager_failure,
     _exercise_mkdir_p_locked_profile,
     _exercise_multi_source_cp_locked_profile,
+    _exercise_recursive_rm_profile,
     _exercise_rm_directory_profile,
     _exercise_rm_force_profile,
     _exercise_rm_locked_profile,
@@ -1296,6 +1297,43 @@ def test_rm_option_rejection_is_source_free() -> None:
         "rm: -i: unsupported option\n",
     )
     assert source_calls == 0
+
+
+def test_adapted_memory_recursive_rm_profile_has_isolated_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+
+    def make_filesystem() -> AsyncFileSystemWrapper:
+        MemoryFileSystem.store.clear()
+        MemoryFileSystem.pseudo_dirs[:] = [""]
+        MemoryFileSystem.clear_instance_cache()
+        filesystem = MemoryFileSystem()
+        filesystem.makedirs("/docs/nested/empty")
+        filesystem.pipe_file("/docs/nested/a.txt", b"a")
+        filesystem.pipe_file("/docs/z.txt", b"z")
+        wrapped = AsyncFileSystemWrapper(filesystem, asynchronous=True)
+
+        def forbid_public_facade(*args: object, **kwargs: object) -> None:
+            del args, kwargs
+            message = "recursive rm must not call a public sync facade"
+            raise AssertionError(message)
+
+        for name in ("info", "ls", "rm", "rm_file", "rmdir", "find", "walk"):
+            setattr(wrapped, name, forbid_public_facade)
+        return wrapped
+
+    source = _ProbedSource(make_filesystem)
+
+    _exercise_recursive_rm_profile("memory", source, "/docs")
+
+    filesystem = source.filesystems[0]
+    assert isinstance(filesystem, AsyncFileSystemWrapper)
+    assert isinstance(filesystem.sync_fs, MemoryFileSystem)
+    assert filesystem.asynchronous is True
+    assert not filesystem.sync_fs.exists("/docs")
 
 
 def test_adapted_local_stat_profile_uses_native_temporary_storage(
