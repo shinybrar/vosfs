@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 from contextlib import asynccontextmanager
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 from unittest.mock import Mock
 
 import pytest
@@ -14,6 +14,9 @@ from fsspec_cli import App, AsyncFilesystemSource
 from typer.testing import CliRunner, Result
 
 from ._support import _RecordingSource
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _invoke_recursive_rm(
@@ -61,7 +64,8 @@ def test_recursive_rm_disabled_is_policy_first_and_source_free(
     assert source_calls == 0
 
 
-def test_recursive_rm_enabled_removes_a_complete_nested_manifest() -> None:
+@pytest.mark.parametrize("option", ["-R", "-r"])
+def test_recursive_rm_enabled_removes_a_complete_nested_manifest(option: str) -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(
         events,
@@ -89,7 +93,7 @@ def test_recursive_rm_enabled_removes_a_complete_nested_manifest() -> None:
     )
 
     result = _invoke_recursive_rm(
-        ["-R", "memory:/docs"],
+        [option, "memory:/docs"],
         sources={"memory": source},
     )
 
@@ -225,6 +229,38 @@ def test_recursive_rm_rejects_roots_and_any_dot_segment_source_free(
     assert source.call_count == 0
 
 
+@pytest.mark.parametrize(
+    ("operand", "diagnostic"),
+    [
+        (
+            "not-mapped",
+            "rm: not-mapped: invalid mapped filesystem operand\n",
+        ),
+        (
+            "unknown:/docs",
+            "rm: unknown:/docs: unknown filesystem (known: memory)\n",
+        ),
+    ],
+)
+def test_recursive_rm_rejects_invalid_or_unknown_operands_source_free(
+    operand: str,
+    diagnostic: str,
+) -> None:
+    source = _RecordingSource([])
+
+    result = _invoke_recursive_rm(
+        ["-R", operand],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        diagnostic,
+    )
+    assert source.call_count == 0
+
+
 def test_recursive_rm_accepts_trailing_slashes_but_uses_normalized_root() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(
@@ -278,7 +314,7 @@ def test_recursive_rm_allows_force_and_verbose_before_recursive_option() -> None
             [],
             "unsupported operation",
         ),
-        ({"name": "/docs", "type": "other"}, [], "unsupported operation"),
+        ({"name": "/docs", "type": "other"}, [], "not a directory"),
         ({"name": "/docs", "type": "file"}, [], "not a directory"),
         ({"name": "/other", "type": "directory"}, [], "incompatible result"),
         (
@@ -436,6 +472,34 @@ def test_recursive_rm_partial_failure_continues_later_operands() -> None:
     assert [event[2] for event in events if event[0] == "rmdir"] == ["/good"]
 
 
+def test_recursive_rm_orders_overlapping_and_force_repeated_operands() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(
+        events,
+        info_by_path={
+            "/docs": {"name": "/docs", "type": "directory"},
+            "/docs/sub": {"name": "/docs/sub", "type": "directory"},
+        },
+        ls_by_path={"/docs/sub": [], "/docs": []},
+    )
+
+    result = _invoke_recursive_rm(
+        [
+            "-Rf",
+            "memory:/docs/sub",
+            "memory:/docs",
+            "memory:/docs",
+        ],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [event[2] for event in events if event[0] == "rmdir"] == [
+        "/docs/sub",
+        "/docs",
+    ]
+
+
 def test_recursive_rm_final_absence_must_be_proved() -> None:
     source = _RecordingSource(
         [],
@@ -500,6 +564,55 @@ def test_recursive_rm_source_has_no_backend_dispatch_or_forbidden_calls() -> Non
         assert forbidden not in source
 
 
+def test_adapted_local_ancestor_swap_fixture_retains_unverified_race(
+    tmp_path: Path,
+) -> None:
+    from fsspec.implementations.asyn_wrapper import AsyncFileSystemWrapper
+    from fsspec.implementations.local import LocalFileSystem
+
+    selected = tmp_path / "selected"
+    preserved = tmp_path / "preserved"
+    outside = tmp_path / "outside"
+    selected.mkdir()
+    outside.mkdir()
+    (selected / "victim").write_text("inside")
+    (outside / "victim").write_text("outside")
+
+    filesystem = AsyncFileSystemWrapper(
+        LocalFileSystem(skip_instance_cache=True),
+        asynchronous=True,
+    )
+    rm_file = filesystem._rm_file
+    swapped = False
+
+    async def swap_then_remove(path: str, **kwargs: object) -> None:
+        nonlocal swapped
+        if not swapped:
+            selected.rename(preserved)
+            selected.symlink_to(outside, target_is_directory=True)
+            swapped = True
+        await rm_file(path, **kwargs)
+
+    filesystem._rm_file = swap_then_remove  # type: ignore[method-assign]
+
+    @asynccontextmanager
+    async def source():
+        yield filesystem
+
+    result = _invoke_recursive_rm(
+        ["-R", f"local:{selected}"],
+        sources={"local": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        f"rm: local:{selected}: recursive removal incomplete; residue possible\n",
+    )
+    assert (preserved / "victim").read_text() == "inside"
+    assert not (outside / "victim").exists()
+
+
 class _CancellingFileSystem(AsyncFileSystem):
     cachable = False
 
@@ -519,8 +632,18 @@ class _CancellingFileSystem(AsyncFileSystem):
 
     async def _info(self, path: str, **kwargs: object) -> object:
         del kwargs
-        self.events.append(f"info:{path}")
+        operation = "verify" if path in self.removed else "info"
+        self.events.append(f"{operation}:{path}")
         self.info_calls[path] = self.info_calls.get(path, 0) + 1
+        if self.stage == "root-info" and path == "/docs":
+            await self._cancel_invocation("root-info")
+        if (
+            self.stage == "file-verify"
+            and path == "/docs/file"
+            and path in self.removed
+        ):
+            await self._cancel_invocation("file-verify")
+            raise FileNotFoundError(path)
         if self.stage == "root-verify" and path == "/docs" and path in self.removed:
             await self._cancel_invocation("root-verify")
             raise FileNotFoundError(path)
@@ -540,20 +663,22 @@ class _CancellingFileSystem(AsyncFileSystem):
     ) -> object:
         del detail, kwargs
         self.events.append(f"ls:{path}")
-        if self.stage == "planning":
-            await self._cancel_invocation("planning")
+        if self.stage == "listing":
+            await self._cancel_invocation("listing")
         return [{"name": "/docs/file", "type": "file"}]
 
     async def _rm_file(self, path: str, **kwargs: object) -> None:
         del kwargs
         self.events.append(f"rm_file:{path}")
-        if self.stage == "mutation":
-            await self._cancel_invocation("mutation")
+        if self.stage == "file-remove":
+            await self._cancel_invocation("file-remove")
         self.removed.add(path)
 
     async def _rmdir(self, path: str, **kwargs: object) -> None:
         del kwargs
         self.events.append(f"rmdir:{path}")
+        if self.stage == "root-remove":
+            await self._cancel_invocation("root-remove")
         self.removed.add(path)
 
 
@@ -575,8 +700,11 @@ def _cancelling_source(
 @pytest.mark.parametrize(
     ("stage", "required", "forbidden"),
     [
-        ("planning", "planning-drained", "rm_file:/docs/file"),
-        ("mutation", "mutation-drained", "info:/docs/file"),
+        ("root-info", "root-info-drained", "ls:/docs"),
+        ("listing", "listing-drained", "rm_file:/docs/file"),
+        ("file-remove", "file-remove-drained", "info:/docs/file"),
+        ("file-verify", "file-verify-drained", "rmdir:/docs"),
+        ("root-remove", "root-remove-drained", "verify:/docs"),
         ("root-verify", "root-verify-drained", "success-output"),
     ],
 )
@@ -638,31 +766,6 @@ def test_recursive_rm_snapshots_enabled_policy_at_app_construction() -> None:
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     assert any(event[0] == "rmdir" for event in events)
-
-
-def test_recursive_rm_rejects_manifest_over_capacity_before_mutation() -> None:
-    events: list[tuple[object, ...]] = []
-    source = _RecordingSource(
-        events,
-        info_by_path={"/docs": {"name": "/docs", "type": "directory"}},
-        ls_by_path={
-            "/docs": [
-                {"name": f"/docs/{index:05}", "type": "file"} for index in range(10_001)
-            ]
-        },
-    )
-
-    result = _invoke_recursive_rm(
-        ["-R", "memory:/docs"],
-        sources={"memory": source},
-    )
-
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        1,
-        "",
-        "rm: memory:/docs: incompatible result\n",
-    )
-    assert not any(event[0] in {"rm_file", "rmdir"} for event in events)
 
 
 class _MissingMutationHookFileSystem(AsyncFileSystem):

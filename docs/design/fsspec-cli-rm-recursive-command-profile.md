@@ -333,4 +333,4 @@ supplies qualifying CI gates. The gate must cover:
 The qualifying CI record MUST cite its exact commit, lockfile, package versions,
 native or adapted source forms, Python versions, runner images, observation
 time, test paths, and immutable jobs. No production recursive removal, help,
-No README, changelog, or release claim was added by research-only issue #284.
+README, changelog, or release claim was added by research-only issue #284.

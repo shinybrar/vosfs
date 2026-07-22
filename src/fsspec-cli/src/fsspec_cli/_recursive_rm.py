@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 
     from ._command import _MappedOperand
 
-_MAX_ENTRIES = 10_000
 _REQUIRED_HOOKS = ("_info", "_ls", "_rm_file", "_rmdir")
 
 
@@ -102,10 +101,8 @@ def _root_entry(path: str, value: object) -> _ManifestEntry:
     kind = info.get("type")
     if type(kind) is not str:
         raise _IncompatibleManifestError
-    if kind == "file":
-        raise NotADirectoryError(path)
     if kind != "directory":
-        raise _UnsupportedEntryError
+        raise NotADirectoryError(path)
     return _ManifestEntry(path, kind)
 
 
@@ -138,7 +135,7 @@ def _listed_entry(parent: str, root: str, value: object) -> _ManifestEntry:
     return _ManifestEntry(name, kind)
 
 
-async def _manifest(  # noqa: C901 - consume and freeze each hostile listing row.
+async def _manifest(
     filesystem: AsyncFileSystem,
     root: str,
     root_info: object,
@@ -159,8 +156,6 @@ async def _manifest(  # noqa: C901 - consume and freeze each hostile listing row
                 if entry.path in seen:
                     raise _IncompatibleManifestError  # noqa: TRY301
                 seen.add(entry.path)
-                if len(seen) > _MAX_ENTRIES:
-                    raise _IncompatibleManifestError  # noqa: TRY301
                 frozen.append(entry)
         except (_IncompatibleManifestError, _UnsupportedEntryError):
             raise
