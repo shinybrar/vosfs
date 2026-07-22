@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/shinybrar/vosfs/compare/v0.5.0...v0.6.0) (2026-07-22)
+
+
+### Features
+
+* **fsspec-cli:** add fsspec-compatible recursive operations ([#294](https://github.com/shinybrar/vosfs/issues/294)) ([9e5314d](https://github.com/shinybrar/vosfs/commit/9e5314db4706894d31d54d245392f43b9556cfbb))
+
 ## [0.5.0](https://github.com/shinybrar/vosfs/compare/v0.4.0...v0.5.0) (2026-07-21)
 
 
