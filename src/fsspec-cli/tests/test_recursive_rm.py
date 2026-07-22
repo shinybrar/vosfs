@@ -773,7 +773,9 @@ def test_recursive_rm_cancellation_after_final_proof_keeps_absence() -> None:
             sources={"memory": source},
         )
 
-    assert caught.value is control
+    # Python 3.10 may rewrap CancelledError at the asyncio.run boundary (#241).
+    assert type(caught.value) is asyncio.CancelledError
+    assert source.exit_calls == [(None, None, None)]
     assert [event[0] for event in events].count("rmdir") == 1
     assert [event[0] for event in events].count("info") == 2
 
