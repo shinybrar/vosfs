@@ -243,6 +243,8 @@ def main() -> None:
                 tests / "test_cp.py",
                 tests / "test_recursive_cp.py",
                 tests / "test_recursive_cp_adapters.py",
+                tests / "test_recursive_cp_failures.py",
+                tests / "test_recursive_cp_lifecycle.py",
                 tests / "test_mv.py",
                 tests / "test_unlink.py",
                 tests / "test_stat.py",
@@ -267,15 +269,11 @@ def main() -> None:
             [
                 tests / "test_distribution.py",
                 tests / "test_vosfs_command_matrix.py",
+                tests / "test_vosfs_recursive_command_matrix.py",
                 tests
                 / (
                     "test_vosfs_command_matrix.py::"
                     "test_native_vosfs_rm_d_profile_uses_only_mocked_transport"
-                ),
-                tests
-                / (
-                    "test_vosfs_command_matrix.py::"
-                    "test_native_vosfs_recursive_rm_profile_uses_only_mocked_transport"
                 ),
             ],
             cwd=root / "vosfs-tests",
