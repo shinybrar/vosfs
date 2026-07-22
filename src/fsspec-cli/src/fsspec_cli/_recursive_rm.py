@@ -143,16 +143,22 @@ async def _manifest(
     root_entry = _root_entry(root, root_info)
     seen = {root}
     entries: list[_ManifestEntry] = []
+    stack = [(root_entry, False)]
 
-    async def visit(directory: str) -> None:
-        result = await _call(filesystem, "_ls", directory, detail=True)
+    while stack:
+        candidate, visited = stack.pop()
+        if candidate.kind == "file" or visited:
+            entries.append(candidate)
+            continue
+
+        result = await _call(filesystem, "_ls", candidate.path, detail=True)
         if not isinstance(result, list):
             raise _IncompatibleManifestError
         frozen: list[_ManifestEntry] = []
         expected_length = len(result)
         try:
             for value in result:
-                entry = _listed_entry(directory, root, value)
+                entry = _listed_entry(candidate.path, root, value)
                 if entry.path in seen:
                     raise _IncompatibleManifestError  # noqa: TRY301
                 seen.add(entry.path)
@@ -164,13 +170,16 @@ async def _manifest(
         if len(result) != expected_length or len(frozen) != expected_length:
             raise _IncompatibleManifestError
 
-        for entry in sorted(frozen, key=lambda item: item.path):
-            if entry.kind == "directory":
-                await visit(entry.path)
-            entries.append(entry)
+        stack.append((candidate, True))
+        stack.extend(
+            (entry, False)
+            for entry in sorted(
+                frozen,
+                key=lambda item: item.path,
+                reverse=True,
+            )
+        )
 
-    await visit(root)
-    entries.append(root_entry)
     manifest = _Manifest(root, tuple(entries))
     _revalidate_manifest(manifest)
     return manifest

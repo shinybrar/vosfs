@@ -416,6 +416,36 @@ def test_recursive_rm_rejects_a_listing_that_mutates_during_consumption() -> Non
     assert not any(event[0] in {"rm_file", "rmdir"} for event in events)
 
 
+def test_recursive_rm_handles_a_deep_finite_manifest_iteratively() -> None:
+    depth = 1_200
+    paths = ["/docs"]
+    for index in range(depth):
+        paths.append(f"{paths[-1]}/d{index}")
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(
+        events,
+        info_by_path={"/docs": {"name": "/docs", "type": "directory"}},
+        ls_by_path={
+            path: (
+                [{"name": paths[index + 1], "type": "directory"}]
+                if index < depth
+                else []
+            )
+            for index, path in enumerate(paths)
+        },
+    )
+
+    result = _invoke_recursive_rm(
+        ["-R", "memory:/docs"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [event[2] for event in events if event[0] == "rmdir"] == list(
+        reversed(paths)
+    )
+
+
 def test_recursive_rm_force_suppresses_only_a_missing_root() -> None:
     missing_root = _RecordingSource(
         [],
