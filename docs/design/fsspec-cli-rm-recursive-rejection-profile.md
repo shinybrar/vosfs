@@ -1,16 +1,22 @@
 # `fsspec-cli` recursive `rm` rejection profile
 
-Status: **Locked source-free rejection**
+Status: **Superseded option rejection; locked application-disabled rejection**
 
 Part of [#120](https://github.com/shinybrar/vosfs/issues/120) /
 [#135](https://github.com/shinybrar/vosfs/issues/135)
 
 ## 1. Verdict
 
-`rm -R` and `rm -r` are equivalent, unsupported options. Each invocation
-fails during command preflight: status `2`, empty stdout, exactly one
-`rm: <option>: unsupported option` diagnostic, zero source factories, and zero
-filesystem mutation. `fsspec-cli` owns no recursive traversal.
+In fsspec-cli 0.4.0, `rm -R` and `rm -r` were equivalent unsupported options.
+Issue #288 supersedes that diagnostic while preserving source-free rejection
+when `capabilities.recursion.remove` is false or omitted. A valid recursive
+invocation fails before recursive operand or path validation: status `2`, empty
+stdout, exactly `rm: recursive removal disabled by application`, zero source
+factories, and zero filesystem work or mutation.
+
+The [guarded recursive profile](fsspec-cli-rm-recursive-command-profile.md)
+defines the capability-enabled implementation frontier. It does not weaken or
+replace this default path.
 
 ## 2. Admission result
 
@@ -57,8 +63,14 @@ at commit
 the current test also asserts its recording source receives no factory or
 mutation event.
 
-## 4. Frontier
+## 4. Capability-gated frontier
 
-Reconsider only after one source-owned recursive composite exposes and passes a
-locked complete-result contract for every Section 2 property. Keep traversal
-out of `fsspec-cli`; do not infer admission from another command or source form.
+Issue [#284](https://github.com/shinybrar/vosfs/issues/284) replaced the former
+source-owned-composite admission bar with one host-qualified, command-owned
+manifest contract. The application capability defaults false; true asserts
+that every configured target satisfies that contract. Production code may not
+inspect backend identity or load the tested command matrix to make that choice.
+
+The application-disabled rejection remains the default production behavior.
+Enabling the application capability selects the guarded profile; evidence for
+one source form or another command never opens the capability automatically.

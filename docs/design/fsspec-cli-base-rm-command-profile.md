@@ -48,8 +48,13 @@ is unavailable in this profile.
 dedicated profiles exist. [`rm -d`](fsspec-cli-rm-directory-command-profile.md),
 [`rm -f`](fsspec-cli-rm-force-command-profile.md), and
 [`rm -v`](fsspec-cli-rm-verbose-command-profile.md) are separate profiles.
-[`rm -R`/`-r`](fsspec-cli-rm-recursive-rejection-profile.md) are locked
-source-free rejections.
+[`rm -R`/`-r`](fsspec-cli-rm-recursive-rejection-profile.md) are source-free
+rejections in fsspec-cli 0.4.0. After #288 implements the application policy,
+the same rejection remains required whenever
+`capabilities.recursion.remove` is false. The locked
+[guarded recursive profile](fsspec-cli-rm-recursive-command-profile.md) defines
+the capability-enabled implementation frontier without changing this base
+file-only contract.
 
 ## 2. Mapped filesystem operands
 

@@ -776,6 +776,7 @@ class _CpMockTransport(httpx.MockTransport):
         self.nodes: dict[str, str] = {
             "/": "container",
             "/docs": "container",
+            "/docs/empty": "container",
             "/docs/target": "container",
             "/docs/notes.txt": "data",
             "/docs/.hidden": "data",
@@ -816,10 +817,26 @@ class _CpMockTransport(httpx.MockTransport):
             rest = child[len(path.rstrip("/")) + 1 :]
             if "/" in rest:
                 continue
-            xsi = "vos:ContainerNode" if kind == "container" else "vos:DataNode"
+            xsi = {
+                "container": "vos:ContainerNode",
+                "data": "vos:DataNode",
+                "link": "vos:LinkNode",
+            }[kind]
+            length = ""
+            if kind == "data":
+                length = (
+                    '<vos:property uri="ivo://ivoa.net/vospace/core#length">'
+                    f"{len(self.blobs[child])}</vos:property>"
+                )
             children.append(
                 f'<vos:node xsi:type="{xsi}" uri="vos://{_AUTHORITY}{child}">'
-                "<vos:properties/></vos:node>"
+                f"<vos:properties>{length}</vos:properties>"
+                + (
+                    f"<vos:target>vos://{_AUTHORITY}/docs/notes.txt</vos:target>"
+                    if kind == "link"
+                    else ""
+                )
+                + "</vos:node>"
             )
         body = "".join(children)
         return f"""<vos:node

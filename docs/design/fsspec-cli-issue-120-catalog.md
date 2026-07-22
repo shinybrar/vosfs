@@ -66,12 +66,12 @@ for source-form claims (`pass` / `fail` / `unsupported` / `unverified`).
 | Exact `rm -f` | `admitted` | [rm -f](fsspec-cli-rm-force-command-profile.md) | source rows; see audit |
 | Exact `rm -d` | `admitted` | [rm -d](fsspec-cli-rm-directory-command-profile.md) | source rows; see audit |
 | Exact `rm -v` | `admitted` | [rm -v](fsspec-cli-rm-verbose-command-profile.md) | source rows; see audit |
-| `rm -R` / `rm -r` | `rejected` | [rm recursive rejection](fsspec-cli-rm-recursive-rejection-profile.md) | preflight `unsupported` |
+| Capability-enabled `rm -R` / `rm -r` | `admitted` | [guarded recursive rm](fsspec-cli-rm-recursive-command-profile.md) | host-qualified source rows only; default remains source-free rejection |
 | `rm -i` and unprofiled combinations | `rejected` | base / force / directory / verbose rm profiles | preflight `unsupported` |
 | Same-source two-operand file `cp` | `admitted` | [same-source cp](fsspec-cli-same-source-cp-command-profile.md) | source rows; see audit |
 | Cross-source two-operand file `cp` | `admitted` | [cross-source cp](fsspec-cli-cross-source-cp-command-profile.md) | source-pair rows |
 | Multi-source file `cp` into directory | `admitted` | [multi-source cp](fsspec-cli-multi-source-cp-command-profile.md) | source rows |
-| Same-source / cross-source `cp -R` | `rejected` | [recursive cp rejection](fsspec-cli-recursive-cp-rejection-profile.md) | preflight `unsupported` |
+| Same-source / cross-source `cp -R` | `admitted` | [verified recursive cp](fsspec-cli-recursive-cp-rejection-profile.md) | source and ordered source-pair rows |
 | Same-source two-operand file `mv` | `admitted` | [same-source mv](fsspec-cli-same-source-mv-command-profile.md) | exact `_mv` rows; often `unverified` |
 | Same-source multi-file `mv` into directory | `admitted` | [multi-file mv](fsspec-cli-same-source-multi-file-mv-command-profile.md) | exact `_mv` rows; often `unverified` |
 | Same-source directory `mv` | `rejected` | [same-source mv directory boundary](fsspec-cli-same-source-mv-command-profile.md) | runtime/directory rejection |
@@ -123,7 +123,7 @@ Not Issue 8 filesystem utilities under this catalog. Not added.
 | --- | --- |
 | `file` | `outside catalog` (content classification) |
 | `mount`, `sync`, `install`, `truncate`, `mktemp` | `outside catalog` |
-| `find`, walk, glob, traversal engines | `outside catalog` (fsspec owns composites) |
+| Standalone `find`, walk, and glob utilities | `outside catalog` (a command profile may own bounded internal traversal) |
 | `cksum`, `cmp`, `dd`, `head`, `od`, `pax`, `split`, `strings`, `tail`, `tee`, `test`, `wc` | `outside catalog` (content/stream/archive utilities) |
 
 ## 7. Closing issue 120

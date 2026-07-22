@@ -21,7 +21,8 @@ uv add "git+https://github.com/shinybrar/vosfs@main#subdirectory=src/fsspec-cli"
 
 ## Quickstart
 
-The sole stable seam is `App(sources).typer_app`. Each source is an
+The sole stable seam is
+`App(sources, *, capabilities=None, extensions=()).typer_app`. Each source is an
 `AsyncFilesystemSource`: a callable returning a fresh async context manager that
 yields one `AbstractFileSystem` per command invocation. The host owns source
 configuration and cleanup; the library owns the yielded filesystem only for one
@@ -55,6 +56,28 @@ Name a configured source as `name:/path` when running a command:
 python app.py fs ls data:/
 ```
 
+Application capabilities are explicit constructor policy. They are validated
+and deep-snapshotted; no file, environment, plugin, source, or matrix loader is
+provided. Recursive copy defaults on and recursive removal defaults off. A host
+opts into guarded recursive removal explicitly:
+
+```python
+guarded = App(
+    {"data": data_source},
+    capabilities={"recursion": {"copy": True, "remove": True}},
+)
+```
+
+With `copy` false, `cp -R` and `cp -r` exit `2` before operand or source work
+with `cp: recursive copy disabled by application`; `cp --help` retains the
+file-only wording. With `remove` false or omitted, `rm -R` and `rm -r` exit `2`
+before operand or source work with
+`rm: recursive removal disabled by application`. Setting `remove` true is the
+host's assertion that every configured target satisfies the locked guarded
+recursive-removal profile; the command never infers that policy from a backend
+type, protocol, or matrix row. Extensions receive only the immutable source
+snapshot, never the capability policy.
+
 Backend-specific commands are opt-in extensions. For example, add `sign` only
 when the host wants to expose a filesystem's signed-URL capability:
 
@@ -87,11 +110,11 @@ type or protocol.
 | `info` | One normalized metadata dictionary plus backend-specific `extra` values |
 | `sign` (opt-in) | Backend-signed URL when the selected source implements `sign` |
 | `cat` | Concatenate mapped files (and stdin `-`) to stdout |
-| `cp` | Metadata-verified same-source, cross-source, and multi-source file copy (no `-R`) |
+| `cp` | Metadata-verified file copy; verified two-operand directory copy with `-R` / `-r` |
 | `mv` | Metadata-verified same-source file move, single or multi-file into a directory |
 | `mkdir` | Create directories; `-p` creates parents |
 | `rmdir` | Remove empty directories |
-| `rm` | Remove files; `-d` empty dirs, `-f` force, `-v` verbose |
+| `rm` | Remove files; `-d` empty dirs; guarded `-R` / `-r`; `-f` force; `-v` verbose |
 | `unlink` | XSI single-file removal |
 | `stat` | Reduced BSD/macOS-shaped file status |
 | `basename`, `dirname` | Source-free path-string slicing |
@@ -110,6 +133,28 @@ read metadata internally. `find` does not provide predicates, globbing, or
 recursive unless `--maxdepth N` bounds it; remote sources may perform one
 listing request for every reached directory. One top-level `_walk` invocation
 does not mean one remote request.
+
+`cp -R source:/directory destination:/target` and `cp -r` copy one directory
+through a bounded 10,000-entry manifest and one-file host-local staging. The
+command supports same-source and cross-source routes, preserves empty
+directories, rejects links and special entries before mutation, and verifies
+the source manifest plus destination metadata before success. It does not
+promise a snapshot, transaction, rollback, exact mirror, or POSIX metadata
+preservation.
+The operation uses one backend-neutral runner over required async hooks. Matrix
+support remains limited to the exact source forms and versions with qualifying
+evidence; this is not an all-fsspec claim.
+
+`rm -R source:/directory` and `rm -r` first build a bounded complete manifest
+through `_info` and `_ls(detail=True)`, reject roots, dot segments, links,
+special entries, and containment failures, then remove entries leaves-first
+through `_rm_file` and `_rmdir`. Success requires an absence check after every
+primitive and a final root-absence proof. Removal is sequential and non-atomic:
+failure or cancellation can leave confirmed earlier removals in place and the
+remaining tree present or uncertain. There is no prompt, rollback, retry,
+trash, recovery, or all-fsspec guarantee. Enable the capability only when the
+host has qualified every configured target for these concurrency and
+containment assumptions.
 
 `info [--] name:/path` awaits one backend `_info` call and pretty-prints every
 normalized metadata field plus backend-specific values under `extra`. Sparse

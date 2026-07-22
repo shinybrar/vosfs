@@ -17,12 +17,42 @@ loop closes. A yielded filesystem never escapes the invocation or crosses into
 a later invocation. The source context exit is the generic cleanup interface;
 `App` does not discover or call a backend-specific cleanup method.
 
-The sole stable v1 seam remains `App(sources).typer_app`. Each concrete Typer
-command uses one zero-command-logic synchronous adapter to check for an active
-same-thread event loop and, when none exists, run one command coroutine. Direct
-invocation from an active same-thread loop produces a stable configuration
-diagnostic. V1 exposes no public async invocation seam, background loop, hidden
-runner thread, or nested-loop workaround.
+The stable v1 seam is the source mapping, snapshotted application capabilities,
+and extension selection accepted by
+[ADR 0004](0004-add-opt-in-command-extensions.md):
+
+```python
+App(
+    sources,
+    *,
+    capabilities={"recursion": {"copy": True, "remove": False}},
+    extensions=[...],
+).typer_app
+```
+
+The public `AppCapabilities` and `RecursionCapabilities` types are total-false
+typed dictionaries. Only `recursion`, `copy`, and `remove` are accepted. Values
+must be real booleans. `App` validates and deep-snapshots the input at
+construction; later caller mutation cannot change command policy. There is no
+file, environment, plugin, source, or matrix loader.
+
+An omitted `capabilities` argument, omitted `recursion` group, or omitted
+member means `capabilities.recursion.copy is True` and
+`capabilities.recursion.remove is False`. Recursive-copy policy is therefore
+backward-compatible. A true `remove` value is the embedding host's assertion
+that every target in the configured source mapping meets the locked guarded
+recursive-removal contract; it does not itself add that command behavior.
+These are application policies, not per-source facts. Production MUST NOT
+infer, override, or refine them by inspecting a backend class, wrapper class,
+object identity, protocol string, registry, or yielded filesystem. The tested
+command matrix remains evidence for a host's configuration decision;
+production code does not load it.
+
+Each concrete Typer command uses one zero-command-logic synchronous adapter to
+check for an active same-thread event loop and, when none exists, run one
+command coroutine. Direct invocation from an active same-thread loop produces
+a stable configuration diagnostic. V1 exposes no public async invocation seam,
+background loop, hidden runner thread, or nested-loop workaround.
 
 After source entry and before filesystem I/O, `App` accepts only an
 `AsyncFileSystem` with `async_impl is True` and `asynchronous is True`. Raw
@@ -60,5 +90,8 @@ and sole Typer-seam decisions remain accepted.
   creation, use, and cleanup.
 - Source lifecycle failure ordering, diagnostics, and exit precedence follow
   [Acquire every referenced async filesystem source before filesystem work](./0003-acquire-referenced-async-filesystem-sources.md).
+- Application capabilities configure core command policy without
+  transferring source qualification or lifecycle ownership from the embedding
+  host.
 - Exact backend compatibility remains command-, backend-, and version-tested;
   no generic fsspec compatibility claim follows from this lifecycle contract.

@@ -1254,6 +1254,35 @@ def _exercise_rm_verbose_profile(
     assert not any(call.operation in {"rm", "rmdir", "ls"} for call in calls)
 
 
+def _exercise_recursive_rm_profile(
+    source_name: str,
+    source: _ProbedSource[_FilesystemT],
+    root: str,
+) -> None:
+    app = App(
+        {source_name: source},
+        capabilities={"recursion": {"remove": True}},
+    )
+
+    result = _invoke_rm(app, ["-Rv", f"{source_name}:{root}"])
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        f"{source_name}:{root}\n",
+        "",
+    )
+    assert [event.stage for event in source.lifecycle] == [
+        "factory",
+        "enter",
+        "exit",
+    ]
+    calls = source.calls
+    assert any(call.operation == "ls" and call.detail is True for call in calls)
+    assert any(call.operation == "rm_file" for call in calls)
+    assert any(call.operation == "rmdir" for call in calls)
+    assert not any(call.operation == "rm" for call in calls)
+
+
 def _exercise_cp_locked_profile(  # noqa: PLR0913 - matrix probe knobs.
     source_name: str,
     source: _ProbedSource[_FilesystemT],

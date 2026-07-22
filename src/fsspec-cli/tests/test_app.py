@@ -1,13 +1,19 @@
 """Construction and preflight tests for the public embedded-command seam."""
 
 import asyncio
+import re
 from collections.abc import Mapping
 from typing import NoReturn, cast
 from unittest.mock import Mock
 
 import pytest
 import typer
-from fsspec_cli import App, AsyncFilesystemSource
+from fsspec_cli import (
+    App,
+    AppCapabilities,
+    AsyncFilesystemSource,
+    RecursionCapabilities,
+)
 from typer.testing import CliRunner, Result
 
 
@@ -49,13 +55,80 @@ def test_app_rejects_invalid_source_names(name, error_type) -> None:
     assert type(error.value) is error_type
 
 
-def test_public_exports_are_app_source_type_and_extension_protocol() -> None:
+def test_public_exports_include_application_capability_types() -> None:
+    recursion: RecursionCapabilities = {"copy": True, "remove": False}
+    capabilities: AppCapabilities = {"recursion": recursion}
+
+    assert capabilities == {"recursion": {"copy": True, "remove": False}}
     assert AsyncFilesystemSource is not None
     assert __import__("fsspec_cli").__all__ == [
         "App",
+        "AppCapabilities",
         "AsyncFilesystemSource",
         "CommandExtension",
+        "RecursionCapabilities",
     ]
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "error_type", "message"),
+    [
+        ([], TypeError, "capabilities must be a mapping"),
+        ({"recursion": []}, TypeError, "capabilities.recursion must be a mapping"),
+        (
+            {"recursion": {"copy": 1}},
+            TypeError,
+            "capabilities.recursion.copy must be a bool",
+        ),
+        (
+            {"recursion": {"remove": None}},
+            TypeError,
+            "capabilities.recursion.remove must be a bool",
+        ),
+        (
+            {"future": {}},
+            ValueError,
+            "capabilities.future: unknown capability",
+        ),
+        (
+            {"recursion": {"future": True}},
+            ValueError,
+            "capabilities.recursion.future: unknown capability",
+        ),
+    ],
+)
+def test_app_rejects_malformed_or_unknown_capabilities(
+    capabilities: object,
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    with pytest.raises(error_type, match=f"^{re.escape(message)}$"):
+        App(
+            {"memory": _source_must_not_run},
+            capabilities=cast("AppCapabilities", capabilities),
+        )
+
+
+def test_app_snapshots_nested_capabilities_at_construction() -> None:
+    recursion: RecursionCapabilities = {"copy": False}
+    capabilities: AppCapabilities = {"recursion": recursion}
+    typer_app = App(
+        {"memory": _source_must_not_run},
+        capabilities=capabilities,
+    ).typer_app
+    recursion["copy"] = True
+    capabilities.clear()
+
+    result = CliRunner().invoke(
+        typer_app,
+        ["cp", "-R", "bad", "also-bad"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "cp: recursive copy disabled by application\n",
+    )
 
 
 def test_ls_rejects_a_missing_mapped_filesystem_operand() -> None:
@@ -214,7 +287,11 @@ def test_app_registers_extensions_with_an_immutable_source_snapshot() -> None:
 
     sources = {"memory": _source_must_not_run}
     extension = RecordingExtension()
-    app = App(sources, extensions=[extension])
+    app = App(
+        sources,
+        capabilities={"recursion": {"copy": False, "remove": True}},
+        extensions=[extension],
+    )
     sources.clear()
 
     assert extension.typer_app is app.typer_app

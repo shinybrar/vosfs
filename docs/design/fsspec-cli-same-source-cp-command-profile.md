@@ -74,8 +74,9 @@ Three or more operands are not a usage error; they select the
 [verified multi-source `cp` profile](fsspec-cli-multi-source-cp-command-profile.md),
 which requires an existing destination directory.
 
-`cp -R` is source-free unsupported under the locked
-[recursive-copy rejection profile](fsspec-cli-recursive-cp-rejection-profile.md).
+`cp -R` and `cp -r` select the separate implemented
+[recursive-copy profile](fsspec-cli-recursive-cp-rejection-profile.md) unless
+`capabilities.recursion.copy` is explicitly false.
 
 ## 3. Target resolution
 
@@ -159,5 +160,5 @@ cp: <mapped operand>: <stable category>
 - [Tested command matrix contract](fsspec-cli-tested-command-matrix.md) owns
   source-form dispositions and immutable evidence IDs.
 - [Cross-source `cp`](fsspec-cli-cross-source-cp-command-profile.md) owns
-  distinct configured-name copy. Multi-source copy and recursive `-R` remain
-  separate issues (#139, #140).
+  distinct configured-name file copy. Multi-source and recursive copy retain
+  separate profiles.

@@ -239,7 +239,12 @@ def main() -> None:
                 tests / "test_rmdir.py",
                 tests / "test_mkdir.py",
                 tests / "test_rm.py",
+                tests / "test_recursive_rm.py",
                 tests / "test_cp.py",
+                tests / "test_recursive_cp.py",
+                tests / "test_recursive_cp_adapters.py",
+                tests / "test_recursive_cp_failures.py",
+                tests / "test_recursive_cp_lifecycle.py",
                 tests / "test_mv.py",
                 tests / "test_unlink.py",
                 tests / "test_stat.py",
@@ -264,6 +269,7 @@ def main() -> None:
             [
                 tests / "test_distribution.py",
                 tests / "test_vosfs_command_matrix.py",
+                tests / "test_vosfs_recursive_command_matrix.py",
                 tests
                 / (
                     "test_vosfs_command_matrix.py::"

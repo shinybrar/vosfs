@@ -20,6 +20,7 @@ from ._command import (
 )
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._path import _lexical_basename
+from ._recursive_cp import _run_recursive_cp
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
@@ -48,6 +49,7 @@ class _CpRequest:
 class _CpPlan:
     requests: tuple[_CpRequest, ...]
     require_directory: bool
+    recursive: bool
 
 
 @dataclass(frozen=True)
@@ -73,10 +75,17 @@ def _preflight(
 ) -> _CpPlan:
     operands: list[str] = []
     options_active = True
+    recursive = False
 
     for argument in raw_arguments:
         if options_active and argument == "--":
             options_active = False
+            continue
+        if options_active and argument in {"-R", "-r"}:
+            if recursive:
+                rendered = _render_diagnostic_value(argument)
+                _usage_error(command, f"{rendered}: unsupported option")
+            recursive = True
             continue
         if options_active and argument.startswith("-") and argument != "-":
             rendered = _render_diagnostic_value(argument)
@@ -85,6 +94,8 @@ def _preflight(
 
     if len(operands) < _MIN_OPERAND_COUNT:
         _usage_error(command, "missing mapped filesystem operand")
+    if recursive and len(operands) > _MIN_OPERAND_COUNT:
+        _usage_error(command, "extra operand")
 
     mapped = tuple(
         _parse_mapped_operand(command, operand, known_names) for operand in operands
@@ -95,6 +106,7 @@ def _preflight(
             _CpRequest(source=source, destination=destination) for source in mapped[:-1]
         ),
         require_directory=len(mapped) > _MIN_OPERAND_COUNT,
+        recursive=recursive,
     )
 
 
@@ -571,12 +583,47 @@ def _render_failure(  # noqa: C901 - stable diagnostic categories.
         _render_backend_failure(command, failure.operand, failure.backend_error)
 
 
+def _reject_disabled_recursive_copy(
+    raw_arguments: tuple[str, ...],
+    *,
+    recursive_enabled: bool,
+) -> None:
+    if recursive_enabled:
+        return
+    options_active = True
+    for argument in raw_arguments:
+        if options_active and argument == "--":
+            options_active = False
+        elif options_active and argument in {"-R", "-r"}:
+            typer.echo(
+                "cp: recursive copy disabled by application",
+                err=True,
+            )
+            raise typer.Exit(2)
+        elif options_active and argument.startswith("-") and argument != "-":
+            break
+
+
 async def _run_cp(
     command: str,
     raw_arguments: tuple[str, ...],
     sources: Mapping[str, AsyncFilesystemSource],
+    *,
+    recursive_enabled: bool = True,
 ) -> None:
+    _reject_disabled_recursive_copy(
+        raw_arguments,
+        recursive_enabled=recursive_enabled,
+    )
     plan = _preflight(command, raw_arguments, sources)
+    if plan.recursive:
+        await _run_recursive_cp(
+            command,
+            plan.requests[0].source,
+            plan.requests[0].destination,
+            sources,
+        )
+        return
     invocation = _SourceInvocation(command, sources)
     succeeded = False
     failure: _CpFailure | None = None
