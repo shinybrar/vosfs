@@ -321,9 +321,7 @@ async def _sync_rows(
     try:
         outcome = await asyncio.shield(worker)
     except BaseException:
-        while not worker.done():
-            with suppress(BaseException):
-                await asyncio.shield(worker)
+        await _drain_task(worker)
         with suppress(BaseException):
             worker.result()
         raise
@@ -510,31 +508,28 @@ def _classify_existing(  # noqa: PLR0911 - stable metadata categories.
     path: str,
     info: object,
     *,
-    expected: str | None = None,
     require_name: bool = True,
-) -> tuple[_ManifestEntry | None, _Failure | None]:
+) -> _ManifestEntry | _Failure:
     if not require_name:
         if not isinstance(info, Mapping):
-            return None, _Failure(operand, "incompatible result")
+            return _Failure(operand, "incompatible result")
         typed_info = cast("Mapping[object, object]", info)
         kind = typed_info.get("type")
         if type(kind) is not str:
-            return None, _Failure(operand, "incompatible result")
+            return _Failure(operand, "incompatible result")
         islink = typed_info.get("islink", False)
         if type(islink) is not bool:
-            return None, _Failure(operand, "incompatible result")
+            return _Failure(operand, "incompatible result")
         if islink or kind not in {"directory", "file"}:
-            return None, _Failure(operand, "unsupported entry type")
-        return _ManifestEntry("", path, kind, None, ()), None
+            return _Failure(operand, "unsupported entry type")
+        return _ManifestEntry("", path, kind, None, ())
     try:
         entry = _entry("", path, info)
     except _UnsupportedEntryError as error:
-        return None, _Failure(operand, "unsupported entry type", error=error)
+        return _Failure(operand, "unsupported entry type", error=error)
     except _IncompatibleResultError as error:
-        return None, _Failure(operand, "incompatible result", error=error)
-    if expected is not None and entry.kind != expected:
-        return None, _Failure(operand, "destination type conflict")
-    return entry, None
+        return _Failure(operand, "incompatible result", error=error)
+    return entry
 
 
 def _destination_path(root: str, relative: str) -> str:
@@ -600,16 +595,14 @@ class _RecursiveCopy:
         resolved = self.destination.path
         resolved_info = destination_info
         if destination_info is not None:
-            entry, failure = _classify_existing(
+            entry = _classify_existing(
                 self.destination,
                 self.destination.path,
                 destination_info,
                 require_name=False,
             )
-            if failure is not None:
-                return resolved, failure
-            if entry is None:
-                return resolved, _Failure(self.destination, "incompatible result")
+            if isinstance(entry, _Failure):
+                return resolved, entry
             if entry.kind == "directory":
                 known_parent = self.destination.path
                 resolved = _child_path(
@@ -633,32 +626,28 @@ class _RecursiveCopy:
                 return resolved, _read_failure(self.destination, error)
             if parent_info is None:
                 return resolved, _Failure(self.destination, "not found")
-            parent_entry, failure = _classify_existing(
+            parent_entry = _classify_existing(
                 self.destination,
                 parent,
                 parent_info,
                 require_name=False,
             )
-            if failure is not None:
-                if failure.category == "unsupported entry type":
+            if isinstance(parent_entry, _Failure):
+                if parent_entry.category == "unsupported entry type":
                     return resolved, _Failure(self.destination, "not a directory")
-                return resolved, failure
-            if parent_entry is None:
-                return resolved, _Failure(self.destination, "incompatible result")
+                return resolved, parent_entry
             if parent_entry.kind != "directory":
                 return resolved, _Failure(self.destination, "not a directory")
 
         if resolved_info is not None:
-            root_entry, failure = _classify_existing(
+            root_entry = _classify_existing(
                 self.destination,
                 resolved,
                 resolved_info,
                 require_name=False,
             )
-            if failure is not None:
-                return resolved, failure
-            if root_entry is None:
-                return resolved, _Failure(self.destination, "incompatible result")
+            if isinstance(root_entry, _Failure):
+                return resolved, root_entry
             if root_entry.kind == "file":
                 return resolved, _Failure(
                     self.destination,
@@ -689,11 +678,9 @@ class _RecursiveCopy:
                 if entry.kind == "directory":
                     missing.append(entry)
                 continue
-            existing, failure = _classify_existing(self.destination, path, info)
-            if failure is not None:
-                return (), failure
-            if existing is None:
-                return (), _Failure(self.destination, "incompatible result")
+            existing = _classify_existing(self.destination, path, info)
+            if isinstance(existing, _Failure):
+                return (), existing
             if existing.kind != entry.kind:
                 return (), _Failure(
                     self.destination,
