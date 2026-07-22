@@ -8,11 +8,11 @@ Part of [#120](https://github.com/shinybrar/vosfs/issues/120) /
 ## 1. Verdict
 
 In fsspec-cli 0.4.0, `rm -R` and `rm -r` are equivalent, unsupported options.
-The same rejection remains required when the application-level
-`capabilities.recursion.remove` policy is false or omitted. Each invocation
-fails during command preflight: status `2`, empty stdout, exactly one
-`rm: <option>: unsupported option` diagnostic, zero source factories, and zero
-filesystem mutation.
+After #288 implements the application-level policy, the same rejection remains
+required when `capabilities.recursion.remove` is false or omitted. Each
+invocation fails during command preflight: status `2`, empty stdout, exactly
+one `rm: <option>: unsupported option` diagnostic, zero source factories, and
+zero filesystem mutation.
 
 The [guarded recursive profile](fsspec-cli-rm-recursive-command-profile.md)
 defines the capability-enabled implementation frontier. It does not weaken or

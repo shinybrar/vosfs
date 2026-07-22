@@ -17,10 +17,11 @@ loop closes. A yielded filesystem never escapes the invocation or crosses into
 a later invocation. The source context exit is the generic cleanup interface;
 `App` does not discover or call a backend-specific cleanup method.
 
-The sole stable v1 seam remains `App(...).typer_app`. In addition to the source
-mapping and the extension selection accepted by
-[ADR 0004](0004-add-opt-in-command-extensions.md), `App` accepts snapshotted
-application-level capabilities for core command policy:
+The current stable v1 seam remains the source mapping plus the extension
+selection accepted by
+[ADR 0004](0004-add-opt-in-command-extensions.md). This accepted decision
+directs #288 to extend only that `App(...).typer_app` constructor seam with
+snapshotted application-level capabilities for core command policy:
 
 ```python
 App(
@@ -31,12 +32,13 @@ App(
 ).typer_app
 ```
 
-An omitted `capabilities` argument, an omitted `recursion` group, or an omitted
-`remove` member means `capabilities.recursion.remove is False`. `True` is the
-embedding host's assertion that every target in the configured source mapping
-meets the locked guarded-recursive-removal contract. It is one application
-policy, not a per-source registry or a fact discovered from a yielded
-filesystem. `App` snapshots it with the sources and MUST NOT infer, override,
+When #288 implements this decision, an omitted `capabilities` argument, an
+omitted `recursion` group, or an omitted `remove` member will mean
+`capabilities.recursion.remove is False`. `True` will be the embedding host's
+assertion that every target in the configured source mapping meets the locked
+guarded-recursive-removal contract. It is one application policy, not a
+per-source registry or a fact discovered from a yielded filesystem. The
+implementation will snapshot it with the sources and MUST NOT infer, override,
 or refine it by inspecting a backend class, wrapper class, protocol string, or
 other backend identity. The tested command matrix remains evidence for a host's
 configuration decision; production code does not load it.
@@ -83,7 +85,8 @@ and sole Typer-seam decisions remain accepted.
   creation, use, and cleanup.
 - Source lifecycle failure ordering, diagnostics, and exit precedence follow
   [Acquire every referenced async filesystem source before filesystem work](./0003-acquire-referenced-async-filesystem-sources.md).
-- Application capabilities configure core command policy without transferring
-  source qualification or lifecycle ownership from the embedding host.
+- Application capabilities will configure core command policy without
+  transferring source qualification or lifecycle ownership from the embedding
+  host.
 - Exact backend compatibility remains command-, backend-, and version-tested;
   no generic fsspec compatibility claim follows from this lifecycle contract.
