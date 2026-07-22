@@ -821,7 +821,11 @@ class _CpMockTransport(httpx.MockTransport):
             rest = child[len(path.rstrip("/")) + 1 :]
             if "/" in rest:
                 continue
-            xsi = "vos:ContainerNode" if kind == "container" else "vos:DataNode"
+            xsi = {
+                "container": "vos:ContainerNode",
+                "data": "vos:DataNode",
+                "link": "vos:LinkNode",
+            }[kind]
             length = ""
             if kind == "data":
                 length = (
@@ -830,7 +834,13 @@ class _CpMockTransport(httpx.MockTransport):
                 )
             children.append(
                 f'<vos:node xsi:type="{xsi}" uri="vos://{_AUTHORITY}{child}">'
-                f"<vos:properties>{length}</vos:properties></vos:node>"
+                f"<vos:properties>{length}</vos:properties>"
+                + (
+                    f"<vos:target>vos://{_AUTHORITY}/docs/notes.txt</vos:target>"
+                    if kind == "link"
+                    else ""
+                )
+                + "</vos:node>"
             )
         body = "".join(children)
         return f"""<vos:node
@@ -961,6 +971,39 @@ def test_native_vosfs_recursive_cp_profile_uses_only_mocked_transport() -> None:
     assert transports[0].blobs["/copy/notes.txt"] == b"notes.txt"
     assert transports[0].nodes["/copy/empty"] == "container"
     assert transports[0].blobs["/docs/notes.txt"] == b"notes.txt"
+    assert transports[0].closed
+    assert source.filesystems[0]._pool.closed is True
+
+
+def test_native_vosfs_recursive_cp_rejects_mocked_link_node_before_mutation() -> None:
+    transports: list[_CpMockTransport] = []
+
+    def make_filesystem() -> VOSpaceFileSystem:
+        transport = _CpMockTransport()
+        transport.nodes["/docs/shortcut"] = "link"
+        transports.append(transport)
+        return VOSpaceFileSystem(
+            _BASE_URL,
+            transport=transport,
+            asynchronous=True,
+            skip_instance_cache=True,
+            trust_env=False,
+        )
+
+    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+
+    result = CliRunner().invoke(
+        App({"vos": source}).typer_app,
+        ["cp", "-R", "vos:/docs", "vos:/copy"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: vos:/docs: unsupported entry type\n",
+    )
+    assert all(method == "GET" for method, _path in transports[0].requests)
+    assert "/copy" not in transports[0].nodes
     assert transports[0].closed
     assert source.filesystems[0]._pool.closed is True
 

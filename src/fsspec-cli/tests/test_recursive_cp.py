@@ -277,6 +277,104 @@ def test_recursive_cp_rejects_destination_inside_source_before_mutation() -> Non
     assert not [call for call in calls if call[0] in {"mkdir", "put_file"}]
 
 
+@pytest.mark.parametrize(
+    ("parent_entry", "parent_metadata", "diagnostic"),
+    [
+        (None, None, "not found"),
+        (b"parent", None, "not a directory"),
+        (
+            None,
+            {"name": "/parent", "type": "directory", "islink": True},
+            "not a directory",
+        ),
+    ],
+)
+def test_recursive_cp_rejects_missing_file_or_link_resolved_parent(
+    parent_entry: bytes | None,
+    parent_metadata: dict[str, object] | None,
+    diagnostic: str,
+) -> None:
+    source_entries: dict[str, bytes | None] = {
+        "/": None,
+        "/docs": None,
+        "/docs/file": b"x",
+    }
+    destination_entries: dict[str, bytes | None] = {"/": None}
+    metadata = None
+    if parent_entry is not None or parent_metadata is not None:
+        destination_entries["/parent"] = parent_entry
+        metadata = {"/parent": parent_metadata} if parent_metadata is not None else None
+    calls: list[tuple[object, ...]] = []
+
+    result = _invoke(
+        ["-R", "source:/docs", "destination:/parent/copy"],
+        {
+            "source": _source(source_entries, calls),
+            "destination": _source(
+                destination_entries,
+                calls,
+                metadata=metadata,
+            ),
+        },
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        f"cp: destination:/parent/copy: {diagnostic}\n",
+    )
+    assert not [call for call in calls if call[0] in {"walk", "mkdir", "put_file"}]
+
+
+@pytest.mark.parametrize(
+    ("root_entry", "root_metadata", "diagnostic"),
+    [
+        (b"existing", None, "destination type conflict"),
+        (
+            None,
+            {"name": "/out/copy", "type": "directory", "islink": True},
+            "unsupported entry type",
+        ),
+    ],
+)
+def test_recursive_cp_rejects_existing_resolved_root_file_or_link(
+    root_entry: bytes | None,
+    root_metadata: dict[str, object] | None,
+    diagnostic: str,
+) -> None:
+    source_entries: dict[str, bytes | None] = {
+        "/": None,
+        "/docs": None,
+        "/docs/file": b"x",
+    }
+    destination_entries: dict[str, bytes | None] = {
+        "/": None,
+        "/out": None,
+        "/out/copy": root_entry,
+    }
+    metadata = {"/out/copy": root_metadata} if root_metadata is not None else None
+    calls: list[tuple[object, ...]] = []
+
+    result = _invoke(
+        ["-R", "source:/docs", "destination:/out/copy"],
+        {
+            "source": _source(source_entries, calls),
+            "destination": _source(
+                destination_entries,
+                calls,
+                metadata=metadata,
+            ),
+        },
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        f"cp: destination:/out/copy: {diagnostic}\n",
+    )
+    assert not [call for call in calls if call[0] in {"walk", "mkdir", "put_file"}]
+
+
 def test_recursive_cp_merges_existing_tree_and_replaces_files() -> None:
     entries: dict[str, bytes | None] = {
         "/": None,
@@ -433,6 +531,53 @@ def test_recursive_cp_reports_source_change_after_transfer() -> None:
         "cp: memory:/docs: source changed; destination residue may remain\n",
     )
     assert entries["/out/copy/notes.txt"] == b"notes"
+
+
+def test_recursive_cp_detects_source_mutation_before_transfer() -> None:
+    source_entries: dict[str, bytes | None] = {
+        "/": None,
+        "/docs": None,
+        "/docs/file": b"x",
+    }
+    destination_entries: dict[str, bytes | None] = {"/": None, "/out": None}
+    source_calls: list[tuple[object, ...]] = []
+    destination_calls: list[tuple[object, ...]] = []
+
+    def configure(filesystem: _TreeFileSystem) -> None:
+        original = filesystem._info
+
+        async def info(
+            self: _TreeFileSystem,
+            path: str,
+            **kwargs: object,
+        ) -> dict[str, object]:
+            del self
+            if path == "/out/copy/file":
+                source_entries["/docs/file"] = b"changed"
+            return await original(path, **kwargs)
+
+        filesystem._info = MethodType(info, filesystem)  # type: ignore[method-assign]
+
+    result = _invoke(
+        ["-R", "source:/docs", "destination:/out/copy"],
+        {
+            "source": _source(source_entries, source_calls),
+            "destination": _source(
+                destination_entries,
+                destination_calls,
+                configure=configure,
+            ),
+        },
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: source:/docs: source changed; destination residue may remain\n",
+    )
+    assert ("get_file", "/docs/file") in source_calls
+    assert not [call for call in destination_calls if call[0] == "put_file"]
+    assert destination_entries["/out/copy"] is None
 
 
 def test_recursive_cp_reports_partial_destination_residue_after_upload_failure() -> (
@@ -855,6 +1000,84 @@ def test_recursive_cp_cleans_staging_when_primary_rendering_escapes(
         )
 
     assert caught.value is control
+    assert len(temporary_paths) == 1
+    assert not Path(temporary_paths[0]).exists()
+
+
+def test_recursive_cp_cleans_staging_before_reverse_exits_during_control_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Stop(BaseException):
+        pass
+
+    control = Stop()
+    events: list[str] = []
+    temporary_paths: list[str] = []
+    source_entries: dict[str, bytes | None] = {
+        "/": None,
+        "/docs": None,
+        "/docs/file": b"x",
+    }
+    destination_entries: dict[str, bytes | None] = {"/": None, "/out": None}
+
+    def configure(filesystem: _TreeFileSystem) -> None:
+        async def get_file(
+            self: _TreeFileSystem,
+            remote: str,
+            local: str,
+            **kwargs: object,
+        ) -> NoReturn:
+            del self, remote, kwargs
+            temporary_paths.append(local)
+            Path(local).write_bytes(b"partial")  # noqa: ASYNC240
+            raise control
+
+        filesystem._get_file = MethodType(get_file, filesystem)  # type: ignore[method-assign]
+
+    def managed_source(
+        name: str,
+        entries: dict[str, bytes | None],
+        *,
+        configure_source: Callable[[_TreeFileSystem], None] | None = None,
+    ):
+        @asynccontextmanager
+        async def source():
+            filesystem = _TreeFileSystem(entries, [])
+            if configure_source is not None:
+                configure_source(filesystem)
+            try:
+                yield filesystem
+            finally:
+                events.append(f"{name} exit")
+
+        return source
+
+    real_unlink = Path.unlink
+
+    def recording_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        if "fsspec-cli-cp-recursive-" in path.name:
+            events.append("staging cleanup")
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", recording_unlink)
+    with pytest.raises(Stop) as caught:
+        _invoke(
+            ["-R", "source:/docs", "destination:/out/copy"],
+            {
+                "source": managed_source(
+                    "source",
+                    source_entries,
+                    configure_source=configure,
+                ),
+                "destination": managed_source(
+                    "destination",
+                    destination_entries,
+                ),
+            },
+        )
+
+    assert caught.value is control
+    assert events == ["staging cleanup", "destination exit", "source exit"]
     assert len(temporary_paths) == 1
     assert not Path(temporary_paths[0]).exists()
 

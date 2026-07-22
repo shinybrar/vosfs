@@ -926,6 +926,45 @@ def test_adapted_local_recursive_cp_profile_uses_native_temporary_storage(
     assert all(isinstance(fs.sync_fs, LocalFileSystem) for fs in source.filesystems)
 
 
+@pytest.mark.parametrize("entry_kind", ["symlink", "fifo"])
+def test_adapted_local_recursive_cp_rejects_real_link_and_special_entries(
+    tmp_path: Path,
+    entry_kind: str,
+) -> None:
+    source_root = tmp_path / "source"
+    destination_parent = tmp_path / "out"
+    source_root.mkdir()
+    destination_parent.mkdir()
+    if entry_kind == "symlink":
+        outside = tmp_path / "outside.txt"
+        outside.write_bytes(b"outside")
+        (source_root / "entry").symlink_to(outside)
+    else:
+        os.mkfifo(source_root / "entry")
+    source = _ProbedSource(
+        lambda: AsyncFileSystemWrapper(
+            LocalFileSystem(skip_instance_cache=True),
+            asynchronous=True,
+        )
+    )
+
+    result = _invoke_cp(
+        App({"local": source}),
+        [
+            "-R",
+            f"local:{_local_command_path(source_root)}",
+            f"local:{_local_command_path(destination_parent / 'copy')}",
+        ],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        f"cp: local:{_local_command_path(source_root)}: unsupported entry type\n",
+    )
+    assert not (destination_parent / "copy").exists()
+
+
 def test_adapted_memory_recursive_cp_profile_has_isolated_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
