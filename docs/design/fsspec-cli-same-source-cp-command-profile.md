@@ -75,7 +75,8 @@ Three or more operands are not a usage error; they select the
 which requires an existing destination directory.
 
 `cp -R` and `cp -r` select the separate implemented
-[recursive-copy profile](fsspec-cli-recursive-cp-rejection-profile.md).
+[recursive-copy profile](fsspec-cli-recursive-cp-rejection-profile.md) unless
+`capabilities.recursion.copy` is explicitly false.
 
 ## 3. Target resolution
 

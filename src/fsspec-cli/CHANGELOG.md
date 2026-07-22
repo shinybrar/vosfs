@@ -30,6 +30,9 @@
   ([#286](https://github.com/shinybrar/vosfs/issues/286)).
   All admitted routes use a bounded manifest, one-file host-local staging, and
   complete source and destination metadata verification.
+* **fsspec-cli:** add snapshotted application recursion capabilities. Recursive
+  copy defaults on; recursive removal defaults off. Capability policy is
+  explicit constructor input, not backend discovery or loaded configuration.
 
 ### Changed
 

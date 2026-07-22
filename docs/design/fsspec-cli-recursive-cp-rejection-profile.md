@@ -28,6 +28,19 @@ same bounded source manifest, one-file host-local staging, and complete
 source-entry verification. Same-source, Local-to-remote, remote-to-Local, and
 remote-to-remote routes therefore have one observable contract.
 
+`capabilities.recursion.copy` defaults to true when `capabilities`, `recursion`,
+or `copy` is omitted. Explicit false retains file-copy help wording and rejects
+the first valid `-R` or `-r` before recursive operand or path validation, source
+entry, filesystem work, staging, or mutation:
+
+```text
+cp: recursive copy disabled by application
+```
+
+That rejection has empty stdout and status `2`. Capabilities are validated and
+deep-snapshotted constructor input. They are not loaded configuration, a
+per-source registry, or a backend-discovery result.
+
 This profile replaces the prior rejection decision. Issue #286 implements and
 tests the complete contract through the public `App(sources).typer_app` seam.
 
@@ -93,6 +106,9 @@ source validation before filesystem work or mutation.
 
 Method presence or inheritance does not admit another source form. A future
 source form needs its own exact-version hermetic and isolated-wheel evidence.
+The backend-neutral public-`App` harness uses minimal native-async and explicitly
+wrapped synchronous adapters to guard the generic hook contract. It adds no
+matrix row and makes no all-fsspec claim.
 
 ## 4. Source-free preflight and lexical paths
 
@@ -120,6 +136,10 @@ semantic effect.
 Every row above exits `2`, writes empty stdout, emits exactly one
 `cp: <category>` line on stderr, and enters zero sources.
 
+When recursive copy is disabled, its application-policy diagnostic precedes
+recursive operand and path validation. An unsupported option that appears
+before the first `-R` or `-r` retains the existing first-option diagnostic.
+
 ## 5. Acquisition, source validation, and target resolution
 
 After preflight, source acquisition follows
@@ -139,11 +159,10 @@ The command then:
    source when both operands use the same configured name.
 
 Distinct configured names remain cross-source even if their yielded objects,
-classes, or protocols match. If two names yield the identical filesystem
-object, the same exact-path and destination-inside-source guards also apply as
-a safety check. Namespace aliasing through distinct filesystem instances is
-host configuration outside the observable source seam and carries no
-snapshot, isolation, or alias-detection claim.
+classes, or protocols match. Production does not inspect object identity.
+Namespace aliasing through distinct configured names is host configuration
+outside the observable source seam and carries no snapshot, isolation, or
+alias-detection claim.
 
 Every failure in this section occurs before mutation. Existing destination
 entries outside the resolved copied subtree are retained and excluded from the
@@ -203,6 +222,13 @@ Mutation is serial and deterministic:
    staging file before advancing; and
 4. never call `_cp_file`, `_copy`, a destination download, a public sync
    facade, retry, concurrent transfer, or source deletion.
+
+One private frozen `_RecursiveCopy` owns target resolution, destination
+preflight, transfer, mutation checks, source revalidation, and destination
+proof. Its only command entry is `run()`. It stores only the command, two
+operands, and invocation-owned source and destination filesystems; phase state
+remains local. Generic walk/materialization helpers and their immutable results
+remain module-level.
 
 Same-source copies deliberately use the same host-local relay as cross-source
 copies. At most one file's bytes occupy command-owned staging. Temporary paths
@@ -411,6 +437,14 @@ A later evidence update may promote a row only after hermetic tests through
   facades, retries, deletion, and destination downloads; and
 - adapted Local and Memory plus a fully mocked native `vosfs` transport on the
   supported Python/Linux/macOS matrix.
+
+The public-`App` evidence also covers missing, file, and link resolved parents;
+file and link existing resolved roots; mocked native `vosfs` LinkNodes; real
+Local symlink and special entries; source mutation before upload; staging
+cleanup before reverse source exits during escaping control flow; and explicit
+forbidden-call assertions. The supplemental backend-neutral harness covers
+native async-generator walks, awaitables resolving sync iterators, arbitrary
+names and metadata, and stable pre-mutation read or missing-operation failures.
 
 The isolated-wheel gate MUST build the `fsspec-cli` wheel and source
 distribution plus the `vosfs` wheel, install them outside the workspace with
