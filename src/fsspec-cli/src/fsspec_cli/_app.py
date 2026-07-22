@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Protocol, TypeAlias, TypedDict
 
 import typer
 from fsspec import AbstractFileSystem
@@ -39,6 +40,19 @@ AsyncFilesystemSource: TypeAlias = Callable[
 ]
 
 
+class RecursionCapabilities(TypedDict, total=False):
+    """Application policy for recursive core commands."""
+
+    copy: bool
+    remove: bool
+
+
+class AppCapabilities(TypedDict, total=False):
+    """Application-level core command policy."""
+
+    recursion: RecursionCapabilities
+
+
 class CommandExtension(Protocol):
     """One opt-in command registration against snapshotted sources."""
 
@@ -60,6 +74,42 @@ _COMMAND_CONTEXT = {
     "allow_extra_args": True,
     "ignore_unknown_options": True,
 }
+
+
+@dataclass(frozen=True)
+class _Capabilities:
+    recursive_copy: bool = True
+    recursive_remove: bool = False
+
+
+def _snapshot_capabilities(capabilities: AppCapabilities | None) -> _Capabilities:
+    if capabilities is None:
+        return _Capabilities()
+    if not isinstance(capabilities, Mapping):
+        msg = "capabilities must be a mapping"
+        raise TypeError(msg)
+    for name in capabilities:
+        if name != "recursion":
+            msg = f"capabilities.{name}: unknown capability"
+            raise ValueError(msg)
+
+    recursion = capabilities.get("recursion", {})
+    if not isinstance(recursion, Mapping):
+        msg = "capabilities.recursion must be a mapping"
+        raise TypeError(msg)
+    for name in recursion:
+        if name not in {"copy", "remove"}:
+            msg = f"capabilities.recursion.{name}: unknown capability"
+            raise ValueError(msg)
+    for name in ("copy", "remove"):
+        if name in recursion and type(recursion[name]) is not bool:
+            msg = f"capabilities.recursion.{name} must be a bool"
+            raise TypeError(msg)
+    return _Capabilities(
+        recursive_copy=recursion.get("copy", True),
+        recursive_remove=recursion.get("remove", False),
+    )
+
 
 # Commands that render their raw arguments without acquiring a source.
 _SOURCE_FREE_COMMANDS: tuple[tuple[str, str, _SourceFreeRunner], ...] = (
@@ -151,6 +201,7 @@ class App:
         self,
         sources: Mapping[str, AsyncFilesystemSource],
         *,
+        capabilities: AppCapabilities | None = None,
         extensions: Sequence[CommandExtension] = (),
     ) -> None:
         """Snapshot sources and register the requested command surface."""
@@ -160,6 +211,7 @@ class App:
             raise ValueError(msg)
         for name in self._sources:
             _validate_source_name(name)
+        self._capabilities = _snapshot_capabilities(capabilities)
 
         self.typer_app = typer.Typer(add_completion=False)
         self._register_commands()
@@ -173,7 +225,23 @@ class App:
 
         for name, help_text, source_free_runner in _SOURCE_FREE_COMMANDS:
             self._register_source_free(name, help_text, source_free_runner)
-        for command in _ASYNC_COMMANDS:
+        for registered_command in _ASYNC_COMMANDS:
+            command = registered_command
+            if registered_command[0] == "cp":
+                help_text = (
+                    "Copy files or one directory with -R or -r"
+                    if self._capabilities.recursive_copy
+                    else "Copy a file (no recursion)"
+                )
+                command = (
+                    registered_command[0],
+                    help_text,
+                    partial(
+                        _run_cp,
+                        recursive_enabled=self._capabilities.recursive_copy,
+                    ),
+                    registered_command[3],
+                )
             _register_async_command(
                 self.typer_app,
                 self._sources,

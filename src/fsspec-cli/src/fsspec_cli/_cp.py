@@ -583,11 +583,38 @@ def _render_failure(  # noqa: C901 - stable diagnostic categories.
         _render_backend_failure(command, failure.operand, failure.backend_error)
 
 
+def _reject_disabled_recursive_copy(
+    raw_arguments: tuple[str, ...],
+    *,
+    recursive_enabled: bool,
+) -> None:
+    if recursive_enabled:
+        return
+    options_active = True
+    for argument in raw_arguments:
+        if options_active and argument == "--":
+            options_active = False
+        elif options_active and argument in {"-R", "-r"}:
+            typer.echo(
+                "cp: recursive copy disabled by application",
+                err=True,
+            )
+            raise typer.Exit(2)
+        elif options_active and argument.startswith("-") and argument != "-":
+            break
+
+
 async def _run_cp(
     command: str,
     raw_arguments: tuple[str, ...],
     sources: Mapping[str, AsyncFilesystemSource],
+    *,
+    recursive_enabled: bool = True,
 ) -> None:
+    _reject_disabled_recursive_copy(
+        raw_arguments,
+        recursive_enabled=recursive_enabled,
+    )
     plan = _preflight(command, raw_arguments, sources)
     if plan.recursive:
         await _run_recursive_cp(
