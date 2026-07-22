@@ -1082,6 +1082,82 @@ def test_recursive_cp_cleans_staging_before_reverse_exits_during_control_flow(
     assert not Path(temporary_paths[0]).exists()
 
 
+def test_recursive_cp_passes_operation_failure_to_reverse_exits_after_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operation_error = OSError("download")
+    events: list[str] = []
+    exit_calls: list[tuple[str, BaseException]] = []
+    source_entries: dict[str, bytes | None] = {
+        "/": None,
+        "/docs": None,
+        "/docs/file": b"x",
+    }
+    destination_entries: dict[str, bytes | None] = {"/": None, "/out": None}
+
+    def configure(filesystem: _TreeFileSystem) -> None:
+        async def get_file(
+            self: _TreeFileSystem,
+            remote: str,
+            local: str,
+            **kwargs: object,
+        ) -> NoReturn:
+            del self, remote, local, kwargs
+            raise operation_error
+
+        filesystem._get_file = MethodType(get_file, filesystem)  # type: ignore[method-assign]
+
+    def managed_source(
+        name: str,
+        entries: dict[str, bytes | None],
+        *,
+        configure_source: Callable[[_TreeFileSystem], None] | None = None,
+    ) -> object:
+        @asynccontextmanager
+        async def source() -> AsyncIterator[_TreeFileSystem]:
+            filesystem = _TreeFileSystem(entries, [])
+            if configure_source is not None:
+                configure_source(filesystem)
+            try:
+                yield filesystem
+            except BaseException as error:
+                exit_calls.append((name, error))
+                events.append(f"{name} exit")
+                raise
+
+        return source
+
+    real_unlink = Path.unlink
+
+    def recording_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        if "fsspec-cli-cp-recursive-" in path.name:
+            events.append("staging cleanup")
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", recording_unlink)
+    result = _invoke(
+        ["-R", "source:/docs", "destination:/out/copy"],
+        {
+            "source": managed_source(
+                "source",
+                source_entries,
+                configure_source=configure,
+            ),
+            "destination": managed_source("destination", destination_entries),
+        },
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: source:/docs: transfer failure; destination residue may remain\n",
+    )
+    assert events == ["staging cleanup", "destination exit", "source exit"]
+    assert [name for name, _ in exit_calls] == ["destination", "source"]
+    for _, error in exit_calls:
+        assert error is operation_error
+
+
 def test_recursive_cp_renders_not_a_directory_os_error_as_backend_failure() -> None:
     entries: dict[str, bytes | None] = {"/": None, "/docs": None, "/out": None}
     metadata = {"/docs": NotADirectoryError("backend-specific")}

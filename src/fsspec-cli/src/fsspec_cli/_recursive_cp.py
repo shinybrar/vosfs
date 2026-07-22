@@ -465,7 +465,12 @@ def _read_failure(operand: _MappedOperand, error: Exception) -> _Failure:
 
 def _staging_failure(source: _MappedOperand, error: Exception) -> _Failure:
     rendered_class = _render_diagnostic_value(type(error).__name__)
-    return _Failure(source, f"staging failure ({rendered_class})", residue=True)
+    return _Failure(
+        source,
+        f"staging failure ({rendered_class})",
+        error=error,
+        residue=True,
+    )
 
 
 async def _optional_info(
@@ -523,10 +528,10 @@ def _classify_existing(  # noqa: PLR0911 - stable metadata categories.
         return _ManifestEntry("", path, kind, None, ()), None
     try:
         entry = _entry("", path, info)
-    except _UnsupportedEntryError:
-        return None, _Failure(operand, "unsupported entry type")
-    except _IncompatibleResultError:
-        return None, _Failure(operand, "incompatible result")
+    except _UnsupportedEntryError as error:
+        return None, _Failure(operand, "unsupported entry type", error=error)
+    except _IncompatibleResultError as error:
+        return None, _Failure(operand, "incompatible result", error=error)
     if expected is not None and entry.kind != expected:
         return None, _Failure(operand, "destination type conflict")
     return entry, None
@@ -536,7 +541,11 @@ def _destination_path(root: str, relative: str) -> str:
     return root if not relative else _child_path(root, relative)
 
 
-def _cleanup_staging(command: str, source: _MappedOperand, path: str) -> bool:
+def _cleanup_staging(
+    command: str,
+    source: _MappedOperand,
+    path: str,
+) -> Exception | None:
     try:
         Path(path).unlink(missing_ok=True)
     except Exception as error:  # noqa: BLE001 - diagnostic boundary.
@@ -548,8 +557,8 @@ def _cleanup_staging(command: str, source: _MappedOperand, path: str) -> bool:
             f"({rendered_class}); host staging residue may remain; "
             "destination residue may remain",
         )
-        return False
-    return True
+        return error
+    return None
 
 
 def _cleanup_under_control(command: str, source: _MappedOperand, path: str) -> None:
@@ -718,10 +727,11 @@ class _RecursiveCopy:
                         source_entry.path,
                         temporary,
                     )
-                except Exception:  # noqa: BLE001 - stable transfer category.
+                except Exception as error:  # noqa: BLE001 - stable transfer category.
                     failure = _Failure(
                         self.source,
                         "transfer failure",
+                        error=error,
                         residue=True,
                     )
 
@@ -747,10 +757,11 @@ class _RecursiveCopy:
                         destination_path,
                         mode="overwrite",
                     )
-                except Exception:  # noqa: BLE001 - stable mutation category.
+                except Exception as error:  # noqa: BLE001 - stable mutation category.
                     failure = _Failure(
                         self.destination,
                         "mutation failure",
+                        error=error,
                         residue=True,
                     )
         except BaseException:
@@ -763,15 +774,15 @@ class _RecursiveCopy:
             except BaseException:
                 _cleanup_under_control(self.command, self.source, temporary)
                 raise
-        cleanup_succeeded = _cleanup_staging(
+        cleanup_error = _cleanup_staging(
             self.command,
             self.source,
             temporary,
         )
         if failure is not None:
             return replace(failure, rendered=True)
-        if not cleanup_succeeded:
-            return _Failure(self.source, rendered=True)
+        if cleanup_error is not None:
+            return _Failure(self.source, error=cleanup_error, rendered=True)
         return None
 
     async def _mutate(
@@ -791,10 +802,11 @@ class _RecursiveCopy:
                     _destination_path(root, entry.relative),
                     create_parents=False,
                 )
-            except Exception:  # noqa: BLE001, PERF203 - stable mutation category.
+            except Exception as error:  # noqa: BLE001, PERF203 - stable mutation category.
                 return _Failure(
                     self.destination,
                     "mutation failure",
+                    error=error,
                     residue=True,
                 )
 
@@ -821,10 +833,11 @@ class _RecursiveCopy:
                 self.source.path,
                 current_info,
             )
-        except Exception:  # noqa: BLE001 - stable revalidation category.
+        except Exception as error:  # noqa: BLE001 - stable revalidation category.
             return _Failure(
                 self.source,
                 "source revalidation failure",
+                error=error,
                 residue=True,
             )
         if current != frozen:
@@ -858,10 +871,11 @@ class _RecursiveCopy:
                         "verification failure",
                         residue=True,
                     )
-        except Exception:  # noqa: BLE001 - stable verification category.
+        except Exception as error:  # noqa: BLE001 - stable verification category.
             return _Failure(
                 self.destination,
                 "verification failure",
+                error=error,
                 residue=True,
             )
         return None
@@ -889,15 +903,16 @@ class _RecursiveCopy:
                 self.source.path,
                 source_info,
             )
-        except _UnsupportedEntryError:
-            return _Failure(self.source, "unsupported entry type")
-        except _EntryLimitError:
+        except _UnsupportedEntryError as error:
+            return _Failure(self.source, "unsupported entry type", error=error)
+        except _EntryLimitError as error:
             return _Failure(
                 self.source,
                 f"source tree exceeds {_MAX_ENTRIES} entries",
+                error=error,
             )
-        except _IncompatibleResultError:
-            return _Failure(self.source, "incompatible result")
+        except _IncompatibleResultError as error:
+            return _Failure(self.source, "incompatible result", error=error)
         except Exception as error:  # noqa: BLE001 - classify walk boundary.
             return _read_failure(self.source, error)
 
