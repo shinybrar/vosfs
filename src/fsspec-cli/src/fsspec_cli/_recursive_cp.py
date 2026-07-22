@@ -268,12 +268,36 @@ def _walk_row(
     return _WalkRow(root, tuple(entries), tuple(directory_paths))
 
 
+def _accept_walk_row(
+    row: _WalkRow,
+    *,
+    rows: list[_WalkRow],
+    seen_roots: set[str],
+    expected_roots: set[str],
+    seen_relatives: set[str],
+) -> None:
+    relatives = {entry.relative for entry in row.entries}
+    if (
+        row.root in seen_roots
+        or row.root not in expected_roots
+        or seen_relatives.intersection(relatives)
+    ):
+        raise _IncompatibleResultError
+    seen_roots.add(row.root)
+    expected_roots.update(row.directory_paths)
+    seen_relatives.update(relatives)
+    rows.append(row)
+
+
 def _materialize_sync(
     iterator: Iterator[object],
     source_path: str,
 ) -> _Rows | _WorkerError:
     values: list[_WalkRow] = []
     count = 1
+    seen_roots: set[str] = set()
+    expected_roots = {source_path}
+    seen_relatives = {""}
     error: BaseException | None = None
     try:
         for value in iterator:
@@ -282,7 +306,13 @@ def _materialize_sync(
                 value,
                 entry_capacity=_MAX_ENTRIES - count,
             )
-            values.append(row)
+            _accept_walk_row(
+                row,
+                rows=values,
+                seen_roots=seen_roots,
+                expected_roots=expected_roots,
+                seen_relatives=seen_relatives,
+            )
             count += len(row.entries)
     except BaseException as caught:  # noqa: BLE001 - return across task as data.
         error = caught
@@ -332,6 +362,9 @@ async def _async_rows(
 ) -> tuple[_WalkRow, ...]:
     values: list[_WalkRow] = []
     count = 1
+    seen_roots: set[str] = set()
+    expected_roots = {source_path}
+    seen_relatives = {""}
     try:
         while True:
             try:
@@ -343,7 +376,13 @@ async def _async_rows(
                 value,
                 entry_capacity=_MAX_ENTRIES - count,
             )
-            values.append(row)
+            _accept_walk_row(
+                row,
+                rows=values,
+                seen_roots=seen_roots,
+                expected_roots=expected_roots,
+                seen_relatives=seen_relatives,
+            )
             count += len(row.entries)
     except BaseException:
         with suppress(BaseException):

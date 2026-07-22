@@ -217,6 +217,28 @@ class _MalformedOversizedWalkAdapter(_NativeAdapter):
         return generate()
 
 
+class _DuplicateThenFailureWalkAdapter(_NativeAdapter):
+    def _walk(
+        self,
+        path: str,
+        *,
+        detail: bool,
+        on_error: str,
+        **kwargs: object,
+    ) -> AsyncIterator[object]:
+        del kwargs
+        self.events.append(("walk", path, detail, on_error))
+
+        async def generate() -> AsyncIterator[object]:
+            row = (path, {}, {})
+            yield row
+            yield row
+            message = "later backend failure"
+            raise OSError(message)
+
+        return generate()
+
+
 class _SyncAdapter(AbstractFileSystem):
     cachable = False
 
@@ -443,6 +465,31 @@ def test_walk_validation_precedes_aggregate_limit_during_consumption() -> None:
     assert not [
         event for event in destination_events if event[0] in {"mkdir", "put_file"}
     ]
+
+
+def test_duplicate_walk_root_precedes_later_iterator_failure() -> None:
+    source_entries: dict[str, bytes | None] = {"/": None, "/dataset": None}
+    destination_entries: dict[str, bytes | None] = {"/": None, "/landing": None}
+
+    @asynccontextmanager
+    async def source():
+        yield _DuplicateThenFailureWalkAdapter(source_entries, [])
+
+    result = CliRunner().invoke(
+        App(
+            {
+                "source": source,
+                "destination": _native_source(destination_entries, []),
+            }
+        ).typer_app,
+        ["cp", "-R", "source:/dataset", "destination:/landing/copy"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: source:/dataset: incompatible result\n",
+    )
 
 
 @pytest.mark.parametrize(
