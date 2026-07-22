@@ -239,6 +239,7 @@ def main() -> None:
                 tests / "test_rmdir.py",
                 tests / "test_mkdir.py",
                 tests / "test_rm.py",
+                tests / "test_recursive_rm.py",
                 tests / "test_cp.py",
                 tests / "test_recursive_cp.py",
                 tests / "test_recursive_cp_adapters.py",
@@ -270,6 +271,11 @@ def main() -> None:
                 / (
                     "test_vosfs_command_matrix.py::"
                     "test_native_vosfs_rm_d_profile_uses_only_mocked_transport"
+                ),
+                tests
+                / (
+                    "test_vosfs_command_matrix.py::"
+                    "test_native_vosfs_recursive_rm_profile_uses_only_mocked_transport"
                 ),
             ],
             cwd=root / "vosfs-tests",

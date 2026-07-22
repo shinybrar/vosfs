@@ -242,6 +242,21 @@ class App:
                     ),
                     registered_command[3],
                 )
+            elif registered_command[0] == "rm":
+                help_text = (
+                    "Remove files or directories with guarded -R or -r"
+                    if self._capabilities.recursive_remove
+                    else "Remove files; -d removes empty directories"
+                )
+                command = (
+                    registered_command[0],
+                    help_text,
+                    partial(
+                        _run_rm,
+                        recursive_enabled=self._capabilities.recursive_remove,
+                    ),
+                    registered_command[3],
+                )
             _register_async_command(
                 self.typer_app,
                 self._sources,

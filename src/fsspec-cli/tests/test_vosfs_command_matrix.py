@@ -22,6 +22,7 @@ from ._matrix_support import (
     _exercise_locked_profile,
     _exercise_long_listing_profile,
     _exercise_mkdir_p_locked_profile,
+    _exercise_recursive_rm_profile,
     _exercise_rm_force_profile,
     _exercise_rm_locked_profile,
     _exercise_rm_verbose_profile,
@@ -456,6 +457,85 @@ class _UnlinkMockTransport(httpx.MockTransport):
         await super().aclose()
 
 
+class _RecursiveRmMockTransport(httpx.MockTransport):
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str]] = []
+        self.closed = False
+        self.nodes = {
+            "/docs": "container",
+            "/docs/empty": "container",
+            "/docs/nested": "container",
+            "/docs/nested/a.txt": "data",
+            "/docs/z.txt": "data",
+        }
+        super().__init__(self._respond)
+
+    def _node_path(self, url_path: str) -> str:
+        prefix = "/arc/nodes"
+        if not url_path.startswith(prefix):
+            message = f"unexpected recursive-rm url: {url_path!r}"
+            raise AssertionError(message)
+        return url_path[len(prefix) :] or "/"
+
+    def _node_xml(self, path: str) -> bytes:
+        node_type = self.nodes[path]
+        xsi_type = "vos:ContainerNode" if node_type == "container" else "vos:DataNode"
+        children = []
+        if node_type == "container":
+            prefix = f"{path}/"
+            for child in sorted(self.nodes):
+                if child.startswith(prefix) and "/" not in child[len(prefix) :]:
+                    child_type = (
+                        "vos:ContainerNode"
+                        if self.nodes[child] == "container"
+                        else "vos:DataNode"
+                    )
+                    children.append(
+                        f'<vos:node xsi:type="{child_type}" '
+                        f'uri="vos://{_AUTHORITY}{child}"><vos:properties/>'
+                        + ("<vos:nodes/>" if child_type == "vos:ContainerNode" else "")
+                        + "</vos:node>"
+                    )
+        nodes = (
+            f"<vos:nodes>{''.join(children)}</vos:nodes>"
+            if node_type == "container"
+            else ""
+        )
+        return f"""<vos:node
+    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:type="{xsi_type}" uri="vos://{_AUTHORITY}{path}">
+  <vos:properties/>{nodes}
+</vos:node>
+""".encode()
+
+    async def _respond(self, request: httpx.Request) -> httpx.Response:
+        call = (request.method, request.url.path)
+        self.requests.append(call)
+        if call == ("GET", "/arc/capabilities"):
+            return httpx.Response(200, content=_CAPABILITIES)
+        if call[1].startswith("/arc/nodes"):
+            path = self._node_path(call[1])
+            if call[0] == "GET":
+                if path not in self.nodes:
+                    return httpx.Response(404, text="not found")
+                return httpx.Response(200, content=self._node_xml(path))
+            if call[0] == "DELETE":
+                prefix = f"{path}/"
+                if path not in self.nodes or any(
+                    child.startswith(prefix) for child in self.nodes
+                ):
+                    return httpx.Response(409, text="not empty")
+                del self.nodes[path]
+                return httpx.Response(200, text="deleted")
+        message = f"unplanned mocked request: {call!r}"
+        raise AssertionError(message)
+
+    async def aclose(self) -> None:
+        self.closed = True
+        await super().aclose()
+
+
 async def _close_vosfs(filesystem: VOSpaceFileSystem) -> None:
     await filesystem.aclose()
 
@@ -771,6 +851,34 @@ def test_native_vosfs_base_rm_profile_uses_only_mocked_transport() -> None:
     assert "/docs/guide.md" not in transports[1].nodes
     assert "/docs/.hidden" not in transports[1].nodes
     assert all(transport.closed for transport in transports)
+
+
+def test_native_vosfs_recursive_rm_profile_uses_only_mocked_transport() -> None:
+    transports: list[_RecursiveRmMockTransport] = []
+
+    def make_filesystem() -> VOSpaceFileSystem:
+        transport = _RecursiveRmMockTransport()
+        transports.append(transport)
+        return VOSpaceFileSystem(
+            _BASE_URL,
+            transport=transport,
+            asynchronous=True,
+            skip_instance_cache=True,
+            trust_env=False,
+        )
+
+    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+
+    _exercise_recursive_rm_profile("vos", source, "/docs")
+
+    assert all(isinstance(fs, VOSpaceFileSystem) for fs in source.filesystems)
+    assert transports[0].nodes == {}
+    assert all(transport.closed for transport in transports)
+    assert not any(
+        "async-delete" in path or "synctrans" in path
+        for transport in transports
+        for _method, path in transport.requests
+    )
 
 
 class _CpMockTransport(httpx.MockTransport):
