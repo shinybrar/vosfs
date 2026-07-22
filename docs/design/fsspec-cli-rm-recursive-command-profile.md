@@ -235,9 +235,9 @@ The command owns at most one in-flight filesystem-hook task. On escaping
 `BaseException` control flow, it stops scheduling new work, shields and drains
 that current hook before source cleanup, and then propagates the original
 control-flow object unchanged. No post-check, later manifest entry, later
-operand, diagnostic, or normal output is scheduled after interruption. This is
-one backend-neutral recursive-`rm` delta from ADR 0003's tree-only drain
-exception, not a backend worker, timeout, retry, or concurrent deletion policy.
+operand, diagnostic, or normal output is scheduled after interruption. This
+applies ADR 0003's current-operation drain exception to recursive `rm`; it is
+not a backend worker, timeout, retry, or concurrent deletion policy.
 
 The observable state rules are:
 
