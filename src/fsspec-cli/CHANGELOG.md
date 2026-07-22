@@ -44,6 +44,13 @@
 * Parameterize private command orchestration with concrete command labels
   without adding a supported command or public runner.
 
+## [0.5.0](https://github.com/shinybrar/vosfs/compare/fsspec-cli-v0.4.0...fsspec-cli-v0.5.0) (2026-07-22)
+
+
+### Features
+
+* **fsspec-cli:** add fsspec-compatible recursive operations ([#294](https://github.com/shinybrar/vosfs/issues/294)) ([9e5314d](https://github.com/shinybrar/vosfs/commit/9e5314db4706894d31d54d245392f43b9556cfbb))
+
 ## [0.4.0](https://github.com/shinybrar/vosfs/compare/fsspec-cli-v0.3.0...fsspec-cli-v0.4.0) (2026-07-21)
 
 
