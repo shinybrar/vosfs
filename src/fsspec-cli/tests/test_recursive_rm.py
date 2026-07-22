@@ -64,6 +64,36 @@ def test_recursive_rm_disabled_is_policy_first_and_source_free(
     assert source_calls == 0
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["-vf", "-R", "source:/dir"],
+        ["-fv", "-r", "source:/dir"],
+        ["-ffv", "-R", "source:/dir"],
+        ["-f", "-vf", "-r", "source:/dir"],
+    ],
+)
+def test_recursive_rm_disabled_rejects_after_grouped_valid_prefixes(
+    arguments: list[str],
+) -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
+
+    result = _invoke_recursive_rm(
+        arguments,
+        sources={"source": source},
+        enabled=False,
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "rm: recursive removal disabled by application\n",
+    )
+    assert source.call_count == 0
+    assert events == []
+
+
 @pytest.mark.parametrize("option", ["-R", "-r"])
 def test_recursive_rm_enabled_removes_a_complete_nested_manifest(option: str) -> None:
     events: list[tuple[object, ...]] = []

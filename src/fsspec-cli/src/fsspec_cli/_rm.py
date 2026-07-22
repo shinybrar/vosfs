@@ -82,7 +82,7 @@ def _reject_disabled_recursive_rm(
         ):
             typer.echo("rm: recursive removal disabled by application", err=True)
             raise typer.Exit(2)
-        if argument == "-v" or all(character == "f" for character in characters):
+        if characters and set(characters) <= {"f", "v"} and characters.count("v") <= 1:
             continue
         break
 
