@@ -6,22 +6,28 @@ Question: [Add the backend-specific extension seam](https://github.com/shinybrar
 
 ## Decision
 
-The sole stable v1 host seam is extended from `App(sources).typer_app` to:
+The current stable v1 host seam remains:
 
 ```python
 App(sources, *, extensions=[...]).typer_app
 ```
 
-Omitting `extensions` preserves the core command surface. `App` snapshots the
-source mapping, registers core commands first, then calls each selected
+[ADR 0002](0002-own-async-filesystems-per-invocation.md) now directs #288 to add
+application capabilities to that constructor for core command policy. That
+future parameter does not amend extension behavior. Omitting `extensions`
+preserves the core command surface. `App` snapshots the source mapping,
+registers core commands first, then calls each selected
 `CommandExtension.register(typer_app, sources)` with the same Typer app and an
-immutable view of that snapshot.
+immutable view of that snapshot. The extension register signature and
+registration order are unchanged; extensions will not receive the core
+capability configuration.
 
 An extension registers commands only. It adds no public runner, lifecycle
-policy, backend registry, capability metadata, or async invocation seam.
-Mapped-source extension commands use the existing internal command toolkit and
-invocation-owned source lifecycle. Each command detects its capability by
-calling it; backend type and protocol do not select commands or behavior.
+policy, backend registry, extension capability metadata, or async invocation
+seam. Mapped-source extension commands use the existing internal command
+toolkit and invocation-owned source lifecycle. Each extension command detects
+its required filesystem operation by calling it; backend type and protocol do
+not select extension commands or behavior.
 
 This decision amends only the exact `App(sources).typer_app` constructor wording
 in [ADR 0002](0002-own-async-filesystems-per-invocation.md) and
@@ -37,14 +43,16 @@ and status `1` without a traceback.
 
 - A string registry or entry-point discovery would add naming, loading, and
   conflict policy before another consumer exists.
-- Backend inspection or protocol dispatch would make core behavior depend on
-  backend identity instead of the called capability.
+- Backend inspection or protocol dispatch would make command behavior depend
+  on backend identity instead of explicit application policy or the called
+  extension operation.
 - A public async runner or lifecycle object would create a second host seam and
   contradict the invocation-owned lifecycle.
 
 ## Consequences
 
 - Hosts opt into backend-specific commands explicitly at app construction.
+- Core capability policy does not register or remove extension commands.
 - Third-party extension authors receive only Typer registration and immutable
   source configuration; source instances remain invocation-owned.
 - Each extension command owns a compatibility profile and tested-source matrix.
