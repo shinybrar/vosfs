@@ -35,7 +35,6 @@ utility exists as a command.
 | Disposition | Meaning |
 | --- | --- |
 | `admitted` | Shipped through `App(sources).typer_app` under a locked profile; matrix rows record evidence honestly. |
-| `profiled` | Locked positive command contract awaiting production implementation and qualifying matrix evidence. |
 | `rejected` | Deliberate source-free or runtime rejection with a locked rejection profile and negative evidence. |
 | `unavailable` | Architecture or capability forbids the utility; docs-only; no command stub. |
 | `deferred` | May be profiled later; docs-only until an exact capability profile exists. |
@@ -67,7 +66,7 @@ for source-form claims (`pass` / `fail` / `unsupported` / `unverified`).
 | Exact `rm -f` | `admitted` | [rm -f](fsspec-cli-rm-force-command-profile.md) | source rows; see audit |
 | Exact `rm -d` | `admitted` | [rm -d](fsspec-cli-rm-directory-command-profile.md) | source rows; see audit |
 | Exact `rm -v` | `admitted` | [rm -v](fsspec-cli-rm-verbose-command-profile.md) | source rows; see audit |
-| `rm -R` / `rm -r` | `rejected` | [rm recursive rejection](fsspec-cli-rm-recursive-rejection-profile.md) | preflight `unsupported` |
+| Capability-enabled `rm -R` / `rm -r` | `admitted` | [guarded recursive rm](fsspec-cli-rm-recursive-command-profile.md) | host-qualified source rows only; default remains source-free rejection |
 | `rm -i` and unprofiled combinations | `rejected` | base / force / directory / verbose rm profiles | preflight `unsupported` |
 | Same-source two-operand file `cp` | `admitted` | [same-source cp](fsspec-cli-same-source-cp-command-profile.md) | source rows; see audit |
 | Cross-source two-operand file `cp` | `admitted` | [cross-source cp](fsspec-cli-cross-source-cp-command-profile.md) | source-pair rows |
