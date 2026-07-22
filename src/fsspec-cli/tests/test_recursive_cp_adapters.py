@@ -78,12 +78,14 @@ class _NativeAdapter(AsyncFileSystem):
         *,
         walk_form: Literal["async-generator", "awaitable"] = "async-generator",
         walk_failure: Exception | None = None,
+        mutate_yielded_metadata: bool = False,
     ) -> None:
         super().__init__(asynchronous=True)
         self.entries = entries
         self.events = events
         self.walk_form = walk_form
         self.walk_failure = walk_failure
+        self.mutate_yielded_metadata = mutate_yielded_metadata
 
     async def _info(self, path: str, **kwargs: object) -> dict[str, object]:
         del kwargs
@@ -113,6 +115,11 @@ class _NativeAdapter(AsyncFileSystem):
         async def generate() -> AsyncIterator[object]:
             for row in rows:
                 yield row
+                if self.mutate_yielded_metadata:
+                    _root, _directories, files = row
+                    for info in files.values():
+                        assert isinstance(info, dict)
+                        info["type"] = "directory"
 
         return generate()
 
@@ -171,6 +178,43 @@ class _NativeAdapter(AsyncFileSystem):
 
 class _MissingWalkAdapter(_NativeAdapter):
     _walk = None  # type: ignore[assignment]
+
+
+class _MalformedOversizedWalkAdapter(_NativeAdapter):
+    def _walk(
+        self,
+        path: str,
+        *,
+        detail: bool,
+        on_error: str,
+        **kwargs: object,
+    ) -> AsyncIterator[object]:
+        del kwargs
+        self.events.append(("walk", path, detail, on_error))
+
+        async def generate() -> AsyncIterator[object]:
+            files = {
+                "bad": {
+                    "name": f"{path}/bad",
+                    "type": "file",
+                    "size": True,
+                    "islink": False,
+                }
+            }
+            files.update(
+                {
+                    f"file-{index}": {
+                        "name": f"{path}/file-{index}",
+                        "type": "file",
+                        "size": 0,
+                        "islink": False,
+                    }
+                    for index in range(9_999)
+                }
+            )
+            yield (path, {}, files)
+
+        return generate()
 
 
 class _SyncAdapter(AbstractFileSystem):
@@ -239,13 +283,14 @@ class _SyncAdapter(AbstractFileSystem):
     rm = _forbidden
 
 
-def _native_source(
+def _native_source(  # noqa: PLR0913 - explicit adapter failure controls.
     entries: dict[str, bytes | None],
     events: list[tuple[object, ...]],
     *,
     walk_form: Literal["async-generator", "awaitable"] = "async-generator",
     walk_failure: Exception | None = None,
     missing_walk: bool = False,
+    mutate_yielded_metadata: bool = False,
 ):
     @asynccontextmanager
     async def source():
@@ -257,6 +302,7 @@ def _native_source(
                 events,
                 walk_form=walk_form,
                 walk_failure=walk_failure,
+                mutate_yielded_metadata=mutate_yielded_metadata,
             )
         )
         yield adapter
@@ -339,6 +385,64 @@ def test_backend_neutral_harness_accepts_awaitable_sync_iterator_walk() -> None:
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     assert destination_entries["/landing/copy/file.bin"] == b"payload"
+
+
+def test_async_walk_rows_are_frozen_before_requesting_the_next_row() -> None:
+    source_entries: dict[str, bytes | None] = {
+        "/": None,
+        "/dataset": None,
+        "/dataset/file.bin": b"payload",
+    }
+    destination_entries: dict[str, bytes | None] = {"/": None, "/landing": None}
+
+    result = CliRunner().invoke(
+        App(
+            {
+                "source": _native_source(
+                    source_entries,
+                    [],
+                    mutate_yielded_metadata=True,
+                ),
+                "destination": _native_source(destination_entries, []),
+            }
+        ).typer_app,
+        ["cp", "-R", "source:/dataset", "destination:/landing/copy"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert destination_entries["/landing/copy/file.bin"] == b"payload"
+
+
+def test_walk_validation_precedes_aggregate_limit_during_consumption() -> None:
+    source_entries: dict[str, bytes | None] = {"/": None, "/dataset": None}
+    destination_entries: dict[str, bytes | None] = {"/": None, "/landing": None}
+    destination_events: list[tuple[object, ...]] = []
+
+    @asynccontextmanager
+    async def source():
+        yield _MalformedOversizedWalkAdapter(source_entries, [])
+
+    result = CliRunner().invoke(
+        App(
+            {
+                "source": source,
+                "destination": _native_source(
+                    destination_entries,
+                    destination_events,
+                ),
+            }
+        ).typer_app,
+        ["cp", "-R", "source:/dataset", "destination:/landing/copy"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: source:/dataset: incompatible result\n",
+    )
+    assert not [
+        event for event in destination_events if event[0] in {"mkdir", "put_file"}
+    ]
 
 
 @pytest.mark.parametrize(

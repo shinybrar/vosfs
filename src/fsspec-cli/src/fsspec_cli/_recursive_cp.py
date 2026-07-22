@@ -62,6 +62,13 @@ class _Manifest:
 
 
 @dataclass(frozen=True)
+class _WalkRow:
+    root: str
+    entries: tuple[_ManifestEntry, ...]
+    directory_paths: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class _Failure:
     operand: _MappedOperand
     category: str | None = None
@@ -72,7 +79,7 @@ class _Failure:
 
 @dataclass(frozen=True)
 class _Rows:
-    values: tuple[object, ...]
+    values: tuple[_WalkRow, ...]
 
 
 @dataclass(frozen=True)
@@ -206,29 +213,77 @@ def _entry(
     return _ManifestEntry(relative, path, kind, size, _tokens(typed_info))
 
 
-def _raw_row_entry_count(value: object) -> int | None:
+def _walk_row(
+    source_path: str,
+    value: object,
+    *,
+    entry_capacity: int,
+) -> _WalkRow:
     if type(value) is not tuple or len(value) != _WALK_ROW_LENGTH:
-        return None
-    _root, directories, files = value
-    if not isinstance(directories, Mapping) or not isinstance(files, Mapping):
-        return None
-    return len(directories) + len(files)
+        raise _IncompatibleResultError
+    root, directories, files = value
+    if (
+        type(root) is not str
+        or not root.startswith("/")
+        or root.rstrip("/") != root
+        or "//" in root
+        or "\0" in root
+        or "\n" in root
+        or "\r" in root
+        or _has_dot_segment(root)
+        or not isinstance(directories, Mapping)
+        or not isinstance(files, Mapping)
+    ):
+        raise _IncompatibleResultError
+
+    entries: list[_ManifestEntry] = []
+    directory_paths: list[str] = []
+    child_names: set[str] = set()
+    for collection, kind in ((directories, "directory"), (files, "file")):
+        for name, info in collection.items():
+            if (
+                type(name) is not str
+                or not name
+                or name in {".", ".."}
+                or "/" in name
+                or "\0" in name
+                or "\n" in name
+                or "\r" in name
+                or name in child_names
+            ):
+                raise _IncompatibleResultError
+            child_names.add(name)
+            path = _child_path(root, name)
+            entry = _entry(
+                _relative_path(source_path, path),
+                path,
+                info,
+                expected_kind=kind,
+            )
+            entries.append(entry)
+            if len(entries) > entry_capacity:
+                raise _EntryLimitError
+            if kind == "directory":
+                directory_paths.append(path)
+    return _WalkRow(root, tuple(entries), tuple(directory_paths))
 
 
-def _materialize_sync(iterator: Iterator[object]) -> _Rows | _WorkerError:
-    values: list[object] = []
+def _materialize_sync(
+    iterator: Iterator[object],
+    source_path: str,
+) -> _Rows | _WorkerError:
+    values: list[_WalkRow] = []
     count = 1
     error: BaseException | None = None
     try:
         for value in iterator:
-            values.append(value)
-            increment = _raw_row_entry_count(value)
-            if increment is None:
-                break
-            count += increment
-            if count > _MAX_ENTRIES:
-                error = _EntryLimitError()
-                break
+            row = _walk_row(
+                source_path,
+                value,
+                entry_capacity=_MAX_ENTRIES - count,
+            )
+            values.append(row)
+            count += len(row.entries)
     except BaseException as caught:  # noqa: BLE001 - return across task as data.
         error = caught
     close = getattr(iterator, "close", None)
@@ -241,8 +296,13 @@ def _materialize_sync(iterator: Iterator[object]) -> _Rows | _WorkerError:
     return _WorkerError(error) if error is not None else _Rows(tuple(values))
 
 
-async def _sync_rows(iterator: Iterator[object]) -> tuple[object, ...]:
-    worker = asyncio.create_task(asyncio.to_thread(_materialize_sync, iterator))
+async def _sync_rows(
+    iterator: Iterator[object],
+    source_path: str,
+) -> tuple[_WalkRow, ...]:
+    worker = asyncio.create_task(
+        asyncio.to_thread(_materialize_sync, iterator, source_path)
+    )
     try:
         outcome = await asyncio.shield(worker)
     except BaseException:
@@ -266,8 +326,11 @@ async def _close_async_iterator(iterator: AsyncIterator[object]) -> None:
         await _await_current(result)
 
 
-async def _async_rows(iterator: AsyncIterator[object]) -> tuple[object, ...]:
-    values: list[object] = []
+async def _async_rows(
+    iterator: AsyncIterator[object],
+    source_path: str,
+) -> tuple[_WalkRow, ...]:
+    values: list[_WalkRow] = []
     count = 1
     try:
         while True:
@@ -275,13 +338,13 @@ async def _async_rows(iterator: AsyncIterator[object]) -> tuple[object, ...]:
                 value = await _await_current(anext(iterator))
             except StopAsyncIteration:
                 break
-            values.append(value)
-            increment = _raw_row_entry_count(value)
-            if increment is None:
-                break
-            count += increment
-            if count > _MAX_ENTRIES:
-                raise _EntryLimitError  # noqa: TRY301 - typed worker outcome.
+            row = _walk_row(
+                source_path,
+                value,
+                entry_capacity=_MAX_ENTRIES - count,
+            )
+            values.append(row)
+            count += len(row.entries)
     except BaseException:
         with suppress(BaseException):
             await _close_async_iterator(iterator)
@@ -290,16 +353,19 @@ async def _async_rows(iterator: AsyncIterator[object]) -> tuple[object, ...]:
     return tuple(values)
 
 
-async def _walk_rows(filesystem: AsyncFileSystem, path: str) -> tuple[object, ...]:
+async def _walk_rows(
+    filesystem: AsyncFileSystem,
+    path: str,
+) -> tuple[_WalkRow, ...]:
     method = getattr(filesystem, "_walk", None)
     if not callable(method):
         raise NotImplementedError
     result = method(path, detail=True, on_error="raise")
     if isinstance(result, AsyncIterator):
-        return await _async_rows(result)
+        return await _async_rows(result, path)
     if not inspect.isawaitable(result):
         raise _IncompatibleResultError
-    return await _sync_rows(await _resolve_sync_iterator(result))
+    return await _sync_rows(await _resolve_sync_iterator(result), path)
 
 
 def _child_path(root: str, name: str) -> str:
@@ -314,69 +380,24 @@ def _relative_path(root: str, path: str) -> str:
     return path[len(root) + 1 :] if root != "/" else path[1:]
 
 
-def _manifest_from_rows(  # noqa: C901 - exact manifest validation branches.
-    source_path: str,
-    source_info: object,
-    values: tuple[object, ...],
+def _manifest_from_rows(
+    root_entry: _ManifestEntry,
+    values: tuple[_WalkRow, ...],
 ) -> _Manifest:
-    root_entry = _entry("", source_path, source_info, expected_kind="directory")
     entries = {"": root_entry}
-    rows: dict[str, tuple[Mapping[object, object], Mapping[object, object]]] = {}
-    for value in values:
-        if type(value) is not tuple or len(value) != _WALK_ROW_LENGTH:
+    rows: dict[str, _WalkRow] = {}
+    for row in values:
+        if row.root in rows:
             raise _IncompatibleResultError
-        root, directories, files = value
-        if (
-            type(root) is not str
-            or not root.startswith("/")
-            or root.rstrip("/") != root
-            or "//" in root
-            or "\0" in root
-            or "\n" in root
-            or "\r" in root
-            or _has_dot_segment(root)
-            or not isinstance(directories, Mapping)
-            or not isinstance(files, Mapping)
-            or root in rows
-        ):
-            raise _IncompatibleResultError
-        rows[root] = (
-            cast("Mapping[object, object]", directories),
-            cast("Mapping[object, object]", files),
-        )
+        rows[row.root] = row
 
-    expected_roots = {source_path}
-    for root, (directories, files) in rows.items():
-        child_names: set[str] = set()
-        for collection, kind in ((directories, "directory"), (files, "file")):
-            for name, info in collection.items():
-                if (
-                    type(name) is not str
-                    or not name
-                    or name in {".", ".."}
-                    or "/" in name
-                    or "\0" in name
-                    or "\n" in name
-                    or "\r" in name
-                ):
-                    raise _IncompatibleResultError
-                if name in child_names:
-                    raise _IncompatibleResultError
-                child_names.add(name)
-                path = _child_path(root, name)
-                relative = _relative_path(source_path, path)
-                if relative in entries:
-                    raise _IncompatibleResultError
-                entries[relative] = _entry(
-                    relative,
-                    path,
-                    info,
-                    expected_kind=kind,
-                )
-                if kind == "directory":
-                    expected_roots.add(path)
-                if len(entries) > _MAX_ENTRIES:
-                    raise _EntryLimitError
+    expected_roots = {root_entry.path}
+    for row in rows.values():
+        for entry in row.entries:
+            if entry.relative in entries:
+                raise _IncompatibleResultError
+            entries[entry.relative] = entry
+        expected_roots.update(row.directory_paths)
     if set(rows) != expected_roots:
         raise _IncompatibleResultError
     return _Manifest(tuple(sorted(entries.values(), key=lambda item: item.relative)))
@@ -387,7 +408,8 @@ async def _manifest(
     path: str,
     source_info: object,
 ) -> _Manifest:
-    return _manifest_from_rows(path, source_info, await _walk_rows(filesystem, path))
+    root_entry = _entry("", path, source_info, expected_kind="directory")
+    return _manifest_from_rows(root_entry, await _walk_rows(filesystem, path))
 
 
 def _render_operand(command: str, operand: _MappedOperand, category: str) -> None:
