@@ -43,7 +43,7 @@ Changelog = "https://github.com/shinybrar/vosfs/blob/main/CHANGELOG.md"
 vos = "vosfs:VOSpaceFileSystem"
 
 [build-system]
-requires = ["uv_build>=0.11.29,<0.12.0"]
+requires = ["uv_build>=0.11.31,<0.12.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
@@ -55,7 +55,7 @@ dev = [
     "mkdocstrings-python>=2.0.5",
     "numpy>=1.26",
     "pandas>=2",
-    "pre-commit>=4.6.0",
+    "pre-commit>=4.6.1",
     "pyarrow>=15",
     "pymarkdownlnt>=0.9.39",
     "pytest>=9.1.1",
@@ -63,9 +63,9 @@ dev = [
     "pytest-cov>=7.1.0",
     "respx>=0.21",
     "ruff>=0.15.22",
-    "ty>=0.0.60",
+    "ty>=0.0.62",
     "zarr>=3 ; python_full_version >= '3.11'",
-    "zensical>=0.0.50",
+    "zensical>=0.0.51",
 ]
 [tool.pytest]
 addopts = [
