@@ -297,6 +297,13 @@ file, and leaves the destination unchanged. A destination `_info`
 expected absence, not failure; a missing resolved parent is the listed
 destination `not found` failure.
 
+Backend exceptions use the shared ADR 0005 taxonomy. `FileNotFoundError`,
+`FileExistsError`, `PermissionError`, `IsADirectoryError`,
+`NotADirectoryError`, and `NotImplementedError` render as `not found`,
+`file exists`, `permission denied`, `is a directory`, `not a directory`, and
+`unsupported operation`, respectively. Only exceptions outside that taxonomy
+use `backend failure (<class>): <message>`.
+
 | Phase and reached condition | Attributed operand | Exact primary stderr line |
 | --- | --- | --- |
 | Initial source `_info`: `FileNotFoundError` | `S` | `cp: S: not found` |
@@ -305,7 +312,7 @@ destination `not found` failure.
 | Initial source `_info`: malformed result | `S` | `cp: S: incompatible result` |
 | Initial source `_info`: file instead of directory | `S` | `cp: S: not a directory` |
 | Initial source `_info`: link or other type | `S` | `cp: S: unsupported entry type` |
-| Initial source `_info`: any other `Exception` | `S` | `cp: S: backend failure (<class>): <message>` |
+| Initial source `_info`: exception outside the shared taxonomy | `S` | `cp: S: backend failure (<class>): <message>` |
 | Destination root or parent `_info`: `PermissionError` | `D` | `cp: D: permission denied` |
 | Destination root or parent `_info`: `NotImplementedError` or missing required coroutine | `D` | `cp: D: unsupported operation` |
 | Destination root or parent `_info`: malformed result | `D` | `cp: D: incompatible result` |
@@ -314,11 +321,11 @@ destination `not found` failure.
 | Existing resolved root is a link or other type | `D` | `cp: D: unsupported entry type` |
 | Existing resolved root is a file | `D` | `cp: D: destination type conflict` |
 | Same namespace exact or contained target | `D` | `cp: D: destination is inside source` |
-| Destination root or parent `_info`: any other `Exception` | `D` | `cp: D: backend failure (<class>): <message>` |
+| Destination root or parent `_info`: exception outside the shared taxonomy | `D` | `cp: D: backend failure (<class>): <message>` |
 | Initial source `_walk`: `FileNotFoundError` | `S` | `cp: S: not found` |
 | Initial source `_walk`: `PermissionError` | `S` | `cp: S: permission denied` |
 | Initial source `_walk`: `NotImplementedError` or missing required coroutine | `S` | `cp: S: unsupported operation` |
-| Initial source `_walk`: invocation, await, or iteration raises another `Exception` | `S` | `cp: S: backend failure (<class>): <message>` |
+| Initial source `_walk`: invocation, await, or iteration raises an exception outside the shared taxonomy | `S` | `cp: S: backend failure (<class>): <message>` |
 | Initial source `_walk`: wrong awaitable/iterator or malformed manifest | `S` | `cp: S: incompatible result` |
 | Initial manifest contains link or other type | `S` | `cp: S: unsupported entry type` |
 | Initial manifest reaches entry 10,001 | `S` | `cp: S: source tree exceeds 10000 entries` |
@@ -327,7 +334,7 @@ destination `not found` failure.
 | Corresponding destination `_info`: malformed result | `D` | `cp: D: incompatible result` |
 | Corresponding destination entry is a link or other type | `D` | `cp: D: unsupported entry type` |
 | Corresponding destination entry has conflicting file/directory type | `D` | `cp: D: destination type conflict` |
-| Corresponding destination `_info`: any other `Exception` | `D` | `cp: D: backend failure (<class>): <message>` |
+| Corresponding destination `_info`: exception outside the shared taxonomy | `D` | `cp: D: backend failure (<class>): <message>` |
 
 ### 8.4 Mutating and proof phases
 

@@ -152,8 +152,9 @@ helper remains an implementation detail and does not become a second seam.
 - Allowing context exits to suppress or replace failures would transfer command
   policy to host adapters and make outcomes backend-dependent.
 - A general shield, timeout, or second runner would add lifecycle policy not
-  supplied by `App(sources).typer_app`. The tree-only worker above instead
-  terminates one pinned lazy iterator before the existing same-task cleanup.
+  supplied by `App(sources).typer_app`. The current-operation adapter above
+  instead drains only invocation-owned work already in progress before the
+  existing same-task cleanup.
 
 ## Consequences
 
