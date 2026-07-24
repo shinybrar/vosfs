@@ -2,6 +2,12 @@
 
 <!-- pyml disable line-length -->
 
+> **0.6.0 interface note:** ADR 0005 supersedes parser, help, and framework
+> usage wording below. A central annotated callback defines this source-free
+> command; Typer owns option recognition, argument collection, help, and
+> framework status-2 usage diagnostics. Parser-era exact diagnostics are
+> historical. Command-owned lexical validation and output remain normative.
+
 Status: **Locked lexical command semantics**
 
 Question: [Add source-free `basename string`](https://github.com/shinybrar/vosfs/issues/123)

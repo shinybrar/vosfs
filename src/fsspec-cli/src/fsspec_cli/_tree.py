@@ -1,4 +1,4 @@
-"""Raw parsing, walk normalization, and Unicode rendering for ``tree``."""
+"""Walk normalization and Unicode rendering for the central ``tree`` callback."""
 
 from __future__ import annotations
 

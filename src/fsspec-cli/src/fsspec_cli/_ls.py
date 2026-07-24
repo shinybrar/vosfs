@@ -1,4 +1,4 @@
-"""Raw Typer parsing and async execution for ``ls``."""
+"""Listing execution for the central ``ls`` and ``ll`` callbacks."""
 
 from __future__ import annotations
 

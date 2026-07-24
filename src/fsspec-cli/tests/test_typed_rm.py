@@ -30,16 +30,6 @@ def _invoke(
     )
 
 
-def _typer_error(message: str) -> str:
-    return (
-        "Usage: root rm [OPTIONS] [name:/path]\n"
-        "Try 'root rm --help' for help.\n"
-        f"╭─ Error {'─' * 70}╮\n"
-        f"│ {message:<76} │\n"
-        f"╰{'─' * 78}╯\n"
-    )
-
-
 def test_rm_help_comes_from_capability_selected_typed_callback() -> None:
     disabled = _invoke(["--help"])
     enabled = _invoke(["--help"], recursive=True)
@@ -78,6 +68,8 @@ def test_typer_rejects_unavailable_rm_options_before_source_acquisition(
     diagnostic: str,
 ) -> None:
     result = _invoke(arguments, recursive=recursive)
+    rendered = strip_ansi(result.stderr)
 
     assert (result.exit_code, result.stdout_bytes) == (2, b"")
-    assert strip_ansi(result.stderr) == _typer_error(diagnostic)
+    assert "Usage: root rm [OPTIONS] [name:/path]" in rendered
+    assert diagnostic in rendered

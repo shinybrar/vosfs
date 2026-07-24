@@ -28,6 +28,15 @@ yields one `AbstractFileSystem` per command invocation. The host owns source
 configuration and cleanup; the library owns the yielded filesystem only for one
 invocation.
 
+Every first-party command is a central annotated callback. Typer owns parsing,
+type conversion, help, and framework usage errors; commands retain mapped-source
+and semantic validation plus filesystem execution behavior.
+
+The public host API exports `App`, `AppCapabilities`,
+`RecursionCapabilities`, `AsyncFilesystemSource`, `CommandCallback`, and
+`CommandContext`. The built-in callback is exported separately as
+`fsspec_cli.extensions.sign`.
+
 ```python
 from contextlib import asynccontextmanager
 

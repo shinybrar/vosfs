@@ -1,4 +1,4 @@
-"""Raw Typer parsing and async execution for ``find``."""
+"""Recursive-find execution for the central ``find`` callback."""
 
 from __future__ import annotations
 
