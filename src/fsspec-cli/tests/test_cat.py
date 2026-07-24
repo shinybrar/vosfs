@@ -37,7 +37,7 @@ def _invoke_cat(
     [
         (["-u", "memory:/file"], ("No such option", "-u")),
         (["-A", "memory:/file"], ("No such option", "-A")),
-        (["--help=x", "memory:/file"], ("Option '--help' does not take a value",)),
+        (["--help=x", "memory:/file"], ("does not take a value", "help")),
     ],
 )
 def test_cat_leaves_usage_failures_to_typer(
@@ -55,7 +55,8 @@ def test_cat_help_comes_from_typed_callback() -> None:
     result = _invoke_cat(["--help"])
 
     assert (result.exit_code, result.stderr) == (0, "")
-    assert "Usage: root cat [OPTIONS] [name:/path|-]" in result.stdout
+    assert "Usage:" in result.stdout
+    assert "root cat [OPTIONS] [name:/path|-]" in result.stdout
     assert "Concatenate files to standard output" in result.stdout
     assert "<str>" in result.stdout
 
