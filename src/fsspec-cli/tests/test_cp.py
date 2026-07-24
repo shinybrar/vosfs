@@ -9,6 +9,7 @@ from types import MappingProxyType, MethodType, SimpleNamespace
 from typing import NoReturn
 
 import pytest
+import typer
 from fsspec_cli import App
 from typer.testing import CliRunner
 
@@ -64,6 +65,42 @@ def test_cp_copies_one_file_without_stdout() -> None:
     assert len(cp_events) == 1
     assert cp_events[0][2:4] == ("/docs/notes.txt", "/docs/copy.txt")
     assert not [event for event in events if event[0] == "get_file"]
+
+
+def test_cp_preserves_backend_error_when_its_diagnostic_write_fails(
+    monkeypatch,
+) -> None:
+    backend_error = PermissionError("denied")
+    renderer_error = RuntimeError("stderr failed")
+    source = _file_source(
+        info_by_path={"/docs/notes.txt": backend_error},
+    )
+
+    def fail_diagnostic(
+        _message: object = None,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        del args
+        if kwargs.get("err") is True:
+            raise renderer_error
+        raise AssertionError
+
+    monkeypatch.setattr(typer, "echo", fail_diagnostic)
+
+    result = _invoke_cp(
+        ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
+        sources={"memory": source},
+    )
+
+    assert result.exit_code == 1
+    assert result.exception is renderer_error
+    assert result.stdout == ""
+    assert result.stderr == ""
+    exception_type, exception, traceback = source.exit_calls[0]
+    assert exception_type is PermissionError
+    assert exception is backend_error
+    assert traceback is not None
 
 
 def test_cp_reuses_destination_directory_info_for_same_source_parent() -> None:

@@ -621,7 +621,14 @@ async def _run_cp(
             if failure is not None:
                 break
         if failure is not None:
-            _render_failure(command, failure)
+            try:
+                _render_failure(command, failure)
+            except Exception as error:
+                raise _CommandFailureError(
+                    error=failure.backend_error,
+                    render=False,
+                    propagate=error,
+                ) from error
             raise _CommandFailureError(
                 error=failure.backend_error,
                 render=False,

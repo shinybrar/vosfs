@@ -917,5 +917,12 @@ async def _run_recursive_cp(
         filesystems[destination_operand.name],
     ).run()
     if failure is not None:
-        _render_failure(command, failure)
+        try:
+            _render_failure(command, failure)
+        except Exception as error:
+            raise _CommandFailureError(
+                error=failure.error,
+                render=False,
+                propagate=error,
+            ) from error
         raise _CommandFailureError(error=failure.error, render=False)
