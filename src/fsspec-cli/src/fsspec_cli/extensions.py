@@ -2,32 +2,25 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+import asyncio
+from typing import TYPE_CHECKING, Annotated, cast
 
-from ._app import _register_async_command
+import typer
+
+from ._app import CommandContext, _ensure_no_active_event_loop
 from ._command import (
     _Failure,
     _MappedOperand,
-    _preflight_single_mapped_operand,
-    _RawCommand,
+    _parse_mapped_operand,
     _run_single_operand_text,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    import typer
     from fsspec.asyn import AsyncFileSystem
-    from typer._click import Context
-    from typer._click.formatting import HelpFormatter
 
     from ._app import AsyncFilesystemSource
-
-
-class _SignCommand(_RawCommand):
-    def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        del ctx
-        formatter.write_usage("sign", "[--] name:/path")
 
 
 async def _sign(
@@ -47,10 +40,9 @@ async def _sign(
 
 async def _run_sign(
     command: str,
-    raw_arguments: tuple[str, ...],
+    operand: _MappedOperand,
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    operand = _preflight_single_mapped_operand(command, raw_arguments, sources)
     await _run_single_operand_text(
         command,
         operand,
@@ -59,24 +51,15 @@ async def _run_sign(
     )
 
 
-class _SignExtension:
-    def register(
-        self,
-        typer_app: typer.Typer,
-        sources: Mapping[str, AsyncFilesystemSource],
-    ) -> None:
-        _register_async_command(
-            typer_app,
-            sources,
-            (
-                "sign",
-                "Create a backend-signed URL",
-                _run_sign,
-                _SignCommand,
-            ),
-        )
+def sign(
+    ctx: typer.Context,
+    operand: Annotated[str, typer.Argument(metavar="name:/path")],
+) -> None:
+    """Create a backend-signed URL."""
+    sources = cast("CommandContext", ctx.find_object(CommandContext)).sources
+    mapped = _parse_mapped_operand("sign", operand, sources)
+    _ensure_no_active_event_loop("sign")
+    asyncio.run(_run_sign("sign", mapped, sources))
 
-
-sign: Final = _SignExtension()
 
 __all__ = ["sign"]

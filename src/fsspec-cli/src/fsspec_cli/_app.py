@@ -8,7 +8,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
-from typing import Annotated, Any, Protocol, TypeAlias, TypedDict
+from typing import Annotated, Any, TypeAlias, TypedDict
 
 import typer
 from fsspec import AbstractFileSystem
@@ -53,14 +53,14 @@ class AppCapabilities(TypedDict, total=False):
     recursion: RecursionCapabilities
 
 
-class CommandExtension(Protocol):
-    """One opt-in command registration against snapshotted sources."""
+CommandCallback: TypeAlias = Callable[..., None]
 
-    def register(
-        self,
-        typer_app: typer.Typer,
-        sources: Mapping[str, AsyncFilesystemSource],
-    ) -> None: ...
+
+@dataclass(frozen=True)
+class CommandContext:
+    """Immutable application context available to command callbacks."""
+
+    sources: Mapping[str, AsyncFilesystemSource]
 
 
 _SourceFreeRunner: TypeAlias = Callable[[str, tuple[str, ...]], None]
@@ -200,7 +200,7 @@ class App:
         sources: Mapping[str, AsyncFilesystemSource],
         *,
         capabilities: AppCapabilities | None = None,
-        extensions: Sequence[CommandExtension] = (),
+        extensions: Sequence[CommandCallback] = (),
     ) -> None:
         """Snapshot sources and register the requested command surface."""
         self._sources = MappingProxyType(dict(sources))
@@ -214,12 +214,12 @@ class App:
         self.typer_app = typer.Typer(add_completion=False)
         self._register_commands()
         for extension in extensions:
-            extension.register(self.typer_app, self._sources)
+            self.typer_app.command()(extension)
 
     def _register_commands(self) -> None:
         @self.typer_app.callback()
-        def root() -> None:
-            pass
+        def root(ctx: typer.Context) -> None:
+            ctx.obj = CommandContext(self._sources)
 
         @self.typer_app.command()
         def head(

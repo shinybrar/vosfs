@@ -96,6 +96,36 @@ without that capability exits nonzero with one `unsupported operation`
 diagnostic and no traceback. The extension does not infer support from backend
 type or protocol.
 
+Extensions are ordinary synchronous annotated callbacks. Their function name,
+docstring, and annotations define the command through Typer. Source-free
+callbacks need no context parameter; source-aware callbacks find the frozen
+source snapshot through `typer.Context`:
+
+```python
+from fsspec_cli import CommandCallback, CommandContext
+
+
+def about() -> None:
+    """Describe this host."""
+    typer.echo("Example filesystem host")
+
+
+def source_names(ctx: typer.Context) -> None:
+    """List configured source names."""
+    context = ctx.find_object(CommandContext)
+    assert context is not None
+    typer.echo("\n".join(context.sources))
+
+
+extensions: list[CommandCallback] = [about, source_names]
+extended = App({"data": data_source}, extensions=extensions)
+```
+
+`CommandContext` exposes only the immutable async filesystem source mapping.
+It does not expose application capabilities or private lifecycle, validation,
+or diagnostic helpers. When mounted under another Typer application,
+`ctx.find_object(...)` can still find that parent application's context object.
+
 ## Commands
 
 | Command | Summary |
