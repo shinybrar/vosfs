@@ -6,26 +6,18 @@ import asyncio
 import inspect
 import locale
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
-from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias, TypeGuard
 
 from ._command import (
+    _drain_current_operation,
     _Failure,
     _MappedOperand,
-    _parse_mapped_operand,
-    _RawCommand,
     _run_single_operand_text,
-    _usage_error,
 )
-from ._diagnostics import _render_diagnostic_value
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
-
     from fsspec.asyn import AsyncFileSystem
-    from typer._click import Context
-    from typer._click.formatting import HelpFormatter
 
     from ._app import AsyncFilesystemSource
 
@@ -56,57 +48,6 @@ class _MaterializationError:
 
 
 _MaterializationOutcome: TypeAlias = _MaterializedRows | _MaterializationError
-
-
-class _TreeCommand(_RawCommand):
-    def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        del ctx
-        formatter.write_usage("tree", "[--maxdepth N] [--] name:/path")
-
-
-def _parse_maxdepth(command: str, value: str) -> int:
-    if not value or not value.isascii() or not value.isdecimal():
-        rendered = _render_diagnostic_value(value)
-        _usage_error(command, f"{rendered}: invalid --maxdepth value")
-    try:
-        return int(value)
-    except ValueError:
-        rendered = _render_diagnostic_value(value)
-        _usage_error(command, f"{rendered}: invalid --maxdepth value")
-
-
-def _preflight(
-    command: str,
-    raw_arguments: tuple[str, ...],
-    known_names: Collection[str],
-) -> _TreeRequest:
-    maxdepth = None
-    operand = None
-    options_active = True
-    index = 0
-    while index < len(raw_arguments):
-        argument = raw_arguments[index]
-        if options_active and argument == "--":
-            options_active = False
-            index += 1
-            continue
-        if options_active and argument == "--maxdepth":
-            index += 1
-            if index == len(raw_arguments):
-                _usage_error(command, "--maxdepth: option requires an argument")
-            maxdepth = _parse_maxdepth(command, raw_arguments[index])
-            index += 1
-            continue
-        if options_active and argument.startswith("-"):
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: unsupported option")
-        if operand is not None:
-            _usage_error(command, "extra operand")
-        operand = _parse_mapped_operand(command, argument, known_names)
-        index += 1
-    if operand is None:
-        _usage_error(command, "missing mapped filesystem operand")
-    return _TreeRequest(maxdepth, operand)
 
 
 def _valid_root(value: object) -> TypeGuard[str]:
@@ -275,16 +216,9 @@ def _materialize_sync(iterator: Iterator[object]) -> _MaterializationOutcome:
 
 
 async def _materialize_iterator(iterator: Iterator[object]) -> list[object]:
-    worker = asyncio.create_task(asyncio.to_thread(_materialize_sync, iterator))
-    try:
-        outcome = await asyncio.shield(worker)
-    except BaseException:
-        while not worker.done():
-            with suppress(BaseException):
-                await asyncio.shield(worker)
-        with suppress(BaseException):
-            worker.result()
-        raise
+    outcome = await _drain_current_operation(
+        asyncio.to_thread(_materialize_sync, iterator)
+    )
     if isinstance(outcome, _MaterializationError):
         raise outcome.error
     return outcome.values
@@ -292,13 +226,25 @@ async def _materialize_iterator(iterator: Iterator[object]) -> list[object]:
 
 async def _consume_walk(result: object) -> list[object] | None:
     if isinstance(result, AsyncIterator):
-        return [row async for row in result]
+        values = []
+        while True:
+            has_value, value = await _next_async(result)
+            if not has_value:
+                return values
+            values.append(value)
     if not inspect.isawaitable(result):
         return None
-    resolved = await result
+    resolved = await _drain_current_operation(result)
     if not isinstance(resolved, Iterator):
         return None
     return await _materialize_iterator(resolved)
+
+
+async def _next_async(iterator: AsyncIterator[object]) -> tuple[bool, object]:
+    try:
+        return True, await _drain_current_operation(anext(iterator))
+    except StopAsyncIteration:
+        return False, None
 
 
 async def _walk(request: _TreeRequest, filesystem: AsyncFileSystem) -> str | _Failure:
@@ -322,10 +268,9 @@ async def _walk(request: _TreeRequest, filesystem: AsyncFileSystem) -> str | _Fa
 
 async def _run_tree(
     command: str,
-    raw_arguments: tuple[str, ...],
+    request: _TreeRequest,
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    request = _preflight(command, raw_arguments, sources)
     await _run_single_operand_text(
         command,
         request.operand,

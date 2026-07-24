@@ -8,22 +8,15 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeGuard
 
 from ._command import (
+    _drain_current_operation,
     _Failure,
     _MappedOperand,
-    _parse_mapped_operand,
-    _RawCommand,
     _run_single_operand_text,
-    _usage_error,
 )
-from ._diagnostics import _render_diagnostic_value
 from ._listing import format_size
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
-
     from fsspec.asyn import AsyncFileSystem
-    from typer._click import Context
-    from typer._click.formatting import HelpFormatter
 
     from ._app import AsyncFilesystemSource
 
@@ -33,55 +26,6 @@ class _DuRequest:
     summarize: bool
     human_readable: bool
     operand: _MappedOperand
-
-
-class _DuCommand(_RawCommand):
-    def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        del ctx
-        formatter.write_usage("du", "[-sh] [--] name:/path")
-
-
-def _short_options(argument: str) -> str | None:
-    characters = argument[1:]
-    if not characters or not set(characters) <= {"h", "s"}:
-        return None
-    return characters
-
-
-def _preflight(
-    command: str,
-    raw_arguments: tuple[str, ...],
-    known_names: Collection[str],
-) -> _DuRequest:
-    summarize = False
-    human_readable = False
-    operand = None
-    options_active = True
-
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            continue
-        if options_active and argument.startswith("-"):
-            options = _short_options(argument)
-            if options is None:
-                rendered = _render_diagnostic_value(argument)
-                _usage_error(command, f"{rendered}: unsupported option")
-            summarize = summarize or "s" in options
-            human_readable = human_readable or "h" in options
-            continue
-        if operand is not None:
-            _usage_error(command, "extra operand")
-        operand = _parse_mapped_operand(command, argument, known_names)
-
-    if operand is None:
-        _usage_error(command, "missing mapped filesystem operand")
-
-    return _DuRequest(
-        summarize=summarize,
-        human_readable=human_readable,
-        operand=operand,
-    )
 
 
 def _valid_size(value: object) -> TypeGuard[int]:
@@ -125,9 +69,11 @@ async def _measure(
     filesystem: AsyncFileSystem,
 ) -> str | _Failure:
     try:
-        result = await filesystem._du(  # noqa: SLF001
-            request.operand.path,
-            total=request.summarize,
+        result = await _drain_current_operation(
+            filesystem._du(  # noqa: SLF001
+                request.operand.path,
+                total=request.summarize,
+            )
         )
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _Failure(request.operand, backend_error=error)
@@ -136,10 +82,9 @@ async def _measure(
 
 async def _run_du(
     command: str,
-    raw_arguments: tuple[str, ...],
+    request: _DuRequest,
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    request = _preflight(command, raw_arguments, sources)
     await _run_single_operand_text(
         command,
         request.operand,

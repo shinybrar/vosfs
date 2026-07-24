@@ -22,18 +22,6 @@ if TYPE_CHECKING:
     from collections.abc import Coroutine
     from types import TracebackType
 
-_EXACT_TREE_HELP = (
-    "                                                                                \n"
-    " Usage: tree [--maxdepth N] [--] name:/path                                     \n"
-    "                                                                                \n"
-    " Display a recursive directory tree                                             \n"
-    "                                                                                \n"
-    "╭─ Options ────────────────────────────────────────────────────────────────────╮\n"
-    "│ --help          Show this message and exit.                                  │\n"
-    "╰──────────────────────────────────────────────────────────────────────────────╯\n"
-    "\n"
-)
-
 
 class _TreeControl(BaseException):
     pass
@@ -353,6 +341,21 @@ def test_tree_joins_adapted_iterator_before_source_exit_on_task_cancellation(
             1,
             "/docs\n├── a-dir\n├── z-dir\n├── a.txt\n└── z.txt\n",
         ),
+        (
+            ["--maxdepth=1", "memory:/docs"],
+            1,
+            "/docs\n├── a-dir\n├── z-dir\n├── a.txt\n└── z.txt\n",
+        ),
+        (
+            ["--maxdepth", "+1", "memory:/docs"],
+            1,
+            "/docs\n├── a-dir\n├── z-dir\n├── a.txt\n└── z.txt\n",
+        ),
+        (
+            ["--maxdepth", "\u0661", "memory:/docs"],
+            1,
+            "/docs\n├── a-dir\n├── z-dir\n├── a.txt\n└── z.txt\n",
+        ),
     ],
 )
 def test_tree_depth_contract_filters_over_yielded_rows(
@@ -454,44 +457,49 @@ def test_tree_orders_each_group_by_locale_then_raw(
 
 
 @pytest.mark.parametrize("arguments", [["--help"], ["--maxdepth", "2", "--help"]])
-def test_tree_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
+def test_tree_help_comes_from_typed_callback(arguments: list[str]) -> None:
     result = _invoke_tree(arguments)
 
-    assert (result.exit_code, strip_ansi(result.stdout), result.stderr) == (
-        0,
-        _EXACT_TREE_HELP,
-        "",
-    )
+    help_text = strip_ansi(result.stdout)
+    assert (result.exit_code, result.stderr) == (0, "")
+    assert "Usage: root tree [OPTIONS] {name:/path}" in help_text
+    assert "Display a recursive directory tree" in help_text
+    assert "name:/path" in help_text
+    assert "--maxdepth" in help_text
+    assert "N [x>=0]" in help_text
 
 
 @pytest.mark.parametrize(
-    ("arguments", "diagnostic"),
+    ("arguments", "contexts"),
     [
-        ([], "tree: missing mapped filesystem operand\n"),
-        (["-L", "1", "memory:/docs"], "tree: -L: unsupported option\n"),
-        (["--maxdepth=1", "memory:/docs"], "tree: --maxdepth=1: unsupported option\n"),
-        (["--maxdepth"], "tree: --maxdepth: option requires an argument\n"),
-        (["--maxdepth", "-1", "memory:/docs"], "tree: -1: invalid --maxdepth value\n"),
-        (["--maxdepth", "+1", "memory:/docs"], "tree: +1: invalid --maxdepth value\n"),
+        ([], ("Missing argument", "name:/path")),
+        (["-L", "1", "memory:/docs"], ("No such option", "-L")),
+        (["--maxdepth"], ("requires an argument", "--maxdepth")),
+        (
+            ["--maxdepth", "-1", "memory:/docs"],
+            ("Invalid value", "--maxdepth", "x>=0"),
+        ),
         (
             ["--maxdepth", "1.0", "memory:/docs"],
-            "tree: 1.0: invalid --maxdepth value\n",
+            ("Invalid value", "--maxdepth", "int range"),
         ),
         (
-            ["--maxdepth", "\u0661", "memory:/docs"],
-            "tree: \u0661: invalid --maxdepth value\n",
+            ["memory:/a", "memory:/b"],
+            ("unexpected extra argument", "memory:/b"),
         ),
-        (["memory:/a", "memory:/b"], "tree: extra operand\n"),
-        (["--", "--help"], "tree: --help: invalid mapped filesystem operand\n"),
+        (["--", "--help"], ("tree: --help: invalid mapped filesystem operand",)),
     ],
 )
-def test_tree_preflight_failures_are_stable_and_source_free(
+def test_tree_usage_failures_are_typer_owned_and_source_free(
     arguments: list[str],
-    diagnostic: str,
+    contexts: tuple[str, ...],
 ) -> None:
     result = _invoke_tree(arguments)
 
-    assert (result.exit_code, result.stdout, result.stderr) == (2, "", diagnostic)
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = strip_ansi(result.stderr)
+    for context in contexts:
+        assert context in diagnostic
 
 
 def test_tree_rejects_a_runtime_oversized_depth_deterministically() -> None:
@@ -499,11 +507,10 @@ def test_tree_rejects_a_runtime_oversized_depth_deterministically() -> None:
 
     result = _invoke_tree(["--maxdepth", value, "memory:/docs"])
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        f"tree: {value}: invalid --maxdepth value\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = strip_ansi(result.stderr)
+    assert "Invalid value" in diagnostic
+    assert "--maxdepth" in diagnostic
 
 
 @pytest.mark.parametrize(

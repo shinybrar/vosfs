@@ -7,6 +7,7 @@ from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 
 import pytest
+from click.utils import strip_ansi
 from fsspec.asyn import AsyncFileSystem
 from fsspec.implementations.asyn_wrapper import AsyncFileSystemWrapper
 from fsspec.implementations.local import LocalFileSystem
@@ -360,7 +361,7 @@ def test_adapted_memory_mkdir_p_profile_has_isolated_state(
     _exercise_mkdir_p_locked_profile("memory", source, "/docs")
 
 
-def test_ls_long_option_spelling_rejection_is_source_free() -> None:
+def test_typer_rejects_ls_long_option_spelling_without_source_work() -> None:
     source_calls = 0
 
     def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
@@ -373,11 +374,10 @@ def test_ls_long_option_spelling_rejection_is_source_free() -> None:
         ["--long", "memory:/docs"],
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "ls: --long: unsupported option\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = strip_ansi(result.stderr)
+    assert "No such option" in diagnostic
+    assert "--long" in diagnostic
     assert source_calls == 0
 
 

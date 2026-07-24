@@ -8,8 +8,8 @@ import fsspec_cli._app as app_module
 import pytest
 import typer
 from fsspec_cli._cat import _run_cat
-from fsspec_cli._ls import _preflight as _ls_preflight
-from fsspec_cli._ls import _run_ls
+from fsspec_cli._command import _parse_mapped_operand
+from fsspec_cli._ls import _LsRequest, _run_ls
 from fsspec_cli._mkdir import _preflight as _mkdir_preflight
 from fsspec_cli._sources import _SourceInvocation
 from fsspec_cli._stat import _preflight as _stat_preflight
@@ -21,9 +21,9 @@ _COMMAND = "future\\command\0\r\n"
 _RENDERED_COMMAND = "future\\\\command\\x00\\x0d\\x0a"
 
 
-def test_ls_preflight_diagnostic_escapes_concrete_command_label(capsys) -> None:
+def test_mapped_operand_diagnostic_escapes_concrete_command_label(capsys) -> None:
     with pytest.raises(typer.Exit) as caught:
-        _ls_preflight(_COMMAND, ("bad",), {"memory"})
+        _parse_mapped_operand(_COMMAND, "bad", {"memory"})
 
     assert caught.value.exit_code == 2
     assert capsys.readouterr().err == (
@@ -164,9 +164,21 @@ def test_output_failure_diagnostic_uses_concrete_command_label(
         raise output_error
 
     monkeypatch.setattr(typer, "echo", fail_stdout)
+    operand = _parse_mapped_operand(_COMMAND, "memory:/file", {"memory"})
 
     with pytest.raises(typer.Exit) as caught:
-        asyncio.run(_run_ls(_COMMAND, ("memory:/file",), {"memory": source}))
+        asyncio.run(
+            _run_ls(
+                _COMMAND,
+                _LsRequest(
+                    include_almost_all=False,
+                    long_listing=False,
+                    human_readable=False,
+                    operands=(operand,),
+                ),
+                {"memory": source},
+            )
+        )
 
     assert caught.value.exit_code == 1
     assert capsys.readouterr().err == (
