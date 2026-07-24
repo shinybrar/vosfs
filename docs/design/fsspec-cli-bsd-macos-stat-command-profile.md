@@ -2,6 +2,13 @@
 
 <!-- pyml disable line-length -->
 
+> **0.6.0 interface note:** ADR 0005 supersedes parser, help, and framework
+> usage wording below. A central annotated callback defines this command;
+> Typer owns option recognition, argument collection, help, and framework
+> status-2 usage diagnostics. Parser-era exact diagnostics are historical.
+> Mapped-operand and semantic validation, zero-source preflight, execution,
+> output, and lifecycle requirements remain normative.
+
 Status: **Locked reduced compatibility profile (production command shipped by #146)**
 
 Question: [Define a reduced BSD and macOS stat compatibility profile](https://github.com/shinybrar/vosfs/issues/145)

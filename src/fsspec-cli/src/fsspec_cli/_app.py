@@ -3,22 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Annotated, Any, Literal, TypeAlias, TypedDict
+from typing import Annotated, Literal, TypeAlias, TypedDict
 
 import typer
 from fsspec import AbstractFileSystem
-from typer.core import TyperCommand
 
 from ._basename import _run_basename
 from ._cat import _run_cat, _StdinOperand
 from ._command import (
     _MappedOperand,
     _parse_mapped_operand,
-    _raw_arguments,
     _usage_error,
 )
 from ._cp import _cp_plan, _run_cp
@@ -68,18 +66,6 @@ class CommandContext:
     sources: Mapping[str, AsyncFilesystemSource]
 
 
-_AsyncRunner: TypeAlias = Callable[
-    [str, tuple[str, ...], Mapping[str, AsyncFilesystemSource]],
-    Coroutine[Any, Any, None],
-]
-_AsyncCommand: TypeAlias = tuple[str, str, _AsyncRunner, type[TyperCommand]]
-
-_COMMAND_CONTEXT = {
-    "allow_extra_args": True,
-    "ignore_unknown_options": True,
-}
-
-
 @dataclass(frozen=True)
 class _Capabilities:
     recursive_copy: bool = True
@@ -115,10 +101,6 @@ def _snapshot_capabilities(capabilities: AppCapabilities | None) -> _Capabilitie
     )
 
 
-# Commands that acquire mapped sources and run on the invocation event loop.
-_ASYNC_COMMANDS: tuple[_AsyncCommand, ...] = ()
-
-
 def _validate_source_name(name: object) -> None:
     if not isinstance(name, str):
         msg = "async filesystem source names must be strings"
@@ -146,25 +128,6 @@ def _ensure_no_active_event_loop(command: str) -> None:
         color=True,
     )
     raise typer.Exit(1)
-
-
-def _register_async_command(
-    typer_app: typer.Typer,
-    sources: Mapping[str, AsyncFilesystemSource],
-    command: _AsyncCommand,
-) -> None:
-    name, help_text, runner, command_cls = command
-
-    @typer_app.command(
-        name,
-        cls=command_cls,
-        help=help_text,
-        context_settings=_COMMAND_CONTEXT,
-    )
-    def handler(ctx: typer.Context) -> None:
-        raw_arguments = _raw_arguments(ctx)
-        _ensure_no_active_event_loop(name)
-        asyncio.run(runner(name, raw_arguments, sources))
 
 
 class App:
@@ -672,10 +635,3 @@ class App:
             plan = _plan_mv("mv", mapped)
             _ensure_no_active_event_loop("mv")
             asyncio.run(_run_mv("mv", plan, self._sources))
-
-        for registered_command in _ASYNC_COMMANDS:
-            _register_async_command(
-                self.typer_app,
-                self._sources,
-                registered_command,
-            )

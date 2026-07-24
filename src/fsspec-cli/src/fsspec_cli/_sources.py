@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
-from contextlib import AbstractAsyncContextManager, suppress
+from contextlib import AbstractAsyncContextManager
 from types import TracebackType
-from typing import TYPE_CHECKING, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, TypeAlias
 
 import typer
 from fsspec.asyn import AsyncFileSystem
@@ -14,7 +13,7 @@ from fsspec.asyn import AsyncFileSystem
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Iterable, Mapping
+    from collections.abc import Iterable, Mapping
 
     from fsspec import AbstractFileSystem
 
@@ -26,21 +25,6 @@ _ExcInfo: TypeAlias = tuple[
     TracebackType | None,
 ]
 _EMPTY_EXC_INFO: _ExcInfo = (None, None, None)
-_ValueT = TypeVar("_ValueT")
-
-
-async def _await_current(awaitable: Awaitable[_ValueT]) -> _ValueT:
-    """Shield and drain one current operation before propagating control flow."""
-    task = asyncio.ensure_future(awaitable)
-    try:
-        return await asyncio.shield(task)
-    except BaseException:
-        while not task.done():
-            with suppress(BaseException):
-                await asyncio.shield(task)
-        with suppress(BaseException):
-            task.result()
-        raise
 
 
 def _source_exception(

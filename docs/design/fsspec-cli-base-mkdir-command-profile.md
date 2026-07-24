@@ -2,6 +2,13 @@
 
 <!-- pyml disable line-length -->
 
+> **0.6.0 interface note:** ADR 0005 supersedes parser, help, and framework
+> usage wording below. A central annotated callback defines this command;
+> Typer owns option recognition, argument collection, help, and framework
+> status-2 usage diagnostics. Parser-era exact diagnostics are historical.
+> Mapped-operand and semantic validation, zero-source preflight, execution,
+> output, and lifecycle requirements remain normative.
+
 Status: **Locked command semantics and async execution contract**
 
 Part of [#120](https://github.com/shinybrar/vosfs/issues/120) / [#128](https://github.com/shinybrar/vosfs/issues/128)

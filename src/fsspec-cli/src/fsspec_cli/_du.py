@@ -1,4 +1,4 @@
-"""Raw Typer parsing and async execution for ``du``."""
+"""Disk-usage execution for the central ``du`` callback."""
 
 from __future__ import annotations
 

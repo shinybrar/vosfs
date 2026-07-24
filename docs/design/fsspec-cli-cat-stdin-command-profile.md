@@ -2,6 +2,13 @@
 
 <!-- pyml disable line-length -->
 
+> **0.6.0 interface note:** ADR 0005 supersedes parser, help, and framework
+> usage wording below. A central annotated callback defines this command;
+> Typer owns argument collection, option termination, help, and framework
+> status-2 usage diagnostics. Parser-era exact diagnostics are historical.
+> Mapped-operand validation, zero-source preflight, execution, binary
+> sequencing, ownership cleanup, and lifecycle requirements remain normative.
+
 Status: **Locked stdin admission contract atop mapped-file `cat`**
 
 Question: [Binary stdin and `-` sequencing](https://github.com/shinybrar/vosfs/issues/127)

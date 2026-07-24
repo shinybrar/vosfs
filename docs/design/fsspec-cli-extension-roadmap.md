@@ -32,36 +32,27 @@ serve the useful subset a backend can actually back, and say so.
 
 ## 2. The extension seam
 
-One additive, backward-compatible constructor parameter:
+The current constructor accepts ordinary annotated callbacks:
 
 ```python
-class CommandExtension(Protocol):
-    def register(
-        self,
-        app: typer.Typer,
-        sources: Mapping[str, AsyncFilesystemSource],
-    ) -> None: ...
-
-
 class App:
     def __init__(
         self,
         sources: Mapping[str, AsyncFilesystemSource],
         *,
-        extensions: Sequence[CommandExtension] = (),
+        extensions: Sequence[CommandCallback] = (),
     ) -> None:
         ...
-        self._register_commands()            # core (unchanged, ubiquitous)
-        for extension in extensions:         # opt-in
-            extension.register(self.typer_app, self._sources)
+        self._register_commands()
+        for callback in extensions:
+            self.typer_app.command()(callback)
 ```
 
-Extensions register their own Typer commands and reuse the **shared command
-toolkit** (source lifecycle, mapped-operand parsing, diagnostics, binary stdout).
-That toolkit must first be consolidated into one importable module — see the
-scaffolding-consolidation issue — so extensions build on a stable seam instead of
-copy-pasting internals. **That consolidation is a prerequisite for a clean
-extension API.**
+Typer derives each extension command from the callback name, docstring, and
+annotations. Source-aware callbacks retrieve the immutable source snapshot
+from public `CommandContext` through `typer.Context`; source-free callbacks need
+no context parameter. Private source lifecycle, mapped-operand, diagnostic, and
+output helpers are not extension API. ADR 0005 owns this completed contract.
 
 ## 3. Two extension flavors
 

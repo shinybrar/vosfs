@@ -1,10 +1,4 @@
-"""Shared scaffolding for mapped-source command modules.
-
-Typed commands receive validated operands from central callbacks; commands not
-yet migrated still parse raw ``argv``. This module owns both seams during the
-migration, plus mapped operands, diagnostics, binary stdout, and invocation
-lifecycle.
-"""
+"""Shared execution support for mapped-source command modules."""
 
 from __future__ import annotations
 
@@ -16,7 +10,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, NoReturn, Protocol, TypeVar, cast
 
 import typer
-from typer.core import TyperCommand
 
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._sources import _SourceInvocation
@@ -25,47 +18,13 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Collection, Mapping
 
     from fsspec.asyn import AsyncFileSystem
-    from typer._click import Context
 
     from ._app import AsyncFilesystemSource
 
-_RAW_ARGUMENTS = "fsspec_cli.raw_arguments"
 # 128 + SIGPIPE (13): lets pipeline consumers distinguish a closed reader from
 # an ordinary command failure when the broken pipe is the sole failure.
 _BROKEN_PIPE_EXIT_CODE = 141
 _ResultT = TypeVar("_ResultT")
-
-
-class _RawCommand(TyperCommand):
-    """A Typer command that captures raw ``argv`` before framework parsing.
-
-    Command preflight needs the exact tokens the user supplied, so the raw
-    arguments are stashed on ``ctx.meta`` and malformed ``--help=`` tokens are
-    shielded from Click's eager help option.
-    """
-
-    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
-        ctx.meta[_RAW_ARGUMENTS] = tuple(args)
-        return super().parse_args(ctx, _shield_help_values(args))
-
-
-def _shield_help_values(arguments: list[str]) -> list[str]:
-    """Keep malformed help tokens available to command preflight."""
-    shielded = []
-    options_active = True
-    for argument in arguments:
-        if argument == "--":
-            options_active = False
-        if options_active and argument.startswith("--help="):
-            shielded.append("--fsspec-cli-unsupported-help-value")
-        else:
-            shielded.append(argument)
-    return shielded
-
-
-def _raw_arguments(ctx: typer.Context) -> tuple[str, ...]:
-    """Return the raw ``argv`` captured by :class:`_RawCommand`."""
-    return cast("tuple[str, ...]", ctx.meta[_RAW_ARGUMENTS])
 
 
 def _usage_error(command: str, diagnostic: str) -> NoReturn:
@@ -327,26 +286,3 @@ def _parse_mapped_operand(
         )
 
     return _MappedOperand(spelling=argument, name=name, path=path)
-
-
-def _preflight_single_mapped_operand(
-    command: str,
-    raw_arguments: tuple[str, ...],
-    known_names: Collection[str],
-) -> _MappedOperand:
-    """Parse one mapped operand for a command with no options."""
-    operand = None
-    options_active = True
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            continue
-        if options_active and argument.startswith("-"):
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: unsupported option")
-        if operand is not None:
-            _usage_error(command, "extra operand")
-        operand = _parse_mapped_operand(command, argument, known_names)
-    if operand is None:
-        _usage_error(command, "missing mapped filesystem operand")
-    return operand

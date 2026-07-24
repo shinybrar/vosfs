@@ -2,7 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-Status: **Proposal (normative once accepted).** This is the **fsspec-cli** spec —
+Status: **Accepted command direction.** This is the **fsspec-cli** spec —
 one of two: the `vosfs` backend is governed by its own spec
 ([`trd.md`](trd.md)), which is separately receiving IVOA VOSpace 2.1-based
 improvements. This document consolidates the command direction for `fsspec-cli`.
@@ -100,8 +100,8 @@ mixed listing shows the union that at least one row backs.
 - `-l` long listing, `-a`/`-A` include-all (existing `ls` semantics), `-r`
   reverse, `-t` sort by mtime, `-S` sort by size (listing).
 - `-c N` byte count for `head`/`tail`; `-s` summarize for `du`.
-- Unknown options still fail closed with the stable `<cmd>: <tok>: unsupported
-  option` diagnostic.
+- Unknown options fail closed through Typer's standard usage diagnostic and
+  status `2` before source acquisition.
 
 ## 4. Command set (all CORE, backend-neutral)
 
@@ -157,11 +157,14 @@ backend-specific `extra` keys. Golden output is asserted per source shape.
 
 The core command set above needs **no** backend branching, so it does **not**
 use the extension mechanism — it goes straight into the base app. The extension
-seam ([#191](https://github.com/shinybrar/vosfs/issues/191), to be narrowed)
-covers only genuinely **backend-specific** commands: presigned `share`/`sign`
-(s3fs/gcsfs), object versions, storage class, vosfs VOSpace properties. The
-`info` command demonstrates the boundary: it stays core and simply *renders*
-backend-specific `extra` keys as data, without a per-backend branch.
+seam covers only genuinely **backend-specific** commands: presigned
+`share`/`sign` (s3fs/gcsfs), object versions, storage class, and vosfs VOSpace
+properties. Hosts pass ordinary annotated callbacks through `extensions=`.
+Source-aware callbacks retrieve the immutable source snapshot from
+`CommandContext` through `typer.Context`; source-free callbacks need no context
+parameter. The `info` command demonstrates the boundary: it stays core and
+simply *renders* backend-specific `extra` keys as data, without a per-backend
+branch.
 
 ## 9. Supersedes
 
@@ -186,17 +189,11 @@ Every open ticket, evaluated against this spec:
 | #190 license (BSD) | Closed. |
 | [#63](https://github.com/shinybrar/vosfs/issues/63) / [#65](https://github.com/shinybrar/vosfs/issues/65) / [#66](https://github.com/shinybrar/vosfs/issues/66) / [#113](https://github.com/shinybrar/vosfs/issues/113) | **Governed by the separate `vosfs` spec** ([`trd.md`](trd.md)), not this CLI spec. That spec is receiving IVOA VOSpace 2.1-based improvements (evaluation in progress); these tickets are reconciled there. |
 
-## 11. Implementation phases
+## 11. Implemented command ownership
 
-0. **Scaffolding consolidation (#187)** — one shared command toolkit
-   (parse-args, mapped-operand parsing, diagnostics, binary stdout, source
-   lifecycle). Prerequisite.
-1. **Normalization layer** — `ListingRow` + `to_listing(info)` + time coercion +
-   human sizes + adaptive-column renderer. Unit-tested standalone.
-2. **First commands** — `du`, `find`, `size`, `test` (pure hooks, no rendering
-   layer) and `ls -l`/`-lh` (the layer's first consumer).
-3. **Second wave** — `head`, `tail`, `tree`, `info`; reconcile `stat`/`info`.
-4. **Harden existing** — fold #186 (cp/mv verify).
-
-Each phase: profile + hermetic tests across Memory/Local/vosfs, then wire into
-the app.
+Every first-party command is one central annotated callback. Typer owns parsing,
+conversion, help, and framework usage errors. Command code owns mapped-source
+validation, semantic validation, filesystem work, output, and compatibility
+profiles. One invocation boundary owns source lifecycle and final failure
+status; one diagnostic taxonomy, lexical path owner, and current-operation
+drain adapter serve command code.
