@@ -4,14 +4,10 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue)](LICENSE)
 
-`fsspec-cli` is a library-only package that turns host-configured async
+`fsspec-cli` is a **library-only** package that turns host-configured async
 [`fsspec`](https://github.com/fsspec/filesystem_spec) filesystems into
 POSIX-shaped [Typer](https://typer.tiangolo.com/) commands you embed in your own
-CLI.
-
-It exposes a supported subset of file utilities plus a separately named reduced
-BSD/macOS-shaped `stat`. It does not claim POSIX, GNU, BSD/macOS, or all-fsspec
-compatibility. Supported host platforms are Linux and macOS.
+CLI. It installs no executable and no module entry point.
 
 ## Install
 
@@ -20,22 +16,6 @@ uv add "git+https://github.com/shinybrar/vosfs@main#subdirectory=src/fsspec-cli"
 ```
 
 ## Quickstart
-
-The sole stable seam is
-`App(sources, *, capabilities=None, extensions=()).typer_app`. Each source is an
-`AsyncFilesystemSource`: a callable returning a fresh async context manager that
-yields one `AbstractFileSystem` per command invocation. The host owns source
-configuration and cleanup; the library owns the yielded filesystem only for one
-invocation.
-
-Every first-party command is a central annotated callback. Typer owns parsing,
-type conversion, help, and framework usage errors; commands retain mapped-source
-and semantic validation plus filesystem execution behavior.
-
-The public host API exports `App`, `AppCapabilities`,
-`RecursionCapabilities`, `AsyncFilesystemSource`, `CommandCallback`, and
-`CommandContext`. The built-in callback is exported separately as
-`fsspec_cli.extensions.sign`.
 
 ```python
 from contextlib import asynccontextmanager
@@ -48,7 +28,7 @@ from fsspec_cli import App
 
 @asynccontextmanager
 async def data_source():
-    # Yield one async-capable filesystem for a single command invocation.
+    # One fresh async-capable filesystem per command invocation.
     yield AsyncFileSystemWrapper(fsspec.filesystem("memory"))
 
 
@@ -59,162 +39,47 @@ if __name__ == "__main__":
     app()
 ```
 
-Name a configured source as `name:/path` when running a command:
+Operands are spelled `name:/path`, naming one configured source:
 
 ```bash
 python app.py fs ls data:/
+python app.py fs cp local:/results.csv archive:/2026/results.csv
 ```
-
-Application capabilities are explicit constructor policy. They are validated
-and deep-snapshotted; no file, environment, plugin, source, or matrix loader is
-provided. Recursive copy defaults on and recursive removal defaults off. A host
-opts into guarded recursive removal explicitly:
-
-```python
-guarded = App(
-    {"data": data_source},
-    capabilities={"recursion": {"copy": True, "remove": True}},
-)
-```
-
-With `copy` false, the annotated `cp` callback omits `-R` and `-r`; Typer
-rejects either option with status `2` before operand or source work, and
-`cp --help` shows only file-copy parameters. With `remove` false or omitted,
-the annotated `rm` callback also omits `-R` and `-r`; Typer rejects either
-option before operand or source work, and `rm --help` omits both aliases.
-Setting `remove` true adds those options and is the host's assertion that every
-configured target satisfies the locked guarded recursive-removal profile. The
-command never infers that policy from a backend type, protocol, or matrix row.
-Extensions receive only the immutable source snapshot, never the capability
-policy.
-
-Backend-specific commands are opt-in extensions. For example, add `sign` only
-when the host wants to expose a filesystem's signed-URL capability:
-
-```python
-from fsspec_cli.extensions import sign
-
-signed_app = typer.Typer()
-signed_app.add_typer(
-    App({"data": data_source}, extensions=[sign]).typer_app,
-    name="fs",
-)
-```
-
-`sign data:/path` calls the selected filesystem's `sign` capability. A source
-without that capability exits nonzero with one `unsupported operation`
-diagnostic and no traceback. The extension does not infer support from backend
-type or protocol.
-
-Extensions are ordinary synchronous annotated callbacks. Their function name,
-docstring, and annotations define the command through Typer. Source-free
-callbacks need no context parameter; source-aware callbacks find the frozen
-source snapshot through `typer.Context`:
-
-```python
-from fsspec_cli import CommandCallback, CommandContext
-
-
-def about() -> None:
-    """Describe this host."""
-    typer.echo("Example filesystem host")
-
-
-def source_names(ctx: typer.Context) -> None:
-    """List configured source names."""
-    context = ctx.find_object(CommandContext)
-    assert context is not None
-    typer.echo("\n".join(context.sources))
-
-
-extensions: list[CommandCallback] = [about, source_names]
-extended = App({"data": data_source}, extensions=extensions)
-```
-
-`CommandContext` exposes only the immutable async filesystem source mapping.
-It does not expose application capabilities or private lifecycle, validation,
-or diagnostic helpers. When mounted under another Typer application,
-`ctx.find_object(...)` can still find that parent application's context object.
 
 ## Commands
 
-| Command | Summary |
+`ls` · `ll` · `du` · `find` · `tree` · `size` · `test` · `info` · `stat` ·
+`head` · `tail` · `cat` · `cp` · `mv` · `mkdir` · `rmdir` · `unlink` · `rm` ·
+`basename` · `dirname`, plus the opt-in `sign` extension.
+
+Recursive `cp -R` is on by default; recursive `rm -R` is **off** by default and
+must be enabled explicitly:
+
+```python
+App({"data": data_source}, capabilities={"recursion": {"remove": True}})
+```
+
+## Public API
+
+`App`, `AppCapabilities`, `RecursionCapabilities`, `AsyncFilesystemSource`,
+`CommandCallback`, `CommandContext`, and `fsspec_cli.extensions.sign`.
+
+## Documentation
+
+| For | Read |
 | --- | --- |
-| `ls`, `ll` | Names-only `ls`; adaptive long `ls -l` / `-lh`; inherent-long `ll` |
-| `du` | Recursive exact-byte usage; `-s` total only, `-h` human-readable |
-| `find` | Recursive file paths; `--maxdepth N`, `--type f\|d` |
-| `size` | Exact bytes for one or more mapped paths; batched by source |
-| `test` | Silent `-e`, `-d`, or `-f` predicate with shell-style status |
-| `head`, `tail` | Exact leading or trailing bytes via `-c N` |
-| `tree` | Unicode recursive tree; optional `--maxdepth N` |
-| `info` | One normalized metadata dictionary plus backend-specific `extra` values |
-| `sign` (opt-in) | Backend-signed URL when the selected source implements `sign` |
-| `cat` | Concatenate mapped files (and stdin `-`) to stdout |
-| `cp` | Metadata-verified file copy; verified two-operand directory copy with `-R` / `-r` |
-| `mv` | Metadata-verified same-source file move, single or multi-file into a directory |
-| `mkdir` | Create directories; `-p` creates parents |
-| `rmdir` | Remove empty directories |
-| `rm` | Remove files; `-d` empty dirs; guarded `-R` / `-r`; `-f` force; `-v` verbose |
-| `unlink` | XSI single-file removal |
-| `stat` | Reduced BSD/macOS-shaped file status |
-| `basename`, `dirname` | Source-free path-string slicing |
+| Embedding it: sources, lifecycle, capabilities, exit statuses | [Integration guide](https://shinybrar.github.io/vosfs/cli/integration/) |
+| What each command does | [Command reference](https://shinybrar.github.io/vosfs/cli/commands/) |
+| The public API | [API reference](https://shinybrar.github.io/vosfs/cli/api-reference/) |
+| The normative contract and its rationale | [`docs/design/fsspec-cli/`](../../docs/design/fsspec-cli/) |
+| Architecture decisions | [`docs/adr/`](../../docs/adr/) |
 
-`du` is recursive. On fsspec implementations that inherit the default async
-hook, it can traverse the complete subtree and read metadata for every file;
-remote sources may therefore make many requests. `-s` changes only the output,
-not the traversal cost.
+## Scope
 
-`find` is recursive unless `--maxdepth N` bounds it. It awaits one backend
-`_find` operation; inherited implementations may still walk directories and
-read metadata internally. `find` does not provide predicates, globbing, or
-`-exec`.
-
-`tree` renders one buffered Unicode hierarchy from a backend `_walk`. It is
-recursive unless `--maxdepth N` bounds it; remote sources may perform one
-listing request for every reached directory. One top-level `_walk` invocation
-does not mean one remote request.
-
-`cp -R source:/directory destination:/target` and `cp -r` copy one directory
-through a bounded 10,000-entry manifest and one-file host-local staging. The
-command supports same-source and cross-source routes, preserves empty
-directories, rejects links and special entries before mutation, and verifies
-the source manifest plus destination metadata before success. Mapped operand
-spelling reaches the selected backend literally; shared lexical helpers derive
-root, dot-segment, parent, basename, joining, and containment facts without
-rewriting that input. The command does not promise a snapshot, transaction,
-rollback, exact mirror, or POSIX metadata preservation.
-The operation uses one backend-neutral runner over required async hooks. Matrix
-support remains limited to the exact source forms and versions with qualifying
-evidence; this is not an all-fsspec claim.
-
-`rm -R source:/directory` and `rm -r` first build a bounded complete manifest
-through `_info` and `_ls(detail=True)`, reject roots, dot segments, links,
-special entries, and containment failures, then remove entries leaves-first
-through `_rm_file` and `_rmdir`. Success requires an absence check after every
-primitive and a final root-absence proof. Removal is sequential and non-atomic:
-failure or cancellation can leave confirmed earlier removals in place and the
-remaining tree present or uncertain. There is no prompt, rollback, retry,
-trash, recovery, or all-fsspec guarantee. Enable the capability only when the
-host has qualified every configured target for these concurrency and
-containment assumptions.
-
-`info [--] name:/path` awaits one backend `_info` call and pretty-prints every
-normalized metadata field plus backend-specific values under `extra`. Sparse
-fields remain `None`; bytes, datetimes, tuples, and mappings keep their Python
-representation instead of being forced through JSON. The existing `stat`
-command remains the stricter reduced BSD/macOS-shaped, Local-rich view and is
-behaviorally unchanged.
-
-`head -c N` and `tail -c N` make bounded `_cat_file` hook requests, but that
-does not promise a ranged physical transfer. Backend implementations may read a
-whole object and slice locally; in particular, `vosfs` does so because OpenCADC
-Cavern does not support HTTP Range.
-
-Each command locks an observable compatibility profile. The exhaustive
-per-command semantics, diagnostics, and tested-source evidence live in the
-design docs under [`docs/design/`](../../docs/design/), with the architecture
-decisions in [`docs/adr/`](../../docs/adr/). The package has no console entry
-point or module executable.
+`fsspec-cli` provides a shell-compatible *experience*: it renders what a backend
+can actually supply, in the shape a shell user expects, and omits the rest
+rather than inventing values. It does **not** claim POSIX, GNU, BSD/macOS, or
+all-fsspec compatibility. Supported host platforms are Linux and macOS.
 
 ## License
 

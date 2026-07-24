@@ -58,7 +58,14 @@ capability matrix — is the capability contract in
 ## Documentation
 
 The [vosfs documentation](https://shinybrar.github.io/vosfs/) contains the User
-Guide, credential details, scientific-stack examples, and public API reference.
+Guide, task-first [recipes](docs/user/recipes.md), symptom-keyed
+[troubleshooting](docs/user/troubleshooting.md), the public API reference, and
+the [`fsspec-cli`](docs/user/cli/index.md) integration guide.
+
+The design contract for `fsspec-cli` lives in
+[`docs/design/fsspec-cli/`](docs/design/fsspec-cli/) and the architecture
+decisions in [`docs/adr/`](docs/adr/).
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) to work on the project. Public
 documentation source lives under `docs/user/`;
 validate it locally with:

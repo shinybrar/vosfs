@@ -12,7 +12,7 @@ Client contract: fsspec 2026.6.0 at
 [`a2457004d03e0312f715f90f58873de5ab195a37`](https://github.com/fsspec/filesystem_spec/tree/a2457004d03e0312f715f90f58873de5ab195a37)
 
 Status: **Decision evidence retained.** Issue #145 selected the
-[reduced BSD/macOS `stat` command profile](../design/fsspec-cli-bsd-macos-stat-command-profile.md).
+[reduced BSD/macOS `stat` command profile](../design/fsspec-cli/commands.md#stat).
 This document remains the field-shape and reference evidence. It is not
 production capability negotiation and must not be cited as `ls -l` evidence.
 
@@ -150,8 +150,9 @@ the Local mapping is pinned to fsspec source, while numeric uid/gid and
 Issue #82 rejected POSIX `ls -l` because allocated blocks, ACL state, and
 complete common-row facts are unavailable. This `stat` research reuses that
 metadata evidence but selects a **separate**, deliberately non-POSIX command
-surface. Nothing here admits `-l` on `ls` or weakens
-[the long-listing rejection profile](../design/fsspec-cli-ls-long-rejection-profile.md).
+surface. Nothing here admitted `-l` on `ls`, which was rejected at the time;
+`ls -l` is now supported best-effort — see
+[why strict POSIX was the wrong bar](../design/fsspec-cli/lessons.md#12-strict-posix-was-the-wrong-bar).
 
 ## Primary sources
 
