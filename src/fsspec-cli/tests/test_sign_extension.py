@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 from typing import NoReturn
 
 import pytest
+import typer
+from click.utils import strip_ansi
 from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App
 from fsspec_cli.extensions import sign
@@ -18,9 +20,15 @@ def _source_must_not_run() -> NoReturn:
 
 
 def test_sign_command_is_absent_without_the_extension() -> None:
-    result = CliRunner().invoke(
+    parent = typer.Typer(add_completion=False)
+    parent.add_typer(
         App({"memory": _source_must_not_run}).typer_app,
-        ["sign", "memory:/report.csv"],
+        name="fs",
+    )
+
+    result = CliRunner().invoke(
+        parent,
+        ["fs", "sign", "memory:/report.csv"],
     )
 
     assert result.exit_code == 2
@@ -29,34 +37,63 @@ def test_sign_command_is_absent_without_the_extension() -> None:
 
 
 @pytest.mark.parametrize(
-    ("arguments", "diagnostic"),
+    ("arguments", "contexts"),
     [
-        ([], "sign: missing mapped filesystem operand\n"),
+        ([], ("Missing argument", "name:/path")),
         (
             ["--expiration", "10", "memory:/report.csv"],
-            "sign: --expiration: unsupported option\n",
+            ("No such option", "--expiration"),
         ),
-        (
-            ["memory:/one", "memory:/two"],
-            "sign: extra operand\n",
-        ),
-        (["bare"], "sign: bare: invalid mapped filesystem operand\n"),
-        (
-            ["other:/report.csv"],
-            "sign: other:/report.csv: unknown filesystem (known: memory)\n",
-        ),
+        (["memory:/one", "memory:/two"], ("unexpected extra argument", "memory:/two")),
     ],
 )
-def test_sign_extension_rejects_invalid_argv_before_source_entry(
+def test_typer_rejects_sign_syntax_before_source_entry(
     arguments: list[str],
-    diagnostic: str,
+    contexts: tuple[str, ...],
 ) -> None:
     result = CliRunner().invoke(
         App({"memory": _source_must_not_run}, extensions=[sign]).typer_app,
         ["sign", *arguments],
     )
 
+    assert (result.exit_code, result.stdout) == (2, "")
+    for context in contexts:
+        assert context in strip_ansi(result.stderr)
+
+
+@pytest.mark.parametrize(
+    ("operand", "diagnostic"),
+    [
+        ("bare", "sign: bare: invalid mapped filesystem operand\n"),
+        (
+            "other:/report.csv",
+            "sign: other:/report.csv: unknown filesystem (known: memory)\n",
+        ),
+    ],
+)
+def test_sign_mapped_validation_precedes_source_entry(
+    operand: str,
+    diagnostic: str,
+) -> None:
+    result = CliRunner().invoke(
+        App({"memory": _source_must_not_run}, extensions=[sign]).typer_app,
+        ["sign", operand],
+    )
+
     assert (result.exit_code, result.stdout, result.stderr) == (2, "", diagnostic)
+
+
+def test_sign_help_comes_from_callback_metadata() -> None:
+    result = CliRunner().invoke(
+        App({"memory": _source_must_not_run}, extensions=[sign]).typer_app,
+        ["sign", "--help"],
+    )
+    help_text = strip_ansi(result.stdout)
+
+    assert (result.exit_code, result.stderr) == (0, "")
+    assert "Usage: root sign [OPTIONS] {name:/path}" in help_text
+    assert "Create a backend-signed URL." in help_text
+    assert "name:/path" in help_text
 
 
 def test_sign_extension_calls_capability_on_the_invocation_loop() -> None:

@@ -2,16 +2,19 @@
 
 import asyncio
 import re
-from collections.abc import Mapping
-from typing import NoReturn, cast
+from dataclasses import FrozenInstanceError, dataclass
+from typing import Annotated, NoReturn, cast
 from unittest.mock import Mock
 
 import pytest
 import typer
+from click.utils import strip_ansi
 from fsspec_cli import (
     App,
     AppCapabilities,
     AsyncFilesystemSource,
+    CommandCallback,
+    CommandContext,
     RecursionCapabilities,
 )
 from typer.testing import CliRunner, Result
@@ -56,16 +59,22 @@ def test_app_rejects_invalid_source_names(name, error_type) -> None:
 
 
 def test_public_exports_include_application_capability_types() -> None:
+    def callback() -> None:
+        pass
+
     recursion: RecursionCapabilities = {"copy": True, "remove": False}
     capabilities: AppCapabilities = {"recursion": recursion}
+    typed_callback: CommandCallback = callback
 
     assert capabilities == {"recursion": {"copy": True, "remove": False}}
     assert AsyncFilesystemSource is not None
+    assert typed_callback() is None
     assert __import__("fsspec_cli").__all__ == [
         "App",
         "AppCapabilities",
         "AsyncFilesystemSource",
-        "CommandExtension",
+        "CommandCallback",
+        "CommandContext",
         "RecursionCapabilities",
     ]
 
@@ -275,31 +284,125 @@ def test_app_snapshots_its_source_mapping_once() -> None:
     assert result.stderr == ("ls: later:/docs: unknown filesystem (known: memory)\n")
 
 
-def test_app_registers_extensions_with_an_immutable_source_snapshot() -> None:
-    class RecordingExtension:
-        def register(
-            self,
-            typer_app: typer.Typer,
-            sources: Mapping[str, AsyncFilesystemSource],
-        ) -> None:
-            self.typer_app = typer_app
-            self.sources = sources
+def test_source_aware_callback_keeps_parent_context_and_frozen_sources() -> None:
+    @dataclass(frozen=True)
+    class HostContext:
+        label: str
+
+    observed: list[tuple[str, ...]] = []
+
+    def inspect_sources(ctx: typer.Context) -> None:
+        """Inspect configured sources."""
+        command_context = ctx.find_object(CommandContext)
+        host_context = ctx.find_object(HostContext)
+        assert command_context is not None
+        assert host_context is not None
+        observed.append((host_context.label, *command_context.sources))
+        with pytest.raises(TypeError):
+            cast("dict[str, AsyncFilesystemSource]", command_context.sources)[
+                "later"
+            ] = _source_must_not_run
+        with pytest.raises(FrozenInstanceError):
+            command_context.sources = {}  # type: ignore[misc]
+
+    parent = typer.Typer(add_completion=False)
+
+    @parent.callback()
+    def parent_root(ctx: typer.Context) -> None:
+        ctx.obj = HostContext("host")
 
     sources = {"memory": _source_must_not_run}
-    extension = RecordingExtension()
-    app = App(
-        sources,
-        capabilities={"recursion": {"copy": False, "remove": True}},
-        extensions=[extension],
+    parent.add_typer(
+        App(sources, extensions=[inspect_sources]).typer_app,
+        name="fs",
     )
     sources.clear()
 
-    assert extension.typer_app is app.typer_app
-    assert tuple(extension.sources) == ("memory",)
-    with pytest.raises(TypeError):
-        cast("dict[str, AsyncFilesystemSource]", extension.sources)["later"] = (
-            _source_must_not_run
-        )
+    result = CliRunner().invoke(parent, ["fs", "inspect-sources"])
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert observed == [("host", "memory")]
+
+
+def test_source_free_callback_and_help_are_defined_by_callback_metadata() -> None:
+    def echo_label(
+        label: Annotated[str, typer.Argument(help="Host label")],
+        prefix: Annotated[str, typer.Option("--prefix")] = "",
+    ) -> None:
+        """Echo one host label."""
+        typer.echo(f"{prefix}{label}")
+
+    parent = typer.Typer(add_completion=False)
+    parent.add_typer(
+        App({"memory": _source_must_not_run}, extensions=[echo_label]).typer_app,
+        name="fs",
+    )
+
+    result = CliRunner().invoke(
+        parent,
+        ["fs", "echo-label", "--prefix", "host-", "hello"],
+    )
+    help_result = CliRunner().invoke(parent, ["fs", "echo-label", "--help"])
+    help_text = strip_ansi(help_result.stdout)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "host-hello\n", "")
+    assert (help_result.exit_code, help_result.stderr) == (0, "")
+    assert "Echo one host label." in help_text
+    assert "Host label" in help_text
+    assert "--prefix" in help_text
+
+
+def test_duplicate_names_follow_core_first_and_extension_caller_order() -> None:
+    def head() -> None:
+        typer.echo("first")
+
+    def later_head() -> None:
+        typer.echo("second")
+
+    later_head.__name__ = "head"
+    parent = typer.Typer(add_completion=False)
+    parent.add_typer(
+        App(
+            {"memory": _source_must_not_run},
+            extensions=[head, later_head],
+        ).typer_app,
+        name="fs",
+    )
+
+    result = CliRunner().invoke(parent, ["fs", "head"])
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "second\n", "")
+
+
+def test_app_instances_keep_extension_contexts_isolated() -> None:
+    def source_names(ctx: typer.Context) -> None:
+        command_context = ctx.find_object(CommandContext)
+        assert command_context is not None
+        typer.echo(",".join(command_context.sources))
+
+    parent = typer.Typer(add_completion=False)
+    parent.add_typer(
+        App({"alpha": _source_must_not_run}, extensions=[source_names]).typer_app,
+        name="first",
+    )
+    parent.add_typer(
+        App({"beta": _source_must_not_run}, extensions=[source_names]).typer_app,
+        name="second",
+    )
+
+    first_result = CliRunner().invoke(parent, ["first", "source-names"])
+    second_result = CliRunner().invoke(parent, ["second", "source-names"])
+
+    assert (first_result.exit_code, first_result.stdout, first_result.stderr) == (
+        0,
+        "alpha\n",
+        "",
+    )
+    assert (second_result.exit_code, second_result.stdout, second_result.stderr) == (
+        0,
+        "beta\n",
+        "",
+    )
 
 
 def test_ls_escapes_each_known_name_in_an_unknown_name_diagnostic() -> None:

@@ -56,9 +56,9 @@ omission behavior, core-first caller order, immutable source snapshots,
 application-capability separation, and Typer command-conflict decisions remain
 accepted.
 
-The redesign is breaking `fsspec-cli` 0.5.0 work. Release Please therefore sets
-`bump-minor-pre-major` for `fsspec-cli`, making a breaking change from 0.4.x
-advance to 0.5.0 rather than 1.0.0. This policy does not apply to `vosfs`.
+The redesign is breaking `fsspec-cli` 0.6.0 work. Release Please therefore sets
+`bump-minor-pre-major` for `fsspec-cli`, making a breaking change from 0.5.x
+advance to 0.6.0 rather than 1.0.0. This policy does not apply to `vosfs`.
 
 ## Consequences
 

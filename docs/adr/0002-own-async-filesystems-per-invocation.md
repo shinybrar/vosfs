@@ -19,7 +19,9 @@ a later invocation. The source context exit is the generic cleanup interface;
 
 The stable v1 seam is the source mapping, snapshotted application capabilities,
 and extension selection accepted by
-[ADR 0004](0004-add-opt-in-command-extensions.md):
+[ADR 0004](0004-add-opt-in-command-extensions.md), with annotated extension
+callbacks and their immutable source context defined by
+[ADR 0005](0005-define-typer-owned-commands-and-callback-extensions.md):
 
 ```python
 App(
