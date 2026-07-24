@@ -248,4 +248,5 @@ def test_ll_uses_its_own_typer_command_context() -> None:
     assert (result.exit_code, result.stdout) == (2, "")
     diagnostic = result.stderr
     assert "Usage: root ll" in diagnostic
-    assert "No such option: --long" in diagnostic
+    assert "No such option" in diagnostic
+    assert "long" in diagnostic

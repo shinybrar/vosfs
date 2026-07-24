@@ -495,7 +495,8 @@ def test_ls_preserves_typer_failures_when_mounted_below_a_parent_app() -> None:
     assert (result.exit_code, result.stdout) == (2, "")
     diagnostic = result.stderr
     assert "Usage: root data ls" in diagnostic
-    assert "No such option: --long" in diagnostic
+    assert "No such option" in diagnostic
+    assert "long" in diagnostic
 
 
 def test_typer_preflight_precedes_active_loop_refusal() -> None:

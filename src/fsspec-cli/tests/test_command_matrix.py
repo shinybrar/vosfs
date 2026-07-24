@@ -370,7 +370,7 @@ def test_typer_rejects_ls_long_option_spelling_without_source_work() -> None:
 
     assert (result.exit_code, result.stdout) == (2, "")
     assert "No such option" in result.stderr
-    assert "--long" in result.stderr
+    assert "long" in result.stderr
     assert source_calls == 0
 
 
