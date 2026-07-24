@@ -12,6 +12,8 @@ from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App, AsyncFilesystemSource
 from typer.testing import CliRunner, Result
 
+from ._ansi import strip_ansi
+
 
 class _ListSubclass(list[str]):
     pass
@@ -313,7 +315,7 @@ def test_find_maxdepth_zero_filters_the_single_backend_call_to_the_root(
 def test_find_help_comes_from_typed_callback(arguments: list[str]) -> None:
     result = _invoke_find(arguments)
 
-    help_text = result.stdout
+    help_text = strip_ansi(result.stdout)
     assert (result.exit_code, result.stderr) == (0, "")
     assert "Usage: root find [OPTIONS] {name:/path}" in help_text
     assert "Find files recursively" in help_text
@@ -375,7 +377,7 @@ def test_find_usage_failures_are_typer_owned_and_source_free(
     result = _invoke_find(arguments)
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = result.stderr
+    diagnostic = strip_ansi(result.stderr)
     for context in contexts:
         assert context in diagnostic
 
@@ -386,7 +388,7 @@ def test_find_rejects_a_depth_too_large_for_the_runtime_deterministically() -> N
     result = _invoke_find(["--maxdepth", value, "memory:/docs"])
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = result.stderr
+    diagnostic = strip_ansi(result.stderr)
     assert "Invalid value" in diagnostic
     assert "--maxdepth" in diagnostic
 

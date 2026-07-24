@@ -14,6 +14,7 @@ from fsspec.implementations.memory import MemoryFileSystem
 from fsspec_cli import App
 from typer.testing import CliRunner
 
+from ._ansi import strip_ansi
 from ._matrix_support import (
     _block_network,
     _exercise_cat_profile,
@@ -369,8 +370,8 @@ def test_typer_rejects_ls_long_option_spelling_without_source_work() -> None:
     )
 
     assert (result.exit_code, result.stdout) == (2, "")
-    assert "No such option" in result.stderr
-    assert "long" in result.stderr
+    diagnostic = strip_ansi(result.stderr)
+    assert "No such option: --long" in diagnostic
     assert source_calls == 0
 
 

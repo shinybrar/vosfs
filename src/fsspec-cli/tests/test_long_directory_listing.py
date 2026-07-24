@@ -5,6 +5,7 @@ from types import MappingProxyType
 import pytest
 from fsspec_cli._listing import to_listing as normalize_listing
 
+from ._ansi import strip_ansi
 from ._support import _invoke_ll, _invoke_ls, _RecordingSource
 
 
@@ -246,7 +247,6 @@ def test_ll_uses_its_own_typer_command_context() -> None:
     result = _invoke_ll(["--long", "memory:/docs"])
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = result.stderr
+    diagnostic = strip_ansi(result.stderr)
     assert "Usage: root ll" in diagnostic
-    assert "No such option" in diagnostic
-    assert "long" in diagnostic
+    assert "No such option: --long" in diagnostic
