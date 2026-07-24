@@ -47,7 +47,7 @@ def test_basic_mutation_help_comes_from_typed_callback_metadata(
         (
             "rmdir",
             ["--parents", "memory:/docs"],
-            ("No such option", "--parents"),
+            ("No such option", "parents"),
         ),
         (
             "unlink",

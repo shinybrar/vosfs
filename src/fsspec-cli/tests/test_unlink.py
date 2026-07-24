@@ -107,7 +107,8 @@ def test_unlink_rejects_every_option_without_entering_sources(option: str) -> No
         assert "does not take a value" in result.stderr
     else:
         assert "No such option" in result.stderr
-        assert option[:2] in result.stderr
+        context = option[2:] if option.startswith("--") else option[:2]
+        assert context in result.stderr
 
 
 def test_unlink_accepts_operand_after_option_terminator() -> None:

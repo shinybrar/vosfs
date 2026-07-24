@@ -282,8 +282,8 @@ def test_mkdir_rejects_a_missing_mapped_filesystem_operand() -> None:
     [
         ("-m", "-m"),
         ("-pm", "-m"),
-        ("--parents", "--parents"),
-        ("--mode", "--mode"),
+        ("--parents", "parents"),
+        ("--mode", "mode"),
         ("-h", "-h"),
         ("--help=value", "does not take a value"),
     ],

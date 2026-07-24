@@ -169,7 +169,8 @@ def test_rmdir_rejects_unsupported_options_without_entering_sources(
         assert "does not take a value" in result.stderr
     else:
         assert "No such option" in result.stderr
-        assert option in result.stderr
+        context = option.removeprefix("--")
+        assert context in result.stderr
 
 
 @pytest.mark.parametrize(

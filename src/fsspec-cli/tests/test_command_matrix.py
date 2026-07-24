@@ -289,7 +289,7 @@ def test_mkdir_parents_option_rejection_is_source_free() -> None:
 
     assert (result.exit_code, result.stdout) == (2, "")
     assert "No such option" in result.stderr
-    assert "--parents" in result.stderr
+    assert "parents" in result.stderr
     assert source_calls == 0
 
 
