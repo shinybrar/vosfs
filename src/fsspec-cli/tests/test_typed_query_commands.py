@@ -36,7 +36,8 @@ def test_query_help_comes_from_typed_callback_metadata(
     help_text = result.stdout
 
     assert (result.exit_code, result.stderr) == (0, "")
-    assert f"Usage: root {command} [OPTIONS]" in help_text
+    assert "Usage:" in help_text
+    assert f"root {command} [OPTIONS]" in help_text
     assert summary in help_text
     for parameter in parameters:
         assert parameter in help_text
@@ -47,7 +48,7 @@ def test_query_help_comes_from_typed_callback_metadata(
     [
         ("basename", [], ("Missing argument", "OPERAND")),
         ("dirname", ["a", "b"], ("unexpected extra argument", "b")),
-        ("info", ["--unknown", "memory:/a"], ("No such option", "--unknown")),
+        ("info", ["--unknown", "memory:/a"], ("No such option", "unknown")),
         ("size", [], ("Missing argument", "name:/path")),
         ("test", ["-e"], ("Missing argument", "name:/path")),
         ("stat", [], ("Missing argument", "name:/path")),

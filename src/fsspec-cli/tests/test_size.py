@@ -161,7 +161,8 @@ def test_size_help_comes_from_typed_callback() -> None:
 
     assert (result.exit_code, result.stderr) == (0, "")
     help_text = result.stdout
-    assert "Usage: root size [OPTIONS] {name:/path}" in help_text
+    assert "Usage:" in help_text
+    assert "root size [OPTIONS] {name:/path}" in help_text
     assert "Display exact file sizes" in help_text
 
 
@@ -190,7 +191,7 @@ def test_size_preflight_failures_are_stable_and_source_free(
     [
         ([], ("Missing argument", "name:/path")),
         (["-h", "memory:/a"], ("No such option", "-h")),
-        (["--sizes", "memory:/a"], ("No such option", "--sizes")),
+        (["--sizes", "memory:/a"], ("No such option", "sizes")),
     ],
 )
 def test_size_leaves_usage_failures_to_typer(

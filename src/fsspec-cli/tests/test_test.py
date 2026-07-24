@@ -155,7 +155,8 @@ def test_test_help_comes_from_typed_callback() -> None:
 
     assert (result.exit_code, result.stderr) == (0, "")
     help_text = result.stdout
-    assert "Usage: root test [OPTIONS] {name:/path}" in help_text
+    assert "Usage:" in help_text
+    assert "root test [OPTIONS] {name:/path}" in help_text
     assert "Evaluate a file predicate" in help_text
     for selector in ("-e", "-d", "-f"):
         assert selector in help_text

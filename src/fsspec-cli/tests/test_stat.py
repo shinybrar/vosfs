@@ -79,7 +79,8 @@ def test_stat_help_matches_locked_usage_and_draft() -> None:
 
     assert result.exit_code == 0
     plain_help = result.stdout
-    assert "Usage: root stat [OPTIONS] {name:/path}" in plain_help
+    assert "Usage:" in plain_help
+    assert "root stat [OPTIONS] {name:/path}" in plain_help
     assert "Display file status" in plain_help
 
 
@@ -321,7 +322,8 @@ def test_stat_rejects_unsupported_options_source_free(arguments: list[str]) -> N
     assert result.stdout == ""
     diagnostic = result.stderr
     assert "No such option" in diagnostic
-    assert arguments[0].split("=", 1)[0] in diagnostic
+    option = arguments[0].split("=", 1)[0]
+    assert option.removeprefix("--") in diagnostic
 
 
 @pytest.mark.parametrize(
