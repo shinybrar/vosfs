@@ -52,17 +52,15 @@ source-form-, version-, and host-qualification-specific.
 
 ## 2. Capability and source-free preflight
 
-When `capabilities.recursion.remove` is false or omitted, a valid recursive
-invocation is rejected before recursive operand or path validation: status `2`,
-empty stdout, `rm: recursive removal disabled by application`, zero source
-factories, and zero filesystem work. An earlier invalid option retains the base
-first-error rule.
+When `capabilities.recursion.remove` is false or omitted, the selected annotated
+callback does not expose `-R` or `-r`. Typer rejects either option with status
+`2`, empty stdout, zero source factories, and zero filesystem work.
 
-When it is true, short-option tokens before the first operand MAY group only
-`R`, `r`, `f`, and `v`. At least one `R` or `r` is REQUIRED; repeated `R`, `r`,
-and `f` characters are idempotent. `v` MAY occur once. `--` ends option parsing.
-Options after the first operand, a second `v`, and every other option character
-or long option are unsupported.
+When it is true, Typer exposes short options `R`, `r`, `f`, and `v`; they MAY
+be grouped and placed before or after operands. At least one `R` or `r` is
+REQUIRED for this profile. Repeated `R`, `r`, and `f` characters are
+idempotent. `v` MAY occur once. A second `v` is a semantic usage error, while
+every unregistered option character or long alias is a Typer usage error.
 
 `-f` preserves its existing zero-operand behavior: an invocation containing
 `f` and no operands succeeds without source entry or output. Without `f`, zero

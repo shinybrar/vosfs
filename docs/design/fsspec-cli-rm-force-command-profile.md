@@ -16,14 +16,14 @@ This profile adds exact force behavior to base file-only `rm`:
 rm -f [-f...] [--] [name:/file...]
 ```
 
-`-f` is required. Repeated and grouped tokens containing only `f` are
-idempotent before operands. Zero operands succeed without source entry or
-output. Base file-only `rm` without `-f` remains a separate profile and still
-requires one mapped filesystem operand.
+`-f` is required. Repeated and grouped `f` flags are idempotent. Typer accepts
+the registered option before or after operands. Zero operands succeed without
+source entry or output. Base file-only `rm` without `-f` remains a separate
+profile and still requires one mapped filesystem operand.
 
-`--` ends option parsing. `-f` after an operand, `-i`, `-d`, `-R`/`-r`, `-v`,
-`-fv`/`-vf`, mixed groups, and long options are unsupported. Unsupported option
-tokens fail with status `2` before source entry.
+Without recursive removal selected, `-f` does not combine with `-d` or `-v`.
+Unregistered options and long aliases are Typer usage errors. Option
+relationship failures exit `2` before source entry.
 
 ## 2. Backend operation semantics
 

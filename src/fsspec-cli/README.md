@@ -71,12 +71,12 @@ guarded = App(
 With `copy` false, `cp -R` and `cp -r` exit `2` before operand or source work
 with `cp: recursive copy disabled by application`; `cp --help` retains the
 file-only wording. With `remove` false or omitted, `rm -R` and `rm -r` exit `2`
-before operand or source work with
-`rm: recursive removal disabled by application`. Setting `remove` true is the
-host's assertion that every configured target satisfies the locked guarded
-recursive-removal profile; the command never infers that policy from a backend
-type, protocol, or matrix row. Extensions receive only the immutable source
-snapshot, never the capability policy.
+before operand or source work with Typer's standard unknown-option diagnostic;
+`rm --help` omits `-R` and `-r`. Setting `remove` true adds those annotated
+options and is the host's assertion that every configured target satisfies the
+locked guarded recursive-removal profile. The command never infers that policy
+from a backend type, protocol, or matrix row. Extensions receive only the
+immutable source snapshot, never the capability policy.
 
 Backend-specific commands are opt-in extensions. For example, add `sign` only
 when the host wants to expose a filesystem's signed-URL capability:

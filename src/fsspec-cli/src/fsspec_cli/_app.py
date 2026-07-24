@@ -33,8 +33,8 @@ from ._info import _run_info
 from ._ls import _LsRequest, _run_ls
 from ._mkdir import _MkdirRequest, _run_mkdir
 from ._mv import _plan_mv, _run_mv
-from ._path import _has_final_dot_segment, _is_root
-from ._rm import _run_rm
+from ._path import _has_dot_segment, _has_final_dot_segment, _is_root
+from ._rm import _RmRequest, _run_rm
 from ._rmdir import _run_rmdir
 from ._size import _run_size
 from ._stat import _run_stat
@@ -120,7 +120,6 @@ def _snapshot_capabilities(capabilities: AppCapabilities | None) -> _Capabilitie
 # Commands that acquire mapped sources and run on the invocation event loop.
 _ASYNC_COMMANDS: tuple[_AsyncCommand, ...] = (
     ("cp", "Copy files or one directory with -R or -r", _run_cp, _RawCommand),
-    ("rm", "Remove files", _run_rm, _RawCommand),
 )
 
 
@@ -294,6 +293,120 @@ class App:
             mapped = destructive_operand("unlink", operand)
             _ensure_no_active_event_loop("unlink")
             asyncio.run(_run_unlink("unlink", mapped, self._sources))
+
+        def run_rm(
+            operands: list[str] | None,
+            *,
+            directory: bool,
+            force: bool,
+            verbose: int,
+            recursive: bool = False,
+        ) -> None:
+            if verbose > 1:
+                _usage_error("rm", "-v: may be supplied once")
+            if directory and (force or verbose or recursive):
+                _usage_error("rm", "-d: cannot combine with other options")
+            if not recursive and force and verbose:
+                _usage_error("rm", "-f: cannot combine with -v")
+            spellings = operands or []
+            if not spellings and not force:
+                _usage_error("rm", "missing mapped filesystem operand")
+            mapped = tuple(
+                _parse_mapped_operand("rm", spelling, self._sources)
+                for spelling in spellings
+            )
+            for spelling, operand in zip(spellings, mapped, strict=True):
+                rejected = _is_root(operand.path) or (
+                    _has_dot_segment(operand.path)
+                    if recursive
+                    else _has_final_dot_segment(operand.path)
+                )
+                if rejected:
+                    rendered = _render_diagnostic_value(spelling)
+                    _usage_error("rm", f"{rendered}: rejected path")
+            _ensure_no_active_event_loop("rm")
+            asyncio.run(
+                _run_rm(
+                    "rm",
+                    _RmRequest(
+                        force=force,
+                        directory=directory,
+                        recursive=recursive,
+                        verbose=bool(verbose),
+                        operands=mapped,
+                    ),
+                    self._sources,
+                )
+            )
+
+        if self._capabilities.recursive_remove:
+
+            @self.typer_app.command(name="rm")
+            def recursive_rm(
+                operands: Annotated[
+                    list[str] | None,
+                    typer.Argument(metavar="name:/path"),
+                ] = None,
+                *,
+                directory: Annotated[
+                    bool,
+                    typer.Option("-d", help="Remove empty directories."),
+                ] = False,
+                force: Annotated[
+                    bool,
+                    typer.Option("-f", help="Ignore missing operands."),
+                ] = False,
+                verbose: Annotated[
+                    int,
+                    typer.Option("-v", count=True, help="Print removed operands."),
+                ] = 0,
+                recursive: Annotated[
+                    bool,
+                    typer.Option(
+                        "-R",
+                        "-r",
+                        help="Remove directory trees with guarded traversal.",
+                    ),
+                ] = False,
+            ) -> None:
+                """Remove files or directories with guarded -R or -r."""
+                run_rm(
+                    operands,
+                    directory=directory,
+                    force=force,
+                    verbose=verbose,
+                    recursive=recursive,
+                )
+
+        else:
+
+            @self.typer_app.command(name="rm")
+            def rm(
+                operands: Annotated[
+                    list[str] | None,
+                    typer.Argument(metavar="name:/path"),
+                ] = None,
+                *,
+                directory: Annotated[
+                    bool,
+                    typer.Option("-d", help="Remove empty directories."),
+                ] = False,
+                force: Annotated[
+                    bool,
+                    typer.Option("-f", help="Ignore missing operands."),
+                ] = False,
+                verbose: Annotated[
+                    int,
+                    typer.Option("-v", count=True, help="Print removed operands."),
+                ] = 0,
+            ) -> None:
+                """Remove files; -d removes empty directories."""
+                run_rm(
+                    operands,
+                    directory=directory,
+                    force=force,
+                    verbose=verbose,
+                )
 
         @self.typer_app.command()
         def basename(
@@ -547,21 +660,6 @@ class App:
                     partial(
                         _run_cp,
                         recursive_enabled=self._capabilities.recursive_copy,
-                    ),
-                    registered_command[3],
-                )
-            elif registered_command[0] == "rm":
-                help_text = (
-                    "Remove files or directories with guarded -R or -r"
-                    if self._capabilities.recursive_remove
-                    else "Remove files; -d removes empty directories"
-                )
-                command = (
-                    registered_command[0],
-                    help_text,
-                    partial(
-                        _run_rm,
-                        recursive_enabled=self._capabilities.recursive_remove,
                     ),
                     registered_command[3],
                 )
