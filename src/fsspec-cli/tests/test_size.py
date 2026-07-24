@@ -8,25 +8,12 @@ from typing import TYPE_CHECKING, Literal, NoReturn
 
 import pytest
 import typer
-from click.utils import strip_ansi
 from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App, AsyncFilesystemSource
 from typer.testing import CliRunner, Result
 
 if TYPE_CHECKING:
     from types import TracebackType
-
-_EXACT_SIZE_HELP = (
-    "                                                                                \n"
-    " Usage: size [--] name:/path...                                                 \n"
-    "                                                                                \n"
-    " Display exact file sizes                                                       \n"
-    "                                                                                \n"
-    "╭─ Options ────────────────────────────────────────────────────────────────────╮\n"
-    "│ --help          Show this message and exit.                                  │\n"
-    "╰──────────────────────────────────────────────────────────────────────────────╯\n"
-    "\n"
-)
 
 
 @dataclass(frozen=True)
@@ -169,23 +156,18 @@ def test_size_batches_by_first_source_reference_and_preserves_operand_order() ->
     assert local.lifecycle == ["factory", "enter", "exit"]
 
 
-@pytest.mark.parametrize("arguments", [["--help"], ["memory:/a", "--help"]])
-def test_size_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
-    result = _invoke_size(arguments)
+def test_size_help_comes_from_typed_callback() -> None:
+    result = _invoke_size(["--help"])
 
-    assert (result.exit_code, strip_ansi(result.stdout), result.stderr) == (
-        0,
-        _EXACT_SIZE_HELP,
-        "",
-    )
+    assert (result.exit_code, result.stderr) == (0, "")
+    help_text = result.stdout
+    assert "Usage: root size [OPTIONS] {name:/path}" in help_text
+    assert "Display exact file sizes" in help_text
 
 
 @pytest.mark.parametrize(
     ("arguments", "diagnostic"),
     [
-        ([], "size: missing mapped filesystem operand\n"),
-        (["-h", "memory:/a"], "size: -h: unsupported option\n"),
-        (["--sizes", "memory:/a"], "size: --sizes: unsupported option\n"),
         (
             ["memory:relative"],
             "size: memory:relative: invalid mapped filesystem operand\n",
@@ -201,6 +183,26 @@ def test_size_preflight_failures_are_stable_and_source_free(
     result = _invoke_size(arguments)
 
     assert (result.exit_code, result.stdout, result.stderr) == (2, "", diagnostic)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "contexts"),
+    [
+        ([], ("Missing argument", "name:/path")),
+        (["-h", "memory:/a"], ("No such option", "-h")),
+        (["--sizes", "memory:/a"], ("No such option", "--sizes")),
+    ],
+)
+def test_size_leaves_usage_failures_to_typer(
+    arguments: list[str],
+    contexts: tuple[str, ...],
+) -> None:
+    result = _invoke_size(arguments)
+
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = result.stderr
+    for context in contexts:
+        assert context in diagnostic
 
 
 def test_size_accepts_the_option_terminator() -> None:

@@ -436,11 +436,10 @@ def test_basename_extra_operand_rejection_is_source_free() -> None:
         ["basename", "a", "b", "c"],
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "basename: extra operand\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = result.stderr
+    assert "unexpected extra argument" in diagnostic
+    assert "c" in diagnostic
     assert source_calls == 0
 
 
@@ -457,11 +456,10 @@ def test_basename_option_rejection_is_source_free() -> None:
         ["basename", "-a", "a"],
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "basename: -a: unsupported option\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = result.stderr
+    assert "No such option" in diagnostic
+    assert "-a" in diagnostic
     assert source_calls == 0
 
 
@@ -499,11 +497,10 @@ def test_dirname_option_rejection_is_source_free() -> None:
         ["dirname", "-a", "a"],
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "dirname: -a: unsupported option\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = result.stderr
+    assert "No such option" in diagnostic
+    assert "-a" in diagnostic
     assert source_calls == 0
 
 
@@ -1414,9 +1411,8 @@ def test_stat_option_rejection_is_source_free() -> None:
         ["-l", "memory:/docs/notes.txt"],
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "stat: -l: unsupported option\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = result.stderr
+    assert "No such option" in diagnostic
+    assert "-l" in diagnostic
     assert source_calls == 0
