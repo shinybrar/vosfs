@@ -29,6 +29,7 @@ def test_ls_preflight_diagnostic_escapes_concrete_command_label(capsys) -> None:
         f"{_RENDERED_COMMAND}: bad: invalid mapped filesystem operand\n"
     )
 
+
 def test_active_loop_refusal_escapes_concrete_command_label(capsys) -> None:
     ensure_no_active_event_loop = getattr(
         app_module,

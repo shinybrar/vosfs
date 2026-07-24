@@ -209,7 +209,9 @@ class App:
         for extension in extensions:
             self.typer_app.command()(extension)
 
-    def _register_commands(self) -> None:  # noqa: C901 - central command surface.
+    def _register_commands(  # noqa: C901, PLR0915 - central command surface.
+        self,
+    ) -> None:
         @self.typer_app.callback()
         def root(ctx: typer.Context) -> None:
             ctx.obj = CommandContext(self._sources)
