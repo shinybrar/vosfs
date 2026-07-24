@@ -17,6 +17,7 @@ from ._support import (
 )
 
 _MOVE_FAILED = "move failed"
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def _source(
@@ -37,14 +38,21 @@ def _invoke(source: _RecordingSource, *arguments: str):
     return CliRunner().invoke(App({"memory": source}).typer_app, ["mv", *arguments])
 
 
-def test_mv_help_explains_cross_source_rejection() -> None:
+def _plain(text: str) -> str:
+    return " ".join(_ANSI_ESCAPE.sub("", text).replace("│", " ").split())
+
+
+def test_mv_help_comes_from_typed_callback() -> None:
     result = CliRunner().invoke(
         App({"memory": _source_must_not_run}).typer_app, ["mv", "--help"]
     )
-    help_text = " ".join(result.stdout.split())
+    help_text = _plain(result.stdout)
 
     assert result.exit_code == 0
+    assert "Usage:" in help_text
+    assert "name:/path" in help_text
     assert "Move or rename files" in help_text
+    assert "source files followed by one destination" in help_text
     assert result.stderr == ""
 
 
@@ -200,6 +208,28 @@ def test_mv_resolves_directory_target_and_replaces_file() -> None:
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     assert source.file_contents == {"/docs/out/notes.txt": b"new"}
+
+
+def test_mv_passes_literal_source_destination_and_parent_paths_to_backend() -> None:
+    source = _source(
+        contents={"/docs//./notes.txt": b"payload"},
+        directories={"/", "/docs//.", "/out//."},
+    )
+
+    result = _invoke(
+        source,
+        "memory:/docs//./notes.txt",
+        "memory:/out//./moved.txt",
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.file_contents == {"/out//./moved.txt": b"payload"}
+    assert [(event[2], event[3]) for event in source.events if event[0] == "mv"] == [
+        ("/docs//./notes.txt", "/out//./moved.txt")
+    ]
+    assert ("info", 1, "/out//.") in [
+        event[:3] for event in source.events if event[0] == "info"
+    ]
 
 
 def test_mv_moves_multiple_files_into_existing_directory_in_argv_order() -> None:
@@ -547,27 +577,55 @@ def test_mv_rejects_missing_destination_parent_without_mutation() -> None:
 
 
 @pytest.mark.parametrize(
+    ("arguments", "contexts"),
+    [
+        (
+            ("-f", "memory:/docs/notes.txt", "memory:/docs/moved.txt"),
+            ("No such option", "-f"),
+        ),
+        (
+            ("-i", "memory:/docs/notes.txt", "memory:/docs/moved.txt"),
+            ("No such option", "-i"),
+        ),
+        (
+            ("--interactive", "memory:/docs/notes.txt", "memory:/docs/moved.txt"),
+            ("No such option", "interactive"),
+        ),
+        (
+            ("--help=value",),
+            ("does not take a value", "help"),
+        ),
+        (
+            (),
+            ("Missing argument", "name:/path"),
+        ),
+        (
+            ("memory:/docs/notes.txt",),
+            ("at least one source and one destination", "name:/path"),
+        ),
+    ],
+)
+def test_mv_leaves_usage_failures_to_typer(
+    arguments: tuple[str, ...],
+    contexts: tuple[str, ...],
+) -> None:
+    result = CliRunner().invoke(
+        App({"memory": _source_must_not_run}).typer_app,
+        ["mv", *arguments],
+    )
+
+    assert (result.exit_code, result.stdout) == (2, "")
+    stderr = _plain(result.stderr)
+    for context in contexts:
+        assert context in stderr
+
+
+@pytest.mark.parametrize(
     ("arguments", "diagnostic"),
     [
         (
             ("memory:/docs/notes.txt", "other:/docs/moved.txt"),
             "mv: cross-source move unsupported\n",
-        ),
-        (
-            ("-f", "memory:/docs/notes.txt", "memory:/docs/moved.txt"),
-            "mv: -f: unsupported option\n",
-        ),
-        (
-            ("-i", "memory:/docs/notes.txt", "memory:/docs/moved.txt"),
-            "mv: -i: unsupported option\n",
-        ),
-        (
-            ("--interactive", "memory:/docs/notes.txt", "memory:/docs/moved.txt"),
-            "mv: --interactive: unsupported option\n",
-        ),
-        (
-            ("memory:/docs/notes.txt",),
-            "mv: missing mapped filesystem operand\n",
         ),
         (
             (
@@ -601,9 +659,13 @@ def test_mv_rejects_missing_destination_parent_without_mutation() -> None:
             ("not-mapped", "memory:/docs/one.txt", "memory:/docs/out"),
             "mv: not-mapped: invalid mapped filesystem operand\n",
         ),
+        (
+            ("--", "-f", "memory:/docs/moved.txt"),
+            "mv: -f: invalid mapped filesystem operand\n",
+        ),
     ],
 )
-def test_mv_rejects_unsupported_shapes_without_source_entry(
+def test_mv_validates_every_mapped_input_before_source_acquisition(
     arguments: tuple[str, ...], diagnostic: str
 ) -> None:
     result = CliRunner().invoke(
@@ -633,15 +695,6 @@ def test_mv_rejects_directory_source_before_mutation() -> None:
     assert [event[:3] for event in source.events if event[0] == "info"] == [
         ("info", 1, "/docs")
     ]
-
-
-def test_mv_help_discloses_directory_rejection() -> None:
-    result = _invoke(_source(), "--help")
-
-    assert result.exit_code == 0
-    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
-    assert "Move or rename files" in " ".join(plain_help.split())
-    assert result.stderr == ""
 
 
 def test_mv_reports_mutation_exception_as_uncertain_residue() -> None:

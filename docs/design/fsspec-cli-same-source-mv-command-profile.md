@@ -18,6 +18,12 @@ file operands into an existing directory are covered by the
 A directory source enters its source, then `_info` reports `is a directory`
 with status `1`.
 
+One central annotated Typer callback owns the variadic mapped-operand
+interface. Typer owns option parsing, option termination, help, operand
+collection, and usage-error rendering. The callback requires at least one
+source plus one destination, then validates every mapped spelling and
+configured source name before event-loop entry or source acquisition.
+
 Target resolution matches verified same-source `cp`: destination directory gets
 source basename, existing files may replace, and resolved parent must exist as a
 directory.

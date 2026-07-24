@@ -32,7 +32,7 @@ from ._head_tail import _run_head, _run_tail
 from ._info import _run_info
 from ._ls import _LsRequest, _run_ls
 from ._mkdir import _MkdirRequest, _run_mkdir
-from ._mv import _run_mv
+from ._mv import _plan_mv, _run_mv
 from ._path import _has_final_dot_segment, _is_root
 from ._rm import _run_rm
 from ._rmdir import _run_rmdir
@@ -120,7 +120,6 @@ def _snapshot_capabilities(capabilities: AppCapabilities | None) -> _Capabilitie
 # Commands that acquire mapped sources and run on the invocation event loop.
 _ASYNC_COMMANDS: tuple[_AsyncCommand, ...] = (
     ("cp", "Copy files or one directory with -R or -r", _run_cp, _RawCommand),
-    ("mv", "Move or rename files", _run_mv, _RawCommand),
     ("rm", "Remove files", _run_rm, _RawCommand),
 )
 
@@ -511,6 +510,28 @@ class App:
                     self._sources,
                 )
             )
+
+        @self.typer_app.command()
+        def mv(
+            operands: Annotated[
+                list[str],
+                typer.Argument(
+                    metavar="name:/path",
+                    help="One or more source files followed by one destination.",
+                ),
+            ],
+        ) -> None:
+            """Move or rename files on one mapped filesystem."""
+            if len(operands) < 2:  # noqa: PLR2004 - command arity.
+                message = "requires at least one source and one destination"
+                raise typer.BadParameter(message, param_hint="name:/path")
+            mapped = tuple(
+                _parse_mapped_operand("mv", operand, self._sources)
+                for operand in operands
+            )
+            plan = _plan_mv("mv", mapped)
+            _ensure_no_active_event_loop("mv")
+            asyncio.run(_run_mv("mv", plan, self._sources))
 
         for registered_command in _ASYNC_COMMANDS:
             command = registered_command
