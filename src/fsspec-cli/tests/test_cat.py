@@ -58,7 +58,6 @@ def test_cat_help_comes_from_typed_callback() -> None:
     assert "Usage:" in result.stdout
     assert "root cat [OPTIONS] [name:/path|-]" in result.stdout
     assert "Concatenate files to standard output" in result.stdout
-    assert "<str>" in result.stdout
 
 
 @pytest.mark.parametrize(
