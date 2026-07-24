@@ -556,11 +556,9 @@ def test_cat_u_rejection_is_source_free() -> None:
     app = App({"memory": source})
     result = _invoke_cat(app, ["-u", "memory:/file"])
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "cat: -u: unsupported option\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert "No such option" in result.stderr
+    assert "-u" in result.stderr
 
 
 def test_adapted_memory_cat_stdin_dash_mixed_order(

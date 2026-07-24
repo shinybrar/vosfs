@@ -15,7 +15,7 @@ from fsspec import AbstractFileSystem
 from typer.core import TyperCommand
 
 from ._basename import _run_basename
-from ._cat import _run_cat
+from ._cat import _run_cat, _StdinOperand
 from ._command import _parse_mapped_operand, _raw_arguments, _RawCommand
 from ._cp import _run_cp
 from ._diagnostics import _render_diagnostic_prefix
@@ -125,7 +125,6 @@ _ASYNC_COMMANDS: tuple[_AsyncCommand, ...] = (
         partial(_run_ls, long_by_default=True),
         _RawCommand,
     ),
-    ("cat", "Concatenate files to standard output", _run_cat, _RawCommand),
     ("du", "Estimate file space usage", _run_du, _DuCommand),
     ("find", "Find files recursively", _run_find, _FindCommand),
     ("size", "Display exact file sizes", _run_size, _SizeCommand),
@@ -240,6 +239,23 @@ class App:
             mapped = _parse_mapped_operand("tail", operand, self._sources)
             _ensure_no_active_event_loop("tail")
             asyncio.run(_run_tail("tail", count, mapped, self._sources))
+
+        @self.typer_app.command()
+        def cat(
+            operands: Annotated[
+                list[str] | None,
+                typer.Argument(metavar="name:/path|-"),
+            ] = None,
+        ) -> None:
+            """Concatenate files to standard output."""
+            parsed = tuple(
+                _StdinOperand()
+                if operand == "-"
+                else _parse_mapped_operand("cat", operand, self._sources)
+                for operand in operands or ("-",)
+            )
+            _ensure_no_active_event_loop("cat")
+            asyncio.run(_run_cat("cat", parsed, self._sources))
 
         for name, help_text, source_free_runner in _SOURCE_FREE_COMMANDS:
             self._register_source_free(name, help_text, source_free_runner)

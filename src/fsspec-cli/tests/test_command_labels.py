@@ -8,6 +8,7 @@ import fsspec_cli._app as app_module
 import pytest
 import typer
 from fsspec_cli._cat import _run_cat
+from fsspec_cli._command import _MappedOperand
 from fsspec_cli._ls import _preflight as _ls_preflight
 from fsspec_cli._ls import _run_ls
 from fsspec_cli._mkdir import _preflight as _mkdir_preflight
@@ -192,7 +193,13 @@ def test_cat_output_failure_diagnostic_uses_concrete_command_label(
     monkeypatch.setattr("fsspec_cli._cat._binary_stdout", _FailStdout)
 
     with pytest.raises(typer.Exit) as caught:
-        asyncio.run(_run_cat(_COMMAND, ("memory:/file",), {"memory": source}))
+        asyncio.run(
+            _run_cat(
+                _COMMAND,
+                (_MappedOperand("memory:/file", "memory", "/file"),),
+                {"memory": source},
+            )
+        )
 
     assert caught.value.exit_code == 1
     assert capsys.readouterr().err == (

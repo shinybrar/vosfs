@@ -33,19 +33,49 @@ def _invoke_cat(
 
 
 @pytest.mark.parametrize(
+    ("arguments", "contexts"),
+    [
+        (["-u", "memory:/file"], ("No such option", "-u")),
+        (["-A", "memory:/file"], ("No such option", "-A")),
+        (["--help=x", "memory:/file"], ("does not take a value", "help")),
+    ],
+)
+def test_cat_leaves_usage_failures_to_typer(
+    arguments: list[str],
+    contexts: tuple[str, ...],
+) -> None:
+    result = _invoke_cat(arguments)
+
+    assert (result.exit_code, result.stdout_bytes) == (2, b"")
+    for context in contexts:
+        assert context in result.stderr
+
+
+def test_cat_help_comes_from_typed_callback() -> None:
+    result = _invoke_cat(["--help"])
+
+    assert (result.exit_code, result.stderr) == (0, "")
+    assert "Usage:" in result.stdout
+    assert "root cat [OPTIONS] [name:/path|-]" in result.stdout
+    assert "Concatenate files to standard output" in result.stdout
+    assert "<str>" in result.stdout
+
+
+@pytest.mark.parametrize(
     ("arguments", "stderr"),
     [
-        (["-u", "memory:/file"], "cat: -u: unsupported option\n"),
-        (["-A", "memory:/file"], "cat: -A: unsupported option\n"),
-        (["--help=x", "memory:/file"], "cat: --help=x: unsupported option\n"),
         (["/bare"], "cat: /bare: invalid mapped filesystem operand\n"),
         (
             ["memory:relative"],
             "cat: memory:relative: invalid mapped filesystem operand\n",
         ),
+        (
+            ["memory:/valid", "unknown:/file"],
+            "cat: unknown:/file: unknown filesystem (known: memory)\n",
+        ),
     ],
 )
-def test_cat_preflight_rejects_unsupported_shapes(
+def test_cat_validates_every_mapped_input_before_source_acquisition(
     arguments: list[str],
     stderr: str,
 ) -> None:
@@ -922,6 +952,18 @@ def test_cat_dash_forwards_binary_stdin_verbatim(
     assert result.stderr == ""
 
 
+def test_cat_accepts_option_terminator_before_stdin(monkeypatch) -> None:
+    _install_stdin(monkeypatch, io.BytesIO(b"stdin"))
+
+    result = _invoke_cat(["--", "-"])
+
+    assert (result.exit_code, result.stdout_bytes, result.stderr) == (
+        0,
+        b"stdin",
+        "",
+    )
+
+
 def test_cat_short_read_stdin_still_emits_all_bytes(monkeypatch) -> None:
     payload = b"abcdefghij"
     _install_stdin(monkeypatch, _ShortReadStdin(payload, chunk=3))
@@ -1261,23 +1303,6 @@ def test_cat_stops_on_stdout_failure_during_stdin_at_each_position(
         event[0] == "get_file" and event[2] == "/later" for event in source.events
     )
     assert all(not Path(path).exists() for path in temps)
-
-
-def test_cat_u_remains_unsupported_without_stdin_or_sources(monkeypatch) -> None:
-    class _ForbiddenStdin(io.RawIOBase):
-        def readable(self) -> bool:
-            return True
-
-        def read(self, size: int = -1) -> bytes:  # type: ignore[override]
-            del size
-            raise AssertionError
-
-    _install_stdin(monkeypatch, _ForbiddenStdin())
-    result = _invoke_cat(["-u"], sources={"memory": _source_must_not_run})
-
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == "cat: -u: unsupported option\n"
 
 
 def test_cat_continues_after_missing_file_before_and_after_stdin(monkeypatch) -> None:

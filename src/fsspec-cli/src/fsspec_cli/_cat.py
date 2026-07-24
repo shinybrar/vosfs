@@ -1,4 +1,4 @@
-"""Raw Typer parsing and async execution for mapped-file ``cat``."""
+"""Binary execution for typed mapped-file ``cat``."""
 
 from __future__ import annotations
 
@@ -13,23 +13,19 @@ from typing import TYPE_CHECKING, BinaryIO
 import typer
 
 from ._command import (
-    _BROKEN_PIPE_EXIT_CODE,
     _binary_stdout,
     _BinaryWriter,
+    _CommandFailureError,
     _Failure,
     _MappedOperand,
-    _parse_mapped_operand,
     _render_failure,
     _render_output_failure,
-    _usage_error,
+    _run_mapped_command,
     _write_binary,
 )
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
-from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
-
     from fsspec.asyn import AsyncFileSystem
 
     from ._app import AsyncFilesystemSource
@@ -46,41 +42,9 @@ _CatOperand = _MappedOperand | _StdinOperand
 
 
 @dataclass(frozen=True)
-class _CatRequest:
-    operands: tuple[_CatOperand, ...]
-
-
-@dataclass(frozen=True)
 class _StagingFailure:
     operand: _CatOperand
     error: Exception
-
-
-def _preflight(
-    command: str,
-    raw_arguments: tuple[str, ...],
-    known_names: Collection[str],
-) -> _CatRequest:
-    operands: list[_CatOperand] = []
-    options_active = True
-
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            continue
-        if argument == "-":
-            operands.append(_StdinOperand())
-            continue
-        if options_active and argument.startswith("-"):
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: unsupported option")
-
-        operands.append(_parse_mapped_operand(command, argument, known_names))
-
-    if not operands:
-        operands.append(_StdinOperand())
-
-    return _CatRequest(operands=tuple(operands))
 
 
 def _binary_stdin() -> BinaryIO:
@@ -400,12 +364,12 @@ async def _emit_mapped_operand(
 
 async def _emit_operands(
     command: str,
-    request: _CatRequest,
+    operands: tuple[_CatOperand, ...],
     filesystems: Mapping[str, AsyncFileSystem],
     progress: _CatProgress,
     ownership: _CatOwnership,
 ) -> None:
-    for operand in request.operands:
+    for operand in operands:
         if progress.output_error is not None:
             return
         if isinstance(operand, _StdinOperand):
@@ -422,41 +386,33 @@ async def _emit_operands(
 
 async def _run_cat(
     command: str,
-    raw_arguments: tuple[str, ...],
+    operands: tuple[_CatOperand, ...],
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    request = _preflight(command, raw_arguments, sources)
-    invocation = _SourceInvocation(command, sources)
-    progress = _CatProgress(failures=[])
-    ownership = _CatOwnership(set(), {}, {})
-    succeeded = False
-    try:
-        names = dict.fromkeys(
-            operand.name
-            for operand in request.operands
-            if isinstance(operand, _MappedOperand)
-        )
-        filesystems = await invocation.acquire(names)
-        if filesystems is not None:
-            await _emit_operands(command, request, filesystems, progress, ownership)
-            succeeded = progress.succeeded
-    finally:
-        ownership_errors = _sweep_ownership(ownership)
-        if ownership_errors:
-            succeeded = False
-        for temporary, error in ownership_errors.items():
-            operand = ownership.temporary_operands[temporary]
-            _render_staging_failure(command, operand, error)
-            progress.staging_cleanup_error = error
-        cleanup_failed = await invocation.close_with_command_error(
-            progress.command_error()
-        )
-    if not succeeded or cleanup_failed:
-        if (
-            not cleanup_failed
-            and not progress.failures
-            and progress.staging_cleanup_error is None
-            and isinstance(progress.output_error, BrokenPipeError)
-        ):
-            raise typer.Exit(_BROKEN_PIPE_EXIT_CODE)
-        raise typer.Exit(1)
+    mapped = tuple(
+        operand for operand in operands if isinstance(operand, _MappedOperand)
+    )
+
+    async def execute(filesystems: Mapping[str, AsyncFileSystem]) -> None:
+        progress = _CatProgress(failures=[])
+        ownership = _CatOwnership(set(), {}, {})
+        try:
+            await _emit_operands(
+                command,
+                operands,
+                filesystems,
+                progress,
+                ownership,
+            )
+        finally:
+            for temporary, error in _sweep_ownership(ownership).items():
+                operand = ownership.temporary_operands[temporary]
+                _render_staging_failure(command, operand, error)
+                progress.staging_cleanup_error = error
+        if not progress.succeeded:
+            raise _CommandFailureError(
+                error=progress.command_error(),
+                reported=True,
+            )
+
+    await _run_mapped_command(command, mapped, sources, execute)
