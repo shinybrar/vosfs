@@ -31,6 +31,23 @@ def test_rmdir_removes_one_empty_directory_without_stdout() -> None:
     assert [event[0] for event in events].count("ls") == 0
 
 
+def test_rmdir_passes_nonfinal_dot_and_separator_spelling_to_backend() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events, info_result={"type": "directory"})
+
+    result = _invoke_rmdir(
+        ["memory:/docs//./empty/"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [event[2] for event in events if event[0] in {"info", "rmdir"}] == [
+        "/docs//./empty/",
+        "/docs//./empty/",
+        "/docs//./empty/",
+    ]
+
+
 def test_rmdir_acquires_distinct_sources_before_reusing_them() -> None:
     events: list[tuple[object, ...]] = []
     shared_source = _RecordingSource(events, info_result={"type": "directory"})
@@ -133,9 +150,9 @@ def test_rmdir_processes_repeated_operands_independently() -> None:
 def test_rmdir_rejects_a_missing_mapped_filesystem_operand() -> None:
     result = _invoke_rmdir([])
 
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == "rmdir: missing mapped filesystem operand\n"
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert "Missing argument" in result.stderr
+    assert "name:/path" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -147,9 +164,13 @@ def test_rmdir_rejects_unsupported_options_without_entering_sources(
 ) -> None:
     result = _invoke_rmdir([option, "memory:/docs/empty"])
 
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == f"rmdir: {option}: unsupported option\n"
+    assert (result.exit_code, result.stdout) == (2, "")
+    if option == "--help=value":
+        assert "does not take a value" in result.stderr
+    else:
+        assert "No such option" in result.stderr
+        context = option.removeprefix("--")
+        assert context in result.stderr
 
 
 @pytest.mark.parametrize(

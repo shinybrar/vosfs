@@ -19,6 +19,7 @@ from ._command import (
     _usage_error,
 )
 from ._diagnostics import _render_diagnostic_value
+from ._path import _lexical_join, _lexical_root
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -153,16 +154,6 @@ def _row(value: object) -> _WalkRow | None:
     return _WalkRow(root, typed_directories, typed_files)
 
 
-def _canonical_root(path: str) -> str:
-    return path.rstrip("/") or "/"
-
-
-def _child_root(root: str, name: str) -> str:
-    if not root or root == "/":
-        return f"/{name}"
-    return f"{root.rstrip('/')}/{name}"
-
-
 def _index_rows(values: list[object]) -> tuple[_WalkRow, dict[str, _WalkRow]] | None:
     indexed: dict[str, _WalkRow] = {}
     first = None
@@ -172,7 +163,7 @@ def _index_rows(values: list[object]) -> tuple[_WalkRow, dict[str, _WalkRow]] | 
             return None
         if first is None:
             first = row
-        canonical = _canonical_root(row.root)
+        canonical = _lexical_root(row.root)
         if canonical in indexed:
             return None
         indexed[canonical] = row
@@ -194,12 +185,12 @@ def _valid_root_file(rows: Mapping[str, _WalkRow], root: _WalkRow) -> bool:
 
 
 def _all_rows_reachable(rows: Mapping[str, _WalkRow], root: _WalkRow) -> bool:
-    reachable = {_canonical_root(root.root)}
+    reachable = {_lexical_root(root.root)}
     pending = [root]
     while pending:
         parent = pending.pop()
         for directory in parent.directories:
-            child_key = _canonical_root(_child_root(parent.root, directory))
+            child_key = _lexical_root(_lexical_join(parent.root, directory))
             child = rows.get(child_key)
             if child is not None and child_key not in reachable:
                 reachable.add(child_key)
@@ -216,8 +207,8 @@ def _validated_rows(
         return None
     root, rows = indexed
 
-    root_key = _canonical_root(root.root)
-    if root_key != _canonical_root(request.operand.path):
+    root_key = _lexical_root(root.root)
+    if root_key != _lexical_root(request.operand.path):
         return None
     if not _valid_root_file(rows, root):
         return None
@@ -232,7 +223,7 @@ def _sorted_entries(entries: tuple[str, ...]) -> list[str]:
 
 def _render_tree(request: _TreeRequest, rows: Mapping[str, _WalkRow]) -> str:
     lines = [request.operand.path]
-    root = rows[_canonical_root(request.operand.path)]
+    root = rows[_lexical_root(request.operand.path)]
     if root.files == ("",):
         return f"{request.operand.path}\n"
 
@@ -257,7 +248,7 @@ def _render_tree(request: _TreeRequest, rows: Mapping[str, _WalkRow]) -> str:
         lines.append(f"{prefix}{connector}{name}")
         if not is_directory:
             continue
-        child = rows.get(_canonical_root(_child_root(parent.root, name)))
+        child = rows.get(_lexical_root(_lexical_join(parent.root, name)))
         if child is None:
             continue
         continuation = "    " if is_last else "│   "

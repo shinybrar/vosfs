@@ -19,7 +19,7 @@ from ._command import (
     _usage_error,
 )
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
-from ._path import _lexical_basename
+from ._path import _lexical_basename, _lexical_join, _lexical_parent
 from ._recursive_cp import _run_recursive_cp
 from ._sources import _SourceInvocation
 
@@ -127,22 +127,6 @@ async def _require_directory(
     return None
 
 
-def _parent_path(path: str) -> str:
-    normalized = path.rstrip("/") or "/"
-    if normalized == "/":
-        return "/"
-    parent, _separator, _name = normalized.rpartition("/")
-    return parent or "/"
-
-
-def _join_under(directory: str, name: str) -> str:
-    if name == "/":
-        name = ""
-    if directory in {"/", ""}:
-        return f"/{name}"
-    return f"{directory.rstrip('/')}/{name}"
-
-
 def _require_file_size(info: object) -> int | None:
     if not isinstance(info, Mapping):
         return None
@@ -194,7 +178,10 @@ async def _resolve_destination(  # noqa: C901, PLR0911, PLR0912 - explicit targe
         dest_type = dest_info["type"]
         if dest_type == "directory":
             known_directory = destination.path
-            resolved = _join_under(destination.path, _lexical_basename(source_path))
+            resolved = _lexical_join(
+                destination.path,
+                _lexical_basename(source_path),
+            )
         elif dest_type == "file":
             resolved = destination.path
         else:
@@ -217,7 +204,7 @@ async def _resolve_destination(  # noqa: C901, PLR0911, PLR0912 - explicit targe
             if collision["type"] != "file":
                 return resolved, _CpFailure(destination, incompatible="result")
 
-    parent = _parent_path(resolved)
+    parent = _lexical_parent(resolved)
     if parent == known_directory:
         return resolved, None
     try:

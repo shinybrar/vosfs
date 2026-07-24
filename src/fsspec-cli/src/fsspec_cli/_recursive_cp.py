@@ -16,7 +16,13 @@ import typer
 
 from ._command import _MappedOperand, _usage_error
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
-from ._path import _lexical_basename
+from ._path import (
+    _has_dot_segment,
+    _lexical_basename,
+    _lexical_join,
+    _lexical_parent,
+    _strip_trailing_slashes,
+)
 from ._sources import _await_current, _SourceInvocation
 
 if TYPE_CHECKING:
@@ -210,7 +216,7 @@ def _walk_row(
     if (
         type(root) is not str
         or not root.startswith("/")
-        or root.rstrip("/") != root
+        or _strip_trailing_slashes(root) != root
         or "//" in root
         or "\0" in root
         or "\n" in root
@@ -238,7 +244,7 @@ def _walk_row(
             ):
                 raise _IncompatibleResultError
             child_names.add(name)
-            path = _child_path(root, name)
+            path = _lexical_join(root, name)
             entry = _entry(
                 _relative_path(source_path, path),
                 path,
@@ -390,14 +396,6 @@ async def _walk_rows(
     return await _sync_rows(await _resolve_sync_iterator(result), path)
 
 
-def _child_path(root: str, name: str) -> str:
-    return f"/{name}" if root == "/" else f"{root}/{name}"
-
-
-def _has_dot_segment(path: str) -> bool:
-    return any(part in {".", ".."} for part in path.split("/"))
-
-
 def _relative_path(root: str, path: str) -> str:
     return path[len(root) + 1 :] if root != "/" else path[1:]
 
@@ -533,7 +531,7 @@ def _classify_existing(  # noqa: PLR0911 - stable metadata categories.
 
 
 def _destination_path(root: str, relative: str) -> str:
-    return root if not relative else _child_path(root, relative)
+    return root if not relative else _lexical_join(root, relative)
 
 
 def _cleanup_staging(
@@ -605,7 +603,7 @@ class _RecursiveCopy:
                 return resolved, entry
             if entry.kind == "directory":
                 known_parent = self.destination.path
-                resolved = _child_path(
+                resolved = _lexical_join(
                     self.destination.path,
                     _lexical_basename(self.source.path),
                 )
@@ -616,7 +614,7 @@ class _RecursiveCopy:
                 if error is not None:
                     return resolved, _read_failure(self.destination, error)
 
-        parent = resolved.rpartition("/")[0] or "/"
+        parent = _lexical_parent(resolved)
         if parent != known_parent:
             parent_info, error = await _optional_info(
                 self.destination_filesystem,

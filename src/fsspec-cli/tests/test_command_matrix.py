@@ -247,11 +247,9 @@ def test_mkdir_m_option_rejection_is_source_free() -> None:
         ["-m", "755", "memory:/docs/new"],
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "mkdir: -m: unsupported option\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert "No such option" in result.stderr
+    assert "-m" in result.stderr
     assert source_calls == 0
 
 
@@ -269,11 +267,9 @@ def test_mkdir_pm_option_rejection_is_source_free() -> None:
         ["-pm", "memory:/docs/new"],
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "mkdir: -pm: unsupported option\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert "No such option" in result.stderr
+    assert "-m" in result.stderr
     assert source_calls == 0
 
 
@@ -291,34 +287,33 @@ def test_mkdir_parents_option_rejection_is_source_free() -> None:
         ["--parents", "memory:/docs/new"],
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "mkdir: --parents: unsupported option\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert "No such option" in result.stderr
+    assert "parents" in result.stderr
     assert source_calls == 0
 
 
-def test_mkdir_p_after_operand_rejection_is_source_free() -> None:
-    source_calls = 0
-
-    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
-        nonlocal source_calls
-        source_calls += 1
-        raise AssertionError
+def test_mkdir_p_after_operand_is_accepted_by_typer(tmp_path: Path) -> None:
+    source = _ProbedSource(
+        lambda: AsyncFileSystemWrapper(
+            LocalFileSystem(skip_instance_cache=True),
+            asynchronous=True,
+        )
+    )
 
     result = _invoke(
-        App({"memory": source_must_not_run}),
+        App({"local": source}),
         "mkdir",
-        ["memory:/docs/a", "-p", "memory:/docs/b"],
+        [
+            f"local:{tmp_path}/a",
+            "-p",
+            f"local:{tmp_path}/b",
+        ],
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "mkdir: -p: unsupported option\n",
-    )
-    assert source_calls == 0
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert (tmp_path / "a").is_dir()
+    assert (tmp_path / "b").is_dir()
 
 
 def test_adapted_local_mkdir_p_profile_uses_native_temporary_storage(
@@ -650,11 +645,9 @@ def test_rmdir_option_rejection_is_source_free() -> None:
         ["-p", "memory:/docs/empty"],
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "rmdir: -p: unsupported option\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert "No such option" in result.stderr
+    assert "-p" in result.stderr
     assert source_calls == 0
 
 
@@ -710,11 +703,9 @@ def test_unlink_option_rejection_is_source_free() -> None:
         ["-f", "memory:/docs/notes.txt"],
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "unlink: -f: unsupported option\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert "No such option" in result.stderr
+    assert "-f" in result.stderr
     assert source_calls == 0
 
 

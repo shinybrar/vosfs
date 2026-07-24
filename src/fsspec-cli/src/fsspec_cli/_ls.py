@@ -19,6 +19,7 @@ from ._command import (
 )
 from ._diagnostics import _render_diagnostic_value
 from ._listing import ListingRow, render_listing, to_listing
+from ._path import _strip_trailing_slashes
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
@@ -434,7 +435,7 @@ def _directory_basename(path: str, name: object) -> str | None:
     if not isinstance(name, str):
         return None
 
-    comparison_path = path.rstrip("/")
+    comparison_path = _strip_trailing_slashes(path)
     prefix = "/" if not comparison_path else f"{comparison_path}/"
     if not name.startswith(prefix):
         return None

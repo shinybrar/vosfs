@@ -1,4 +1,4 @@
-"""Raw Typer parsing and async execution for ``mkdir``."""
+"""Typed async execution for ``mkdir``."""
 
 from __future__ import annotations
 
@@ -6,15 +6,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import typer
-
-from ._command import _MappedOperand, _parse_mapped_operand, _usage_error
-from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
-from ._sources import _SourceInvocation
+from ._command import (
+    _backend_category,
+    _CommandFailureError,
+    _MappedOperand,
+    _render_operand_diagnostic,
+    _run_mapped_command,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
-
     from fsspec.asyn import AsyncFileSystem
 
     from ._app import AsyncFilesystemSource
@@ -33,70 +33,20 @@ class _Failure:
     uncertain: bool = False
 
 
-def _preflight(
-    command: str,
-    raw_arguments: tuple[str, ...],
-    known_names: Collection[str],
-) -> _MkdirRequest:
-    create_parents = False
-    operands = []
-    options_active = True
-    seen_operand = False
-    after_double_dash = False
-
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            after_double_dash = True
-            continue
-
-        is_option_like = argument.startswith("-") and argument != "-"
-
-        if options_active and is_option_like:
-            if all(character == "p" for character in argument[1:]):
-                create_parents = True
-                continue
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: unsupported option")
-
-        if seen_operand and is_option_like and not after_double_dash:
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: unsupported option")
-
-        operands.append(_parse_mapped_operand(command, argument, known_names))
-        seen_operand = True
-        if options_active:
-            options_active = False
-
-    if not operands:
-        _usage_error(command, "missing mapped filesystem operand")
-
-    return _MkdirRequest(create_parents=create_parents, operands=tuple(operands))
-
-
 async def _run_mkdir(
     command: str,
-    raw_arguments: tuple[str, ...],
+    request: _MkdirRequest,
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    request = _preflight(command, raw_arguments, sources)
-    invocation = _SourceInvocation(command, sources)
-    succeeded = False
-    failures: tuple[_Failure, ...] = ()
-    try:
-        names = dict.fromkeys(operand.name for operand in request.operands)
-        filesystems = await invocation.acquire(names)
-        if filesystems is not None:
-            failures = await _trace_operands(
-                request,
-                filesystems,
-                create_parents=request.create_parents,
-            )
-            for failure in failures:
-                _render_failure(command, failure)
-            succeeded = not failures
-    finally:
-        command_error = next(
+    async def operation(filesystems: Mapping[str, AsyncFileSystem]) -> None:
+        failures = await _trace_operands(
+            request,
+            filesystems,
+            create_parents=request.create_parents,
+        )
+        if not failures:
+            return
+        backend_error = next(
             (
                 failure.backend_error
                 for failure in failures
@@ -104,9 +54,18 @@ async def _run_mkdir(
             ),
             None,
         )
-        cleanup_failed = await invocation.close_with_command_error(command_error)
-    if not succeeded or cleanup_failed:
-        raise typer.Exit(1)
+        try:
+            for failure in failures:
+                _render_failure(command, failure)
+        except BaseException as error:
+            raise _CommandFailureError(
+                error=backend_error,
+                render=False,
+                propagate=error,
+            ) from error
+        raise _CommandFailureError(error=backend_error, render=False)
+
+    await _run_mapped_command(command, request.operands, sources, operation)
 
 
 async def _trace_operands(
@@ -159,32 +118,6 @@ async def _create_operand(
         return _Failure(operand, uncertain=True)
 
     return None
-
-
-def _render_operand_diagnostic(
-    command: str,
-    operand: _MappedOperand,
-    category: str,
-) -> None:
-    prefix = _render_diagnostic_prefix(command)
-    rendered_operand = _render_diagnostic_value(operand.spelling)
-    typer.echo(f"{prefix} {rendered_operand}: {category}", err=True, color=True)
-
-
-def _backend_category(error: Exception) -> str:
-    if isinstance(error, FileNotFoundError):
-        return "not found"
-    if isinstance(error, FileExistsError):
-        return "file exists"
-    if isinstance(error, PermissionError):
-        return "permission denied"
-    if isinstance(error, NotADirectoryError):
-        return "not a directory"
-    if isinstance(error, NotImplementedError):
-        return "unsupported operation"
-    rendered_class = _render_diagnostic_value(type(error).__name__)
-    rendered_message = _render_diagnostic_value(str(error))
-    return f"backend failure ({rendered_class}): {rendered_message}"
 
 
 def _render_failure(command: str, failure: _Failure) -> None:

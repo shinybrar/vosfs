@@ -1,4 +1,4 @@
-"""Raw Typer parsing and async execution for ``unlink``."""
+"""Typed async execution for ``unlink``."""
 
 from __future__ import annotations
 
@@ -6,28 +6,18 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-import typer
-
 from ._command import (
+    _CommandFailureError,
     _MappedOperand,
-    _parse_mapped_operand,
     _render_backend_failure,
-    _usage_error,
+    _render_operand_diagnostic,
+    _run_mapped_command,
 )
-from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
-from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
-
     from fsspec.asyn import AsyncFileSystem
 
     from ._app import AsyncFilesystemSource
-
-
-@dataclass(frozen=True)
-class _UnlinkRequest:
-    operand: _MappedOperand
 
 
 @dataclass(frozen=True)
@@ -36,53 +26,6 @@ class _UnlinkFailure:
     backend_error: Exception | None = None
     incompatible: Literal["directory", "result"] | None = None
     uncertain: bool = False
-
-
-def _is_rejected_path(path: str) -> bool:
-    normalized = path.rstrip("/")
-    if not normalized:
-        return True
-    final = normalized.rsplit("/", 1)[-1]
-    return final in {".", ".."}
-
-
-def _validate_mapped_operand(
-    command: str,
-    argument: str,
-    known_names: Collection[str],
-) -> _MappedOperand:
-    operand = _parse_mapped_operand(command, argument, known_names)
-    if _is_rejected_path(operand.path):
-        rendered = _render_diagnostic_value(argument)
-        _usage_error(command, f"{rendered}: rejected path")
-    return operand
-
-
-def _preflight(
-    command: str,
-    raw_arguments: tuple[str, ...],
-    known_names: Collection[str],
-) -> _UnlinkRequest:
-    operands: list[str] = []
-    options_active = True
-
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            continue
-        if options_active and argument.startswith("-") and argument != "-":
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: unsupported option")
-        operands.append(argument)
-
-    if not operands:
-        _usage_error(command, "missing mapped filesystem operand")
-    if len(operands) > 1:
-        _usage_error(command, "extra operand")
-
-    return _UnlinkRequest(
-        operand=_validate_mapped_operand(command, operands[0], known_names)
-    )
 
 
 async def _confirmed_rm_file(  # noqa: PLR0911 - explicit outcome branches.
@@ -119,16 +62,6 @@ async def _confirmed_rm_file(  # noqa: PLR0911 - explicit outcome branches.
         return _UnlinkFailure(operand, uncertain=True)
 
 
-def _render_operand_diagnostic(
-    command: str,
-    operand: _MappedOperand,
-    category: str,
-) -> None:
-    prefix = _render_diagnostic_prefix(command)
-    rendered_operand = _render_diagnostic_value(operand.spelling)
-    typer.echo(f"{prefix} {rendered_operand}: {category}", err=True, color=True)
-
-
 def _render_failure(command: str, failure: _UnlinkFailure) -> None:
     if failure.uncertain:
         _render_operand_diagnostic(command, failure.operand, "uncertain mutation state")
@@ -146,25 +79,21 @@ def _render_failure(command: str, failure: _UnlinkFailure) -> None:
 
 async def _run_unlink(
     command: str,
-    raw_arguments: tuple[str, ...],
+    operand: _MappedOperand,
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    request = _preflight(command, raw_arguments, sources)
-    invocation = _SourceInvocation(command, sources)
-    succeeded = False
-    failure: _UnlinkFailure | None = None
-    try:
-        filesystems = await invocation.acquire((request.operand.name,))
-        if filesystems is not None:
-            failure = await _confirmed_rm_file(
-                request.operand,
-                filesystems[request.operand.name],
-            )
-            if failure is not None:
-                _render_failure(command, failure)
-            succeeded = failure is None
-    finally:
-        command_error = failure.backend_error if failure is not None else None
-        cleanup_failed = await invocation.close_with_command_error(command_error)
-    if not succeeded or cleanup_failed:
-        raise typer.Exit(1)
+    async def operation(filesystems: Mapping[str, AsyncFileSystem]) -> None:
+        failure = await _confirmed_rm_file(operand, filesystems[operand.name])
+        if failure is None:
+            return
+        try:
+            _render_failure(command, failure)
+        except BaseException as error:
+            raise _CommandFailureError(
+                error=failure.backend_error,
+                render=False,
+                propagate=error,
+            ) from error
+        raise _CommandFailureError(error=failure.backend_error, render=False)
+
+    await _run_mapped_command(command, (operand,), sources, operation)

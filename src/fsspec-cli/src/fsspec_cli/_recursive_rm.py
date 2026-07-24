@@ -10,6 +10,11 @@ from typing import TYPE_CHECKING, cast
 import typer
 
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
+from ._path import (
+    _has_dot_segment,
+    _lexical_parent,
+    _strip_trailing_slashes,
+)
 from ._sources import _await_current
 
 if TYPE_CHECKING:
@@ -67,16 +72,8 @@ def _has_required_hooks(filesystem: AsyncFileSystem) -> bool:
     return all(callable(getattr(filesystem, name, None)) for name in _REQUIRED_HOOKS)
 
 
-def _normalized_root(path: str) -> str:
-    return path.rstrip("/")
-
-
 def _is_contained(root: str, path: str) -> bool:
     return path == root or path.startswith(f"{root}/")
-
-
-def _has_dot_segment(path: str) -> bool:
-    return any(component in {".", ".."} for component in path.split("/"))
 
 
 def _freeze_mapping(value: object) -> Mapping[object, object]:
@@ -91,7 +88,7 @@ def _freeze_mapping(value: object) -> Mapping[object, object]:
 def _root_entry(path: str, value: object) -> _ManifestEntry:
     info = _freeze_mapping(value)
     name = info.get("name")
-    if type(name) is not str or name.rstrip("/") != path:
+    if type(name) is not str or _strip_trailing_slashes(name) != path:
         raise _IncompatibleManifestError
     islink = info.get("islink", False)
     if type(islink) is not bool:
@@ -123,13 +120,13 @@ def _listed_entry(parent: str, root: str, value: object) -> _ManifestEntry:
         raise _UnsupportedEntryError
     if (
         not name
-        or name.rstrip("/") != name
+        or _strip_trailing_slashes(name) != name
         or "\0" in name
         or "\n" in name
         or "\r" in name
         or _has_dot_segment(name)
         or not _is_contained(root, name)
-        or (name.rpartition("/")[0] or "/") != parent
+        or _lexical_parent(name) != parent
     ):
         raise _IncompatibleManifestError
     return _ManifestEntry(name, kind)
@@ -199,7 +196,7 @@ def _revalidate_manifest(manifest: _Manifest) -> None:
         if entry.kind == "directory":
             directories.add(entry.path)
     for entry in manifest.entries[:-1]:
-        if (entry.path.rpartition("/")[0] or "/") not in directories:
+        if _lexical_parent(entry.path) not in directories:
             raise _IncompatibleManifestError
 
 
@@ -235,7 +232,7 @@ async def _plan(
 ) -> _Manifest | _RecursiveRmFailure:
     if not _has_required_hooks(filesystem):
         return _RecursiveRmFailure(operand, "unsupported operation")
-    root = _normalized_root(operand.path)
+    root = _strip_trailing_slashes(operand.path)
     try:
         root_info = await _call(filesystem, "_info", root)
     except Exception as error:  # noqa: BLE001 - classify read boundary.

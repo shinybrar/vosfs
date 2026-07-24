@@ -16,6 +16,7 @@ from ._command import (
     _usage_error,
 )
 from ._diagnostics import _render_diagnostic_value
+from ._path import _strip_trailing_slashes
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -104,8 +105,8 @@ def _render_result(request: _FindRequest, result: object) -> str | _Failure:
     if paths is None:
         return _Failure(request.operand)
     if request.maxdepth == 0:
-        root = request.operand.path.rstrip("/")
-        paths = [path for path in paths if path.rstrip("/") == root]
+        root = _strip_trailing_slashes(request.operand.path)
+        paths = [path for path in paths if _strip_trailing_slashes(path) == root]
     paths.sort(key=lambda path: (locale.strxfrm(path), path))
     return "".join(f"{path}\n" for path in paths)
 

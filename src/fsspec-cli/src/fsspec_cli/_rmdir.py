@@ -1,4 +1,4 @@
-"""Raw Typer parsing and async execution for ``rmdir``."""
+"""Typed async execution for ``rmdir``."""
 
 from __future__ import annotations
 
@@ -7,28 +7,18 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-import typer
-
 from ._command import (
+    _CommandFailureError,
     _MappedOperand,
-    _parse_mapped_operand,
     _render_backend_failure,
-    _usage_error,
+    _render_operand_diagnostic,
+    _run_mapped_command,
 )
-from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
-from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
-
     from fsspec.asyn import AsyncFileSystem
 
     from ._app import AsyncFilesystemSource
-
-
-@dataclass(frozen=True)
-class _RmdirRequest:
-    operands: tuple[_MappedOperand, ...]
 
 
 @dataclass(frozen=True)
@@ -37,43 +27,6 @@ class _RmdirFailure:
     backend_error: Exception | None = None
     incompatible: Literal["directory", "result"] | None = None
     uncertain: bool = False
-
-
-def _is_rejected_path(path: str) -> bool:
-    normalized = path.rstrip("/")
-    if not normalized:
-        return True
-    final = normalized.rsplit("/", 1)[-1]
-    return final in {".", ".."}
-
-
-def _preflight(
-    command: str,
-    raw_arguments: tuple[str, ...],
-    known_names: Collection[str],
-) -> _RmdirRequest:
-    operands = []
-    options_active = True
-
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            continue
-        if options_active and argument.startswith("-") and argument != "-":
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: unsupported option")
-
-        operand = _parse_mapped_operand(command, argument, known_names)
-        if _is_rejected_path(operand.path):
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: rejected path")
-
-        operands.append(operand)
-
-    if not operands:
-        _usage_error(command, "missing mapped filesystem operand")
-
-    return _RmdirRequest(operands=tuple(operands))
 
 
 async def _require_directory(
@@ -142,16 +95,6 @@ async def _remove_empty_directory(
     return await _observe_post_mutation(operand, filesystem, mutation_error)
 
 
-def _render_operand_diagnostic(
-    command: str,
-    operand: _MappedOperand,
-    category: str,
-) -> None:
-    prefix = _render_diagnostic_prefix(command)
-    rendered_operand = _render_diagnostic_value(operand.spelling)
-    typer.echo(f"{prefix} {rendered_operand}: {category}", err=True, color=True)
-
-
 def _render_rmdir_backend_failure(
     command: str,
     operand: _MappedOperand,
@@ -179,11 +122,11 @@ def _render_failure(command: str, failure: _RmdirFailure) -> None:
 
 
 async def _trace_operands(
-    request: _RmdirRequest,
+    operands: tuple[_MappedOperand, ...],
     filesystems: Mapping[str, AsyncFileSystem],
 ) -> tuple[_RmdirFailure, ...]:
     failures = []
-    for operand in request.operands:
+    for operand in operands:
         result = await _remove_empty_directory(operand, filesystems[operand.name])
         if isinstance(result, _RmdirFailure):
             failures.append(result)
@@ -192,23 +135,14 @@ async def _trace_operands(
 
 async def _run_rmdir(
     command: str,
-    raw_arguments: tuple[str, ...],
+    operands: tuple[_MappedOperand, ...],
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    request = _preflight(command, raw_arguments, sources)
-    invocation = _SourceInvocation(command, sources)
-    succeeded = False
-    failures: tuple[_RmdirFailure, ...] = ()
-    try:
-        names = dict.fromkeys(operand.name for operand in request.operands)
-        filesystems = await invocation.acquire(names)
-        if filesystems is not None:
-            failures = await _trace_operands(request, filesystems)
-            for failure in failures:
-                _render_failure(command, failure)
-            succeeded = not failures
-    finally:
-        command_error = next(
+    async def operation(filesystems: Mapping[str, AsyncFileSystem]) -> None:
+        failures = await _trace_operands(operands, filesystems)
+        if not failures:
+            return
+        backend_error = next(
             (
                 failure.backend_error
                 for failure in failures
@@ -216,6 +150,15 @@ async def _run_rmdir(
             ),
             None,
         )
-        cleanup_failed = await invocation.close_with_command_error(command_error)
-    if not succeeded or cleanup_failed:
-        raise typer.Exit(1)
+        try:
+            for failure in failures:
+                _render_failure(command, failure)
+        except BaseException as error:
+            raise _CommandFailureError(
+                error=backend_error,
+                render=False,
+                propagate=error,
+            ) from error
+        raise _CommandFailureError(error=backend_error, render=False)
+
+    await _run_mapped_command(command, operands, sources, operation)
