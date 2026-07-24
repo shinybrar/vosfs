@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import math
-import re
 
 import pytest
 import typer
-from fsspec_cli._stat import _format_mtime, _preflight, _write_line
+from click.utils import strip_ansi
+from fsspec_cli._stat import _format_mtime, _write_line
 
 from ._support import _invoke_stat, _RecordingSource, _source_must_not_run
 
@@ -79,10 +79,9 @@ def test_stat_help_matches_locked_usage_and_draft() -> None:
     result = _invoke_stat(["--help"])
 
     assert result.exit_code == 0
-    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
-    assert "Usage: stat [--] name:/path..." in plain_help
+    plain_help = strip_ansi(result.stdout)
+    assert "Usage: root stat [OPTIONS] {name:/path}" in plain_help
     assert "Display file status" in plain_help
-    assert "root stat [OPTIONS]" not in plain_help
 
 
 def test_stat_renders_one_local_rich_file_line() -> None:
@@ -321,13 +320,14 @@ def test_stat_rejects_unsupported_options_source_free(arguments: list[str]) -> N
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert result.stderr == f"stat: {arguments[0]}: unsupported option\n"
+    diagnostic = strip_ansi(result.stderr)
+    assert "No such option" in diagnostic
+    assert arguments[0].split("=", 1)[0] in diagnostic
 
 
 @pytest.mark.parametrize(
     ("arguments", "diagnostic"),
     [
-        ([], "missing mapped filesystem operand"),
         (["/stat-x"], "/stat-x: invalid mapped filesystem operand"),
         (["local:tmp"], "local:tmp: invalid mapped filesystem operand"),
         (["unknown:/x"], "unknown:/x: unknown filesystem (known: memory)"),
@@ -342,6 +342,15 @@ def test_stat_rejects_operand_shapes_source_free(
     assert result.exit_code == 2
     assert result.stdout == ""
     assert result.stderr == f"stat: {diagnostic}\n"
+
+
+def test_stat_leaves_missing_operand_to_typer() -> None:
+    result = _invoke_stat([])
+
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = strip_ansi(result.stderr)
+    assert "Missing argument" in diagnostic
+    assert "name:/path" in diagnostic
 
 
 def test_stat_accepts_option_delimiter() -> None:
@@ -488,16 +497,6 @@ def test_stat_preserves_backend_error_when_diagnostic_write_fails(
     assert exception_type is PermissionError
     assert exception is backend_error
     assert traceback is not None
-
-
-def test_stat_preflight_diagnostic_escapes_concrete_command_label(capsys) -> None:
-    with pytest.raises(typer.Exit) as caught:
-        _preflight("future\\command\0\r\n", ("bad",), {"memory"})
-
-    assert caught.value.exit_code == 2
-    assert capsys.readouterr().err == (
-        "future\\\\command\\x00\\x0d\\x0a: bad: invalid mapped filesystem operand\n"
-    )
 
 
 def test_stat_mtime_format_uses_space_padded_day() -> None:

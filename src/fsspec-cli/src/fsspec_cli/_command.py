@@ -1,11 +1,9 @@
 """Shared scaffolding for mapped-source command modules.
 
-Every mapped-operand command (``ls``, ``du``, ``find``, ``size``, ``test``,
-``head``, ``tail``, ``tree``, ``info``, ``cat``, ``cp``, ``mv``, ``mkdir``,
-``rmdir``, ``rm``, ``unlink``, and ``stat``) parses its own raw ``argv`` and
-renders stable diagnostics. This module is the single home for the pieces they
-share: raw-argument capture, the malformed-help shield, mapped operands, usage
-errors, binary stdout, and the single-operand buffered-text lifecycle.
+Typed commands receive validated operands from central callbacks; commands not
+yet migrated still parse raw ``argv``. This module owns both seams during the
+migration, plus mapped operands, diagnostics, binary stdout, and invocation
+lifecycle.
 """
 
 from __future__ import annotations
@@ -121,9 +119,14 @@ class _CommandFailureError(Exception):
         self,
         operand: _MappedOperand | None = None,
         error: Exception | None = None,
+        *,
+        render: bool = True,
+        propagate: BaseException | None = None,
     ) -> None:
         self.operand = operand
         self.error = error
+        self.render = render
+        self.propagate = propagate
 
 
 def _render_operand_diagnostic(
@@ -179,6 +182,8 @@ async def _run_mapped_command(
     operands: tuple[_MappedOperand, ...],
     sources: Mapping[str, AsyncFilesystemSource],
     operation: Callable[[Mapping[str, AsyncFileSystem]], Awaitable[None]],
+    *,
+    broken_pipe_exit_code: int = _BROKEN_PIPE_EXIT_CODE,
 ) -> None:
     """Acquire referenced sources, run one command, and own final status."""
     invocation = _SourceInvocation(command, sources)
@@ -193,11 +198,15 @@ async def _run_mapped_command(
             await operation(filesystems)
     except _CommandFailureError as error:
         failure = error
-        if error.operand is not None:
+        if error.render and error.operand is not None:
             _render_failure(command, _Failure(error.operand, error.error))
-        elif error.error is not None and not isinstance(
-            error.error,
-            BrokenPipeError,
+        elif (
+            error.render
+            and error.error is not None
+            and not isinstance(
+                error.error,
+                BrokenPipeError,
+            )
         ):
             _render_output_failure(command, error.error)
     finally:
@@ -205,13 +214,15 @@ async def _run_mapped_command(
             failure.error if failure is not None else None
         )
 
+    if failure is not None and failure.propagate is not None:
+        raise failure.propagate
     if not acquired or failure is not None or cleanup_failed:
         if (
             failure is not None
             and isinstance(failure.error, BrokenPipeError)
             and not cleanup_failed
         ):
-            raise typer.Exit(_BROKEN_PIPE_EXIT_CODE)
+            raise typer.Exit(broken_pipe_exit_code)
         raise typer.Exit(1)
 
 
