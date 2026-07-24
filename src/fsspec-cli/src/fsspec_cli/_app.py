@@ -8,7 +8,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
-from typing import Annotated, Any, TypeAlias, TypedDict
+from typing import Annotated, Any, Literal, TypeAlias, TypedDict
 
 import typer
 from fsspec import AbstractFileSystem
@@ -16,15 +16,20 @@ from typer.core import TyperCommand
 
 from ._basename import _run_basename
 from ._cat import _run_cat
-from ._command import _parse_mapped_operand, _raw_arguments, _RawCommand
+from ._command import (
+    _parse_mapped_operand,
+    _raw_arguments,
+    _RawCommand,
+    _usage_error,
+)
 from ._cp import _run_cp
 from ._diagnostics import _render_diagnostic_prefix
 from ._dirname import _run_dirname
-from ._du import _DuCommand, _run_du
-from ._find import _FindCommand, _run_find
+from ._du import _DuRequest, _run_du
+from ._find import _FindRequest, _run_find
 from ._head_tail import _run_head, _run_tail
 from ._info import _InfoCommand, _run_info
-from ._ls import _run_ls
+from ._ls import _LsRequest, _run_ls
 from ._mkdir import _run_mkdir
 from ._mv import _run_mv
 from ._rm import _run_rm
@@ -32,7 +37,7 @@ from ._rmdir import _run_rmdir
 from ._size import _run_size, _SizeCommand
 from ._stat import _run_stat, _StatCommand
 from ._test import _run_test, _TestCommand
-from ._tree import _run_tree, _TreeCommand
+from ._tree import _run_tree, _TreeRequest
 from ._unlink import _run_unlink
 
 AsyncFilesystemSource: TypeAlias = Callable[
@@ -118,19 +123,9 @@ _SOURCE_FREE_COMMANDS: tuple[tuple[str, str, _SourceFreeRunner], ...] = (
 )
 # Commands that acquire mapped sources and run on the invocation event loop.
 _ASYNC_COMMANDS: tuple[_AsyncCommand, ...] = (
-    ("ls", "List directory contents", _run_ls, _RawCommand),
-    (
-        "ll",
-        "List directory contents in long form",
-        partial(_run_ls, long_by_default=True),
-        _RawCommand,
-    ),
     ("cat", "Concatenate files to standard output", _run_cat, _RawCommand),
-    ("du", "Estimate file space usage", _run_du, _DuCommand),
-    ("find", "Find files recursively", _run_find, _FindCommand),
     ("size", "Display exact file sizes", _run_size, _SizeCommand),
     ("test", "Evaluate a file predicate", _run_test, _TestCommand),
-    ("tree", "Display a recursive directory tree", _run_tree, _TreeCommand),
     ("info", "Display normalized file information", _run_info, _InfoCommand),
     ("cp", "Copy files or one directory with -R or -r", _run_cp, _RawCommand),
     ("mv", "Move or rename files", _run_mv, _RawCommand),
@@ -216,7 +211,7 @@ class App:
         for extension in extensions:
             self.typer_app.command()(extension)
 
-    def _register_commands(self) -> None:
+    def _register_commands(self) -> None:  # noqa: C901 - central command surface.
         @self.typer_app.callback()
         def root(ctx: typer.Context) -> None:
             ctx.obj = CommandContext(self._sources)
@@ -240,6 +235,142 @@ class App:
             mapped = _parse_mapped_operand("tail", operand, self._sources)
             _ensure_no_active_event_loop("tail")
             asyncio.run(_run_tail("tail", count, mapped, self._sources))
+
+        def run_listing(
+            command: Literal["ls", "ll"],
+            operands: list[str],
+            *,
+            include_almost_all: bool,
+            long_listing: bool,
+            human_readable: bool,
+        ) -> None:
+            mapped = tuple(
+                _parse_mapped_operand(command, operand, self._sources)
+                for operand in operands
+            )
+            if human_readable and not long_listing:
+                _usage_error(command, "-h: requires long listing")
+            _ensure_no_active_event_loop(command)
+            asyncio.run(
+                _run_ls(
+                    command,
+                    _LsRequest(
+                        include_almost_all=include_almost_all,
+                        long_listing=long_listing,
+                        human_readable=human_readable,
+                        operands=mapped,
+                    ),
+                    self._sources,
+                )
+            )
+
+        @self.typer_app.command()
+        def ls(
+            operands: Annotated[
+                list[str],
+                typer.Argument(metavar="name:/path"),
+            ],
+            *,
+            include_almost_all: Annotated[bool, typer.Option("-A")] = False,
+            long_listing: Annotated[bool, typer.Option("-l")] = False,
+            human_readable: Annotated[bool, typer.Option("-h")] = False,
+        ) -> None:
+            """List directory contents."""
+            run_listing(
+                "ls",
+                operands,
+                include_almost_all=include_almost_all,
+                long_listing=long_listing,
+                human_readable=human_readable,
+            )
+
+        @self.typer_app.command()
+        def ll(
+            operands: Annotated[
+                list[str],
+                typer.Argument(metavar="name:/path"),
+            ],
+            *,
+            include_almost_all: Annotated[bool, typer.Option("-A")] = False,
+            _long_listing: Annotated[bool, typer.Option("-l")] = False,
+            human_readable: Annotated[bool, typer.Option("-h")] = False,
+        ) -> None:
+            """List directory contents in long form."""
+            run_listing(
+                "ll",
+                operands,
+                include_almost_all=include_almost_all,
+                long_listing=True,
+                human_readable=human_readable,
+            )
+
+        @self.typer_app.command()
+        def du(
+            operand: Annotated[str, typer.Argument(metavar="name:/path")],
+            *,
+            summarize: Annotated[bool, typer.Option("-s")] = False,
+            human_readable: Annotated[bool, typer.Option("-h")] = False,
+        ) -> None:
+            """Estimate file space usage."""
+            mapped = _parse_mapped_operand("du", operand, self._sources)
+            _ensure_no_active_event_loop("du")
+            asyncio.run(
+                _run_du(
+                    "du",
+                    _DuRequest(
+                        summarize=summarize,
+                        human_readable=human_readable,
+                        operand=mapped,
+                    ),
+                    self._sources,
+                )
+            )
+
+        @self.typer_app.command()
+        def find(
+            operand: Annotated[str, typer.Argument(metavar="name:/path")],
+            maxdepth: Annotated[
+                int | None,
+                typer.Option("--maxdepth", metavar="N", min=0),
+            ] = None,
+            kind: Annotated[
+                Literal["f", "d"],
+                typer.Option("--type", metavar="f|d"),
+            ] = "f",
+        ) -> None:
+            """Find files recursively."""
+            mapped = _parse_mapped_operand("find", operand, self._sources)
+            _ensure_no_active_event_loop("find")
+            asyncio.run(
+                _run_find(
+                    "find",
+                    _FindRequest(
+                        maxdepth=maxdepth,
+                        kind=kind,
+                        operand=mapped,
+                    ),
+                    self._sources,
+                )
+            )
+
+        @self.typer_app.command()
+        def tree(
+            operand: Annotated[str, typer.Argument(metavar="name:/path")],
+            maxdepth: Annotated[
+                int | None,
+                typer.Option("--maxdepth", metavar="N", min=0),
+            ] = None,
+        ) -> None:
+            """Display a recursive directory tree."""
+            mapped = _parse_mapped_operand("tree", operand, self._sources)
+            _ensure_no_active_event_loop("tree")
+            asyncio.run(
+                _run_tree(
+                    "tree",
+                    _TreeRequest(maxdepth=maxdepth, operand=mapped),
+                    self._sources,
+                )
+            )
 
         for name, help_text, source_free_runner in _SOURCE_FREE_COMMANDS:
             self._register_source_free(name, help_text, source_free_runner)

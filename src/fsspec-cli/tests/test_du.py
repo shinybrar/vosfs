@@ -89,41 +89,61 @@ def test_du_accepts_grouped_repeated_and_interspersed_options(
 
 
 @pytest.mark.parametrize("arguments", [["--help"], ["-s", "--help"]])
-def test_du_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
+def test_du_help_comes_from_typed_callback(arguments: list[str]) -> None:
     result = _invoke_du(arguments)
 
     plain_help = strip_ansi(result.stdout)
-    assert result.exit_code == 0
-    assert "Usage: du [-sh] [--] name:/path" in plain_help
+    assert (result.exit_code, result.stderr) == (0, "")
+    assert "Usage: root du [OPTIONS] {name:/path}" in plain_help
     assert "Estimate file space usage" in plain_help
-    assert result.stderr == ""
+    assert "name:/path" in plain_help
+    assert "-s" in plain_help
+    assert "-h" in plain_help
 
 
 @pytest.mark.parametrize(
-    ("arguments", "diagnostic"),
+    ("arguments", "contexts"),
     [
-        ([], "du: missing mapped filesystem operand\n"),
-        (["-"], "du: -: unsupported option\n"),
-        (["-x", "memory:/docs"], "du: -x: unsupported option\n"),
-        (["-sx", "memory:/docs"], "du: -sx: unsupported option\n"),
-        (["--summary", "memory:/docs"], "du: --summary: unsupported option\n"),
-        (["--help=value", "memory:/docs"], "du: --help=value: unsupported option\n"),
+        ([], ("Missing argument", "name:/path")),
+        (["-x", "memory:/docs"], ("No such option", "-x")),
+        (["-sx", "memory:/docs"], ("No such option", "-x")),
+        (["--summary", "memory:/docs"], ("No such option", "--summary")),
+        (["--help=value", "memory:/docs"], ("does not take a value", "--help")),
         (
             ["memory:relative"],
-            "du: memory:relative: invalid mapped filesystem operand\n",
+            ("du: memory:relative: invalid mapped filesystem operand",),
         ),
-        (["unknown:/docs"], "du: unknown:/docs: unknown filesystem (known: memory)\n"),
-        (["memory:/a", "memory:/b"], "du: extra operand\n"),
-        (["--", "--help"], "du: --help: invalid mapped filesystem operand\n"),
+        (
+            ["unknown:/docs"],
+            ("du: unknown:/docs: unknown filesystem (known: memory)",),
+        ),
+        (
+            ["memory:/a", "memory:/b"],
+            ("unexpected extra argument", "memory:/b"),
+        ),
+        (["--", "--help"], ("du: --help: invalid mapped filesystem operand",)),
     ],
 )
-def test_du_preflight_failures_are_stable_and_source_free(
+def test_du_usage_failures_are_typer_owned_and_source_free(
     arguments: list[str],
-    diagnostic: str,
+    contexts: tuple[str, ...],
 ) -> None:
     result = _invoke_du(arguments)
 
-    assert (result.exit_code, result.stdout, result.stderr) == (2, "", diagnostic)
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = strip_ansi(result.stderr)
+    for context in contexts:
+        assert context in diagnostic
+
+
+def test_du_validates_dash_operand_after_option_terminator() -> None:
+    result = _invoke_du(["--", "-"])
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "du: -: invalid mapped filesystem operand\n",
+    )
 
 
 @pytest.mark.parametrize(

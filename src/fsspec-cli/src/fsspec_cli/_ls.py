@@ -10,20 +10,16 @@ from typing import TYPE_CHECKING, Generic, TypeAlias, TypeVar, cast
 import typer
 
 from ._command import (
+    _drain_current_operation,
     _Failure,
     _MappedOperand,
-    _parse_mapped_operand,
     _render_failure,
     _render_output_failure,
-    _usage_error,
 )
-from ._diagnostics import _render_diagnostic_value
 from ._listing import ListingRow, render_listing, to_listing
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
-
     from fsspec.asyn import AsyncFileSystem
 
     from ._app import AsyncFilesystemSource
@@ -60,92 +56,11 @@ _LongDirectoryResult: TypeAlias = _DirectoryResult[ListingRow]
 _LongResult: TypeAlias = _LongFileResult | _LongDirectoryResult
 
 
-def _short_options(argument: str) -> str | None:
-    characters = argument[1:]
-    if not characters or not set(characters) <= {"A", "h", "l"}:
-        return None
-    return characters
-
-
-def _long_requested(
-    raw_arguments: tuple[str, ...],
-    *,
-    long_by_default: bool,
-) -> bool:
-    if long_by_default:
-        return True
-
-    options_active = True
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            continue
-        if not options_active or not argument.startswith("-") or argument == "-":
-            continue
-        options = _short_options(argument)
-        if options is not None and "l" in options:
-            return True
-    return False
-
-
-def _preflight(
-    command: str,
-    raw_arguments: tuple[str, ...],
-    known_names: Collection[str],
-    *,
-    long_by_default: bool = False,
-) -> _LsRequest:
-    include_almost_all = False
-    long_listing = _long_requested(
-        raw_arguments,
-        long_by_default=long_by_default,
-    )
-    human_readable = False
-    operands = []
-    options_active = True
-
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            continue
-        if options_active and argument.startswith("-") and argument != "-":
-            options = _short_options(argument)
-            if options is None:
-                rendered = _render_diagnostic_value(argument)
-                _usage_error(command, f"{rendered}: unsupported option")
-            if "h" in options and not long_listing:
-                rendered = _render_diagnostic_value(argument)
-                _usage_error(command, f"{rendered}: unsupported option")
-            include_almost_all = include_almost_all or "A" in options
-            human_readable = human_readable or "h" in options
-            continue
-
-        operands.append(_parse_mapped_operand(command, argument, known_names))
-
-    if not operands:
-        _usage_error(command, "missing mapped filesystem operand")
-
-    return _LsRequest(
-        include_almost_all=include_almost_all,
-        long_listing=long_listing,
-        human_readable=human_readable,
-        operands=tuple(operands),
-    )
-
-
 async def _run_ls(
     command: str,
-    raw_arguments: tuple[str, ...],
+    request: _LsRequest,
     sources: Mapping[str, AsyncFilesystemSource],
-    *,
-    long_by_default: bool = False,
 ) -> None:
-    request = _preflight(
-        command,
-        raw_arguments,
-        sources,
-        long_by_default=long_by_default,
-    )
     invocation = _SourceInvocation(command, sources)
     succeeded = False
     failures: tuple[_Failure, ...] = ()
@@ -243,7 +158,9 @@ async def _classify_operand(
 ) -> Mapping[str, object] | _Failure:
     # fsspec's native async API intentionally exposes underscore coroutines.
     try:
-        info = await filesystem._info(operand.path)  # noqa: SLF001
+        info = await _drain_current_operation(
+            filesystem._info(operand.path)  # noqa: SLF001
+        )
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _Failure(operand, backend_error=error)
 
@@ -319,9 +236,11 @@ async def _list_directory(
     detail: bool,
 ) -> object | _Failure:
     try:
-        return await filesystem._ls(  # noqa: SLF001
-            operand.path,
-            detail=detail,
+        return await _drain_current_operation(
+            filesystem._ls(  # noqa: SLF001
+                operand.path,
+                detail=detail,
+            )
         )
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _Failure(operand, backend_error=error)
