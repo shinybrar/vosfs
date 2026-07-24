@@ -16,14 +16,16 @@ This profile adds confirmed-removal verbose output to base file-only `rm`:
 rm -v [--] name:/file...
 ```
 
-`-v` is required exactly once before operands. Base file-only `rm` without
-`-v` remains a separate silent profile and still requires one mapped filesystem
+`-v` is required exactly once. Typer accepts the registered short option in a
+combined group and before or after operands. Base file-only `rm` without `-v`
+remains a separate silent profile and still requires one mapped filesystem
 operand.
 
-`--` ends option parsing. Repeated `-v`, `-f`/`-fv`/`-vf`, `-d`/`-dv`,
-`-R`/`-r`, `-i`, grouped forms, long options, and every other unprofiled
-combination are unsupported. Unsupported option tokens fail with status `2`
-before source entry. Zero operands remain a usage error.
+Repeated `-v`, non-recursive `-f`, and `-d` combinations are semantic usage
+errors. Recursive `-f` and `-v` composition belongs to the guarded recursive
+profile. Unregistered options and long aliases are Typer usage errors. Every
+usage failure completes before source entry; zero operands remain a usage
+error.
 
 ## 2. Backend operation semantics
 

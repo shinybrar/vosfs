@@ -1073,11 +1073,8 @@ def test_rm_force_profile_option_rejection_is_source_free() -> None:
         ["-f", "-i", "memory:/docs/notes.txt"],
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "rm: -i: unsupported option\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert "No such option: -i" in strip_ansi(result.stderr)
     assert source_calls == 0
 
 
@@ -1098,7 +1095,7 @@ def test_rm_verbose_profile_option_rejection_is_source_free() -> None:
     assert (result.exit_code, result.stdout, result.stderr) == (
         2,
         "",
-        "rm: -f: unsupported option\n",
+        "rm: -f: cannot combine with -v\n",
     )
     assert source_calls == 0
 
@@ -1260,28 +1257,6 @@ def test_adapted_memory_multi_file_mv_remains_unverified_without_exact_operation
     assert not filesystem.sync_fs.exists("/docs/target/notes.txt")
     assert not filesystem.sync_fs.exists("/docs/target/guide.md")
     assert not any(call.operation == "get_file" for call in source.calls)
-
-
-def test_rm_option_rejection_is_source_free() -> None:
-    source_calls = 0
-
-    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
-        nonlocal source_calls
-        source_calls += 1
-        raise AssertionError
-
-    result = _invoke(
-        App({"memory": source_must_not_run}),
-        "rm",
-        ["-f", "-i", "memory:/docs/notes.txt"],
-    )
-
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "rm: -i: unsupported option\n",
-    )
-    assert source_calls == 0
 
 
 def test_adapted_memory_recursive_rm_profile_has_isolated_state(

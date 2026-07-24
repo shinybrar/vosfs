@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, NoReturn
 from unittest.mock import Mock
@@ -13,6 +12,7 @@ from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App, AsyncFilesystemSource
 from typer.testing import CliRunner, Result
 
+from ._ansi import strip_ansi
 from ._support import _RecordingSource
 
 if TYPE_CHECKING:
@@ -56,11 +56,8 @@ def test_recursive_rm_disabled_is_policy_first_and_source_free(
         ["rm", option, "not-a-mapped-operand"],
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "rm: recursive removal disabled by application\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert f"No such option: {option}" in strip_ansi(result.stderr)
     assert source_calls == 0
 
 
@@ -85,11 +82,10 @@ def test_recursive_rm_disabled_rejects_after_grouped_valid_prefixes(
         enabled=False,
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "rm: recursive removal disabled by application\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert "No such option: -R" in strip_ansi(
+        result.stderr
+    ) or "No such option: -r" in strip_ansi(result.stderr)
     assert source.call_count == 0
     assert events == []
 
@@ -164,12 +160,8 @@ def test_recursive_rm_help_tracks_snapshotted_application_policy() -> None:
         ["rm", "--help"],
     )
 
-    disabled_help = " ".join(
-        re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", disabled.stdout).split()
-    )
-    enabled_help = " ".join(
-        re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", enabled.stdout).split()
-    )
+    disabled_help = " ".join(strip_ansi(disabled.stdout).split())
+    enabled_help = " ".join(strip_ansi(enabled.stdout).split())
     assert disabled.exit_code == enabled.exit_code == 0
     assert "-d removes empty directories" in disabled_help
     assert "guarded -R or -r" not in disabled_help
@@ -221,7 +213,6 @@ def test_recursive_rm_force_combinations_allow_zero_operands(
         ["-Rvv", "memory:/docs"],
         ["-R", "-d", "memory:/docs"],
         ["-d", "-R", "memory:/docs"],
-        ["memory:/docs", "-R"],
         ["--recursive", "memory:/docs"],
     ],
 )
@@ -235,6 +226,22 @@ def test_recursive_rm_rejects_unprofiled_option_shapes_source_free(
     assert result.exit_code == 2
     assert result.stdout == ""
     assert source.call_count == 0
+
+
+def test_recursive_rm_option_after_operand_is_parsed_by_typer() -> None:
+    source = _RecordingSource(
+        [],
+        info_by_path={"/docs": {"name": "/docs", "type": "directory"}},
+        ls_by_path={"/docs": []},
+    )
+
+    result = _invoke_recursive_rm(
+        ["memory:/docs", "-R"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.call_count == 1
 
 
 @pytest.mark.parametrize(

@@ -7,15 +7,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-import typer
-
-from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
+from ._command import (
+    _backend_category,
+    _drain_current_operation,
+    _render_operand_diagnostic,
+)
 from ._path import (
     _has_dot_segment,
     _lexical_parent,
     _strip_trailing_slashes,
 )
-from ._sources import _await_current
 
 if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
@@ -65,7 +66,7 @@ async def _call(
     result = method(*args, **kwargs)
     if not inspect.isawaitable(result):
         raise NotImplementedError
-    return await _await_current(result)
+    return await _drain_current_operation(result)
 
 
 def _has_required_hooks(filesystem: AsyncFileSystem) -> bool:
@@ -206,21 +207,9 @@ def _read_failure(
     *,
     root_missing: bool = False,
 ) -> _RecursiveRmFailure:
-    if isinstance(error, FileNotFoundError):
-        category = "not found"
-    elif isinstance(error, PermissionError):
-        category = "permission denied"
-    elif isinstance(error, NotADirectoryError):
-        category = "not a directory"
-    elif isinstance(error, NotImplementedError):
-        category = "unsupported operation"
-    else:
-        rendered_class = _render_diagnostic_value(type(error).__name__)
-        rendered_message = _render_diagnostic_value(str(error))
-        category = f"backend failure ({rendered_class}): {rendered_message}"
     return _RecursiveRmFailure(
         operand,
-        category,
+        _backend_category(error),
         backend_error=error,
         root_missing=root_missing,
     )
@@ -304,6 +293,4 @@ def _render_recursive_failure(
     command: str,
     failure: _RecursiveRmFailure,
 ) -> None:
-    prefix = _render_diagnostic_prefix(command)
-    operand = _render_diagnostic_value(failure.operand.spelling)
-    typer.echo(f"{prefix} {operand}: {failure.category}", err=True, color=True)
+    _render_operand_diagnostic(command, failure.operand, failure.category)
