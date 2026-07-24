@@ -13,13 +13,14 @@ requests to run normal CI and review. Root outputs such as `release_created`,
 `src/fsspec-cli--release_created`, `src/fsspec-cli--tag_name`, and
 `src/fsspec-cli--sha` belong to `fsspec-cli`.
 
-The root package excludes the component tree (`src/fsspec-cli`), all of
+The root package excludes the component tree (`src/fsspec-cli`), shared
+component-only files (`CONTEXT.md` and `release-please-config.json`), all of
 `docs/`, and the `.superpowers/` agent scratch directory from its commit
-analysis. Component-only work and documentation changes therefore do not
-propose a `vosfs` release. The component package is scoped to
-`src/fsspec-cli`, so it already ignores everything outside that directory.
-Never hand-edit versioned changelog entries or couple an `fsspec-cli` cut to a
-`vosfs` version.
+analysis. Component-only work, including shared planning or release
+configuration changes, and documentation changes therefore do not propose a
+`vosfs` release. The component package is scoped to `src/fsspec-cli`, so it
+already ignores everything outside that directory. Never hand-edit versioned
+changelog entries or couple an `fsspec-cli` cut to a `vosfs` version.
 
 `vosfs` uses ordinary SemVer bumping. Before 1.0, `fsspec-cli` treats a
 breaking change as a minor bump, so the Typer-owned command break from 0.5.x

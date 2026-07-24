@@ -16,6 +16,8 @@
       "pull-request-title-pattern": "chore: release vosfs ${version}",
       "exclude-paths": [
         "src/fsspec-cli",
+        "CONTEXT.md",
+        "release-please-config.json",
         "docs",
         ".superpowers"
       ],

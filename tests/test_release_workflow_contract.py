@@ -1,5 +1,6 @@
 """Static contracts for single-path release and documentation publication."""
 
+import json
 from pathlib import Path
 
 _ROOT = Path(__file__).parents[1]
@@ -7,6 +8,13 @@ _WORKFLOWS = _ROOT / ".github/workflows"
 _RELEASE = _WORKFLOWS / "release.yml"
 _PUBLISH = _WORKFLOWS / "publish.yml"
 _PAGES = _WORKFLOWS / "pages.yml"
+
+
+def test_root_release_excludes_shared_fsspec_cli_paths() -> None:
+    config = json.loads((_ROOT / "release-please-config.json").read_text())
+    excluded = set(config["packages"]["."]["exclude-paths"])
+
+    assert {"src/fsspec-cli", "CONTEXT.md", "release-please-config.json"} <= excluded
 
 
 def _step(workflow: str, name: str, next_name: str | None = None) -> str:
