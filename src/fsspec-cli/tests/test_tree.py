@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Literal, NoReturn
 
 import pytest
 import typer
-from click.utils import strip_ansi
 from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App, AsyncFilesystemSource
 from typer.main import get_command
@@ -460,7 +459,7 @@ def test_tree_orders_each_group_by_locale_then_raw(
 def test_tree_help_comes_from_typed_callback(arguments: list[str]) -> None:
     result = _invoke_tree(arguments)
 
-    help_text = strip_ansi(result.stdout)
+    help_text = result.stdout
     assert (result.exit_code, result.stderr) == (0, "")
     assert "Usage: root tree [OPTIONS] {name:/path}" in help_text
     assert "Display a recursive directory tree" in help_text
@@ -497,7 +496,7 @@ def test_tree_usage_failures_are_typer_owned_and_source_free(
     result = _invoke_tree(arguments)
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     for context in contexts:
         assert context in diagnostic
 
@@ -508,7 +507,7 @@ def test_tree_rejects_a_runtime_oversized_depth_deterministically() -> None:
     result = _invoke_tree(["--maxdepth", value, "memory:/docs"])
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     assert "Invalid value" in diagnostic
     assert "--maxdepth" in diagnostic
 

@@ -5,7 +5,6 @@ from typing import NoReturn
 
 import pytest
 import typer
-from click.utils import strip_ansi
 
 from ._support import _invoke_du, _RecordingSource
 
@@ -92,7 +91,7 @@ def test_du_accepts_grouped_repeated_and_interspersed_options(
 def test_du_help_comes_from_typed_callback(arguments: list[str]) -> None:
     result = _invoke_du(arguments)
 
-    plain_help = strip_ansi(result.stdout)
+    plain_help = result.stdout
     assert (result.exit_code, result.stderr) == (0, "")
     assert "Usage: root du [OPTIONS] {name:/path}" in plain_help
     assert "Estimate file space usage" in plain_help
@@ -131,7 +130,7 @@ def test_du_usage_failures_are_typer_owned_and_source_free(
     result = _invoke_du(arguments)
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     for context in contexts:
         assert context in diagnostic
 

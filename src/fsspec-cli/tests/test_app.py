@@ -8,7 +8,6 @@ from unittest.mock import Mock
 
 import pytest
 import typer
-from click.utils import strip_ansi
 from fsspec_cli import (
     App,
     AppCapabilities,
@@ -144,7 +143,7 @@ def test_ls_rejects_a_missing_mapped_filesystem_operand() -> None:
     result = _invoke_ls([])
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     assert "Missing argument" in diagnostic
     assert "name:/path" in diagnostic
 
@@ -196,7 +195,7 @@ def test_typer_rejects_unsupported_ls_options(
     result = _invoke_ls([option, "memory:/docs"])
 
     assert (result.exit_code, result.stdout) == (2, "")
-    assert context in strip_ansi(result.stderr)
+    assert context in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -354,7 +353,7 @@ def test_source_free_callback_and_help_are_defined_by_callback_metadata() -> Non
         ["fs", "echo-label", "--prefix", "host-", "hello"],
     )
     help_result = CliRunner().invoke(parent, ["fs", "echo-label", "--help"])
-    help_text = strip_ansi(help_result.stdout)
+    help_text = help_result.stdout
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "host-hello\n", "")
     assert (help_result.exit_code, help_result.stderr) == (0, "")
@@ -436,7 +435,7 @@ def test_ls_reports_a_missing_operand_after_supported_option_syntax(
     result = _invoke_ls(arguments)
 
     assert (result.exit_code, result.stdout) == (2, "")
-    assert "Missing argument" in strip_ansi(result.stderr)
+    assert "Missing argument" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -494,7 +493,7 @@ def test_ls_preserves_typer_failures_when_mounted_below_a_parent_app() -> None:
     )
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     assert "Usage: root data ls" in diagnostic
     assert "No such option: --long" in diagnostic
 
@@ -506,7 +505,7 @@ def test_typer_preflight_precedes_active_loop_refusal() -> None:
     result = asyncio.run(invoke())
 
     assert (result.exit_code, result.stdout) == (2, "")
-    assert "Missing argument" in strip_ansi(result.stderr)
+    assert "Missing argument" in result.stderr
 
 
 def test_ls_renders_all_diagnostic_control_characters_in_order() -> None:
