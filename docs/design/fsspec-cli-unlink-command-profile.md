@@ -2,12 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-> **0.6.0 interface note:** ADR 0005 supersedes parser, help, and framework
-> usage wording below. A central annotated callback defines this command;
-> Typer owns option recognition, argument collection, help, and framework
-> status-2 usage diagnostics. Parser-era exact diagnostics are historical.
-> Mapped-operand and destructive-path validation, zero-source preflight,
-> execution, output, and lifecycle requirements remain normative.
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
 
 Status: **Locked command semantics and async execution contract**
 
@@ -57,22 +52,13 @@ These are source-free safety guards with exit status `2`.
 ### 2.1 Option and operand preflight
 
 Before any source factory call, context entry, backend call, or stdout output,
-the command MUST validate:
-
-1. option syntax;
-2. the presence of exactly one operand;
-3. every operand's grammar;
-4. every mapped filesystem name; and
-5. root and final dot-component safety guards.
-
-`--` ends option parsing. Typer's framework-owned `--help` short circuit is
-explicitly exempt. Every other command option is unsupported.
+Typer owns argument arity, option handling, `--`, help, and framework usage
+errors. Its exact rendered wording is not part of this profile. The callback
+then validates the mapped operand and destructive-path guards before event-loop
+entry or source acquisition.
 
 | Condition | Diagnostic |
 | --- | --- |
-| No operands | `unlink: missing mapped filesystem operand` |
-| More than one operand | `unlink: extra operand` |
-| Unsupported option token | `unlink: <option token>: unsupported option` |
 | Malformed operand | `unlink: <operand>: invalid mapped filesystem operand` |
 | Unknown mapped name | `unlink: <operand>: unknown filesystem (known: <name>, ...)` |
 | Root or final `.` / `..` | `unlink: <operand>: rejected path` |

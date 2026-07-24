@@ -2,12 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-> **0.6.0 interface note:** ADR 0005 supersedes parser, help, and framework
-> usage wording below. A central annotated callback defines this command;
-> Typer owns argument collection, option termination, help, and framework
-> status-2 usage diagnostics. Parser-era exact diagnostics are historical.
-> Mapped-operand validation, zero-source preflight, execution, binary
-> sequencing, ownership cleanup, and lifecycle requirements remain normative.
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
 
 Status: **Locked stdin admission contract atop mapped-file `cat`**
 
@@ -53,26 +48,16 @@ concurrency, and multiple independent stdin streams remain out of scope.
 
 ## 2. Operand preflight
 
-Before any source factory call, context entry, backend call, temporary
-creation, stdin read, or stdout byte, the command MUST validate:
-
-1. option syntax;
-2. every mapped operand's grammar and configured name; and
-3. that `-` is admitted only as an operand, never as an option token.
-
-`--` ends option parsing. Typer's framework-owned `--help` short circuit is
-explicitly exempt. Every command option, including `-u`, grouped short options,
-and long options, is unsupported and MUST reject with exit `2` without reading
-stdin or entering sources.
-
-Zero operands after option parsing MUST expand to one implicit stdin read.
+Typer owns argument collection, option handling, `--`, help, and framework
+usage errors. Its exact rendered wording is not part of this profile. A
+framework failure exits `2` before callback execution, stdin reads, or source
+entry. Zero operands MUST expand to one implicit stdin read.
 An explicit `-` is a stdin operand. Mapped operands retain the base profile
-grammar. The first preflight error in argument order MUST produce one
-diagnostic and exit `2`.
+grammar and are callback-validated before event-loop entry or source
+acquisition.
 
 | Condition | Diagnostic |
 | --- | --- |
-| Unsupported option token | `cat: <option token>: unsupported option` |
 | Malformed mapped operand | `cat: <operand>: invalid mapped filesystem operand` |
 | Unknown mapped name | `cat: <operand>: unknown filesystem (known: <name>, <name>, ...)` |
 

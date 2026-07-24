@@ -2,12 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-> **0.6.0 interface note:** ADR 0005 supersedes parser, help, and framework
-> usage wording below. A central annotated callback defines this command;
-> Typer owns option recognition, argument collection, help, and framework
-> status-2 usage diagnostics. Parser-era exact diagnostics are historical.
-> Mapped-operand and semantic validation, zero-source preflight, execution,
-> output, and lifecycle requirements remain normative.
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
 
 Status: **Locked reduced compatibility profile (production command shipped by #146)**
 
@@ -65,9 +60,9 @@ stat [--] name:/path...
 ```
 
 - One or more mapped filesystem operands are REQUIRED.
-- Zero options are accepted on the command path. `--` ends option parsing.
-- Typer's framework-owned `--help` short circuit is exempt from this
-  compatibility profile.
+- Typer owns argument collection, option handling, `--`, help, and framework
+  usage errors. Exact framework diagnostic wording is not compatibility
+  surface.
 
 This is deliberately smaller than macOS/BSD `stat(1)`. It is **not** the host
 default format. Reference behavior for naming and field semantics is macOS
@@ -81,9 +76,9 @@ Exact Apple tag ↔ host build pairing remains **unverified**.
 
 ### 1.1 Rejected flags and shapes (source-free)
 
-Every token below MUST reject during command preflight with status `2`, empty
-stdout, exactly one `stat: <token>: unsupported option` diagnostic (or the
-locked operand diagnostic), zero source factories, and zero filesystem work.
+Every interface shape below MUST reject through Typer with status `2`, empty
+stdout, relevant parameter context, zero source factories, and zero filesystem
+work. Complete Rich-rendered panels are not compatibility surface.
 
 | Rejected surface | Reference meaning on macOS/BSD `stat(1)` | Why rejected here |
 | --- | --- | --- |
@@ -100,12 +95,10 @@ locked operand diagnostic), zero source factories, and zero filesystem work.
 ### 1.2 Operand preflight
 
 Operand grammar matches plain `ls`: `<name>:/<path>` with leading `/` on the
-path portion. Diagnostics:
+path portion. Callback-owned diagnostics are:
 
 | Condition | Diagnostic |
 | --- | --- |
-| Zero operands | `stat: missing mapped filesystem operand` |
-| Unsupported option token | `stat: <option token>: unsupported option` |
 | Malformed operand | `stat: <operand>: invalid mapped filesystem operand` |
 | Unknown mapped name | `stat: <operand>: unknown filesystem (known: <name>, ...)` |
 
@@ -209,8 +202,8 @@ Every diagnostic is terminated by one newline. For diagnostics only, each
 inserted option token, operand, exception class, and exception message is
 rendered by first replacing `\` with `\\`, then escaping every control character
 (any code point below U+0020, or U+007F DELETE) as a lowercase `\xNN` hex
-sequence; every other character is unchanged. Literal command text and stable
-categories (`incompatible result`, `unsupported option`, …) are not transformed.
+sequence; every other character is unchanged. Literal command text and
+command-owned categories such as `incompatible result` are not transformed.
 This is the only diagnostic escaping algorithm. No traceback is written.
 
 Successful invocations that render every operand exit `0`. Partial success exits

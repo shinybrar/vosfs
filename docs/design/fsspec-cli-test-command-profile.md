@@ -2,12 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-> **0.6.0 interface note:** ADR 0005 supersedes parser, help, and framework
-> usage wording below. A central annotated callback defines this command;
-> Typer owns option recognition, argument collection, conversion, help, and
-> framework status-2 usage diagnostics. Parser-era exact diagnostics are
-> historical. Mapped-operand and semantic validation, zero-source preflight,
-> execution, output, and lifecycle requirements remain normative.
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
 
 Status: **Locked command semantics and async execution contract**
 
@@ -41,24 +36,19 @@ selector tokens mean:
 | `-d` | path is a directory |
 | `-f` | path is a file |
 
-The selector MAY appear before or after the operand while option parsing is
-active. `--` ends option parsing. Repeating the same selector or supplying two
-different selectors is invalid. Grouped tokens such as `-ed` and every other
-token beginning with `-` are unsupported options. There is no negation,
+Exactly one selector kind is required; supplying two different kinds is a
+callback-owned semantic error. The annotated callback and Typer own option
+syntax, argument arity, `--`, help, and framework usage errors. Repeating the
+same boolean selector does not add another selector kind. There is no negation,
 compound predicate, expression language, or multiple-operand form.
-
-Exact `--help` remains framework owned. The mapped-operand grammar and
-validation order are those of the shared command toolkit. The command adds
-these stable diagnostics:
 
 | Condition | Diagnostic |
 | --- | --- |
-| Zero selectors, or a repeated/second selector | `test: exactly one predicate selector is required` |
-| Selector but no operand | `test: missing mapped filesystem operand` |
-| More than one operand | `test: extra operand` |
+| Zero or multiple selector kinds | `test: exactly one predicate selector is required` |
 
-Every preflight failure completes with status `2`, empty stdout, exactly one
-stable diagnostic, and no source factory or filesystem call.
+Callback-owned mapped validation then runs before event-loop entry or source
+acquisition. Every preflight failure has status `2`, empty stdout, and no source
+or filesystem work.
 
 ## 2. Backend operation contract
 
@@ -120,8 +110,8 @@ across:
 - adapted async Memory; and
 - native async `vosfs` with a mocked transport and no network access.
 
-Focused tests additionally lock exact `--help`, interspersed selectors, the
-`--` terminator, selector repetition and grouping, source-free preflight,
+Focused tests additionally lock Typer help, selector placement, the `--`
+terminator, selector repetition and grouping, source-free preflight,
 exactly one matching hook, strict boolean validation, silent true and false
 results, backend diagnostics, and invocation-owned cleanup.
 

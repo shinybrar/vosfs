@@ -2,12 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-> **0.6.0 interface note:** ADR 0005 supersedes parser, help, and framework
-> usage wording below. A central annotated callback defines this command;
-> Typer owns option recognition, argument collection, help, and framework
-> status-2 usage diagnostics. Parser-era exact diagnostics are historical.
-> Mapped-operand and semantic validation, zero-source preflight, execution,
-> output, and lifecycle requirements remain normative.
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
 
 Status: **Locked command semantics and async execution contract**
 
@@ -64,22 +59,13 @@ usage error.
 ## 2.1 Option and operand preflight
 
 Before any source factory call, context entry, backend call, or command output,
-the command MUST validate option syntax, operand presence, operand grammar, and
-mapped filesystem names.
-
-`--` ends option parsing. `-p` is idempotent when repeated or grouped. A grouped
-option token is valid only when every option character is `p`; otherwise the
-complete token is reported as unsupported. Option tokens after the first operand
-are unsupported. Typer's framework-owned `--help` short circuit is explicitly
-exempt from this command compatibility profile.
-
-The first preflight error in argument order MUST produce one diagnostic and
-exit `2`. No source may be entered and no stdout output written before it.
+Typer owns argument collection, `-p`, option handling, help, and framework usage
+errors. Its exact rendered wording is not part of this profile. Framework
+failures exit `2` before callback execution. The callback then validates every
+mapped operand before event-loop entry or source acquisition.
 
 | Condition | Diagnostic |
 | --- | --- |
-| No operands | `mkdir: missing mapped filesystem operand` |
-| Unsupported option token | `mkdir: <option token>: unsupported option` |
 | Malformed operand | `mkdir: <operand>: invalid mapped filesystem operand` |
 | Unknown mapped name | `mkdir: <operand>: unknown filesystem (known: <name>, ...)` |
 

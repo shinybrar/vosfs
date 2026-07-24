@@ -2,12 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-> **0.6.0 interface note:** ADR 0005 supersedes parser, help, and framework
-> usage wording below. A central annotated callback defines this command;
-> Typer owns option recognition, argument collection, conversion, help, and
-> framework status-2 usage diagnostics. Parser-era exact diagnostics are
-> historical. Mapped-operand and semantic validation, zero-source preflight,
-> execution, output, and lifecycle requirements remain normative.
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
 
 Status: **Locked backend-neutral command profile (production command shipped by #200)**
 
@@ -37,29 +32,26 @@ dispatch mechanism.
 
 ## 2. Invocation and source-free preflight
 
-Accepted argv is exactly:
+The central annotated callback accepts one mapped operand:
 
 ```text
 info [--] name:/path
 ```
 
-- Exactly one mapped operand is REQUIRED.
-- No command options are accepted. `--` ends option parsing.
-- Framework-owned `--help` before `--` remains Typer's help short circuit.
-- Preflight completes before any source factory, entry, or filesystem work.
+- Typer owns argument arity, option handling, `--`, help, and framework usage
+  errors. Exact framework wording is not compatibility surface.
+- Callback-owned mapped validation completes before any source factory, entry,
+  or filesystem work.
 
-Diagnostics and status are:
+Callback-owned diagnostics are:
 
-| Condition | Diagnostic | Status |
-| --- | --- | --- |
-| Missing operand | `info: missing mapped filesystem operand` | `2` |
-| Unsupported option | `info: <token>: unsupported option` | `2` |
-| Extra operand | `info: extra operand` | `2` |
-| Malformed mapped operand | `info: <operand>: invalid mapped filesystem operand` | `2` |
-| Unknown mapped name | `info: <operand>: unknown filesystem (known: <names>)` | `2` |
+| Condition | Diagnostic |
+| --- | --- |
+| Malformed mapped operand | `info: <operand>: invalid mapped filesystem operand` |
+| Unknown mapped name | `info: <operand>: unknown filesystem (known: <names>)` |
 
 Inserted values use the shared diagnostic escaping algorithm. Pure preflight
-failure has empty stdout and touches no source.
+failure has status `2`, empty stdout, and touches no source.
 
 ## 3. Operation and normalization
 

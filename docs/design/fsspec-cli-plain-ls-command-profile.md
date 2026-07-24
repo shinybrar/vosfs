@@ -2,12 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-> **0.6.0 interface note:** ADR 0005 supersedes parser, help, and framework
-> usage wording below. A central annotated callback defines this command;
-> Typer owns option recognition, argument collection, conversion, help, and
-> framework status-2 usage diagnostics. Parser-era exact diagnostics are
-> historical. Mapped-operand and semantic validation, zero-source preflight,
-> execution, output, and lifecycle requirements remain normative.
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
 
 Status: **Locked command semantics and async execution contract**
 
@@ -93,42 +88,25 @@ local:tmp                invalid: path has no leading slash
 
 ### 2.1 Option and operand preflight
 
-Before any source factory call, context entry, backend call, or command output,
-the command MUST validate:
-
-1. option syntax;
-2. the presence of at least one operand;
-3. every operand's grammar; and
-4. every mapped filesystem name.
-
-`--` ends option parsing. `-A` is idempotent when repeated or grouped. Typer's
-framework-owned `--help` short circuit is explicitly exempt from this command
-compatibility profile: its text and successful exit are not plain-`ls`
-behavior. Every option outside the separate long-listing profile, including
-`-h` without long mode and `-a`, is unsupported. `-h` is human-readable size
-only when long mode is active and is never a help alias.
-
-The first preflight error in argument order MUST produce one diagnostic and
-exit `2`. No source may be entered, no backend call made, and no stdout output
-written before it. An unknown-name diagnostic MUST include every configured
-name in locale-sorted order. These are the exact preflight diagnostics, before
-the diagnostic rendering defined in Section 6:
+Typer owns argument collection, option handling, `--`, help, and framework
+usage errors. Its exact rendered wording is not part of this profile. Framework
+failures exit `2` before callback execution. The callback validates every
+mapped operand and the `-h`-requires-long-mode rule before event-loop entry,
+source acquisition, backend work, or output. An unknown-name diagnostic MUST
+include every configured name in locale-sorted order.
 
 | Condition | Diagnostic |
 | --- | --- |
-| No operands | `ls: missing mapped filesystem operand` |
-| Unsupported option token | `ls: <option token>: unsupported option` |
 | Malformed operand | `ls: <operand>: invalid mapped filesystem operand` |
 | Unknown mapped name | `ls: <operand>: unknown filesystem (known: <name>, <name>, ...)` |
 
-Option tokens and operands are inspected from left to right. A grouped option
-token is valid only when every option character is `A`; otherwise the complete
-token is reported as unsupported. Known names in the last diagnostic are each
-rendered independently and joined by comma-space (`U+002C U+0020`).
+Known names in the last diagnostic are each rendered independently and joined
+by comma-space (`U+002C U+0020`).
 
-An explicit operand containing NUL or newline is also a preflight error. NUL
-is not a POSIX pathname byte; rejecting newline is the profile's chosen
-one-record-per-line rule, consistent with POSIX Issue 8 future direction.
+An explicit operand containing NUL or newline is also a callback-owned
+preflight error. NUL is not a POSIX pathname byte; rejecting newline is the
+profile's chosen one-record-per-line rule, consistent with POSIX Issue 8 future
+direction.
 
 ## 3. Backend operation semantics
 

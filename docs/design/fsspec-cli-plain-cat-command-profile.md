@@ -2,12 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-> **0.6.0 interface note:** ADR 0005 supersedes parser, help, and framework
-> usage wording below. A central annotated callback defines this command;
-> Typer owns argument collection, option termination, help, and framework
-> status-2 usage diagnostics. Parser-era exact diagnostics are historical.
-> Mapped-operand validation, zero-source preflight, execution, output,
-> ownership cleanup, and lifecycle requirements remain normative.
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
 
 Status: **Locked command semantics and async execution contract**
 
@@ -74,32 +69,20 @@ bare `-` are defined by the stdin profile, not this mapped-file profile.
 
 ### 2.1 Option and operand preflight
 
-Before any source factory call, context entry, backend call, temporary
-creation, or stdout byte, the command MUST validate:
-
-1. option syntax;
-2. every mapped operand's grammar; and
-3. every mapped filesystem name.
-
-`--` ends option parsing. Typer's framework-owned `--help` short circuit is
-explicitly exempt from this command compatibility profile. Every command
-option, including `-u`, grouped short options, and long options, is
-unsupported. Bare `-` is admitted only by the stdin profile.
-
-The first preflight error in argument order MUST produce one diagnostic and
-exit `2`. No source may be entered, no backend call made, no temporary created,
-and no stdout output written before it. An unknown-name diagnostic MUST include
-every configured name in locale-sorted order. These are the exact preflight
-diagnostics, before the diagnostic rendering defined in Section 6:
+Typer owns argument collection, option handling, `--`, help, and framework
+usage errors. Its exact rendered wording is not part of this profile. Framework
+failures exit `2` before callback execution. The callback validates every
+mapped operand before event-loop entry, source acquisition, temporary creation,
+or output. An unknown-name diagnostic MUST include every configured name in
+locale-sorted order.
 
 | Condition | Diagnostic |
 | --- | --- |
-| Unsupported option token | `cat: <option token>: unsupported option` |
 | Malformed operand | `cat: <operand>: invalid mapped filesystem operand` |
 | Unknown mapped name | `cat: <operand>: unknown filesystem (known: <name>, <name>, ...)` |
 
-Option tokens and operands are inspected from left to right. An explicit
-operand containing NUL or newline is also a preflight error.
+An explicit operand containing NUL or newline is also a callback-owned
+preflight error.
 
 ## 3. Backend operation semantics
 

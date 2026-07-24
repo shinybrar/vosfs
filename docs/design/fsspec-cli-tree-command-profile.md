@@ -2,12 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-> **0.6.0 interface note:** ADR 0005 supersedes parser, help, and framework
-> usage wording below. A central annotated callback defines this command;
-> Typer owns option recognition, argument collection, conversion, help, and
-> framework status-2 usage diagnostics. Parser-era exact diagnostics are
-> historical. Mapped-operand and semantic validation, zero-source preflight,
-> execution, output, and lifecycle requirements remain normative.
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
 
 Status: **Locked command semantics and async execution contract**
 
@@ -33,30 +28,14 @@ The supported form is:
 tree [--maxdepth N] [--] name:/path
 ```
 
-Exactly one mapped filesystem root is REQUIRED. `--maxdepth N` uses only the
-separate-token spelling, MAY appear before or after the operand while option
-parsing is active, and MAY repeat with the final value winning. `--` ends
-option parsing. `N` contains one or more ASCII decimal digits, is non-negative,
-and MAY contain leading zeros. A value beyond Python's configured integer
-conversion ceiling is an invalid depth rather than an internal error.
-
-The operand is depth zero and its direct children are depth one. Omission is
-unbounded. `--maxdepth=`, `-L`, sizes, summaries, display limits, ASCII mode,
-directory-only filtering, multiple roots, standard input, and every other
-option are unsupported. Exact `--help` remains framework-owned.
-
-The shared mapped-operand validation order applies. The command adds these
-stable preflight diagnostics:
-
-| Condition | Diagnostic |
-| --- | --- |
-| Zero operands | `tree: missing mapped filesystem operand` |
-| More than one operand | `tree: extra operand` |
-| Missing depth value | `tree: --maxdepth: option requires an argument` |
-| Invalid depth | `tree: <value>: invalid --maxdepth value` |
-
-Every preflight failure has status `2`, empty stdout, one diagnostic, and no
-source acquisition.
+Exactly one mapped filesystem root is REQUIRED. `--maxdepth N` supplies a
+non-negative integer depth. The operand is depth zero and its direct children
+are depth one; omission is unbounded. The annotated callback and Typer own
+option syntax, argument arity, integer conversion, `--`, help, and framework
+usage errors. Exact framework diagnostic wording is not compatibility surface.
+Callback-owned mapped validation then runs before event-loop entry or source
+acquisition. Every preflight failure has status `2`, empty stdout, and no source
+or filesystem work.
 
 ## 2. Backend operation and return-shape normalization
 
@@ -168,7 +147,7 @@ Hermetic golden and call-shape tests exercise the public
 and native async `vosfs` with a strict mocked transport and no network.
 Focused tests lock both return shapes, worker-thread materialization, the exact
 top-level call, depth zero/one/unbounded behavior, ordering and connectors,
-file and empty roots, parser/help behavior, atomic hostile-result rejection,
+file and empty roots, Typer interface behavior, atomic hostile-result rejection,
 iteration failures, output failures, control flow, and cleanup.
 
 This ticket records its matrix rows as `unverified` until immutable qualifying

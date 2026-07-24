@@ -2,12 +2,7 @@
 
 <!-- pyml disable line-length -->
 
-> **0.6.0 interface note:** ADR 0005 supersedes parser, help, and framework
-> usage wording below. Central annotated callbacks define `ls` and `ll`;
-> Typer owns option recognition, argument collection, conversion, help, and
-> framework status-2 usage diagnostics. Parser-era exact diagnostics are
-> historical. Mapped-operand and semantic validation, zero-source preflight,
-> execution, output, and lifecycle requirements remain normative.
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
 
 Status: **Locked command semantics and async execution contract**
 
@@ -35,24 +30,18 @@ ls [-Alh] [--] name:/path...
 ll [-Alh] [--] name:/path...
 ```
 
-`ls` enters long mode when any valid option token contains `l`. `ll` is the
-same command logic with long mode inherent; `l` is therefore accepted
-idempotently by `ll`. `h` changes only the size rendering in long mode and is
-never a help alias. Exact `--help` remains the framework-owned help spelling.
-
-Short-option tokens MAY group `A`, `l`, and `h` in any order, repeat them, and
-appear before or between operands while option parsing is active. For `ls`, a
-valid `l` MAY occur in a different token from `h`; `ls -h -l` and `ls -lh` are
-equivalent. `ls -h` without a valid `l` is unsupported. `--` ends option
-parsing. Long option spellings, lowercase `a`, and a token containing any
-other option character are unsupported; the complete token is diagnosed.
+`-l` selects long mode for `ls`; `ll` has long mode inherent. `-h` changes only
+size rendering in long mode, and `-A` includes almost all entries. The central
+annotations and Typer own option syntax, argument collection, `--`, help, and
+framework usage errors. Exact framework wording is not compatibility surface.
+`ls -h` without long mode remains a callback-owned semantic usage error.
 
 The mapped-operand grammar, validation order, source pre-acquisition,
 invocation ownership, diagnostics, output-failure behavior, cleanup, and exit
 statuses are exactly those of the plain-`ls` profile and ADRs
 [0002](../adr/0002-own-async-filesystems-per-invocation.md) and
 [0003](../adr/0003-acquire-referenced-async-filesystem-sources.md). Every
-preflight error completes before source entry or output.
+preflight error has status `2` and completes before source entry or output.
 
 ## 2. Backend operation contract
 

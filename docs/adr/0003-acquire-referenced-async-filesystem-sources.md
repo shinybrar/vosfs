@@ -96,37 +96,35 @@ source on the same task and loop; then propagates the original control flow
 unchanged. An ordinary exit failure is diagnosed but cannot replace it, and a
 truthy exit cannot suppress it.
 
-Pinned fsspec 2026.6.0 requires one narrow exception before that same-task
-cleanup. `tree` can await an `AsyncFileSystemWrapper._walk` hook that resolves
-to a lazy synchronous iterator. The command owns one worker task and thread
-only while materializing that iterator. The synchronous worker catches every
-iterator `BaseException` and returns it as typed outcome data, so iterator
-control flow never crosses the child-task boundary as task cancellation. The
-invocation task shields and, when interrupted, drains that worker before
-source cleanup. It then raises the exact iterator control-flow object, or the
-unchanged outer control flow when the invocation itself was interrupted. A
-source is therefore never exited while its invocation-owned iterator is still
+Pinned fsspec 2026.6.0 requires one narrow current-operation adapter before
+same-task cleanup. It shields only an already-started operation whose awaitable,
+iterator, or worker may outlive invocation cancellation, drains that operation,
+then propagates the exact original control flow. It starts no later work,
+retry, concurrency, or general command shield.
+
+The proven call sites are:
+
+- listing and traversal: `ls` `_info` and `_ls`; `du` `_du`; `find` `_find`;
+  and `tree` awaitable `_walk` resolution, synchronous iterator materialization,
+  and asynchronous iterator advancement;
+- verified file and recursive `cp`: `_info`, `_get_file`, `_put_file`,
+  `_cp_file`, `_mkdir`, and recursive `_walk` resolution, synchronous
+  materialization, and asynchronous iteration; and
+- guarded recursive `rm`: `_info`, `_ls`, `_rm_file`, and `_rmdir`.
+
+Synchronous iterator workers catch every iterator `BaseException` and return it
+as typed outcome data, so iterator control flow never crosses the child-task
+boundary as task cancellation. Recursive `cp` also closes an iterator returned
+after interrupted awaitable resolution before source cleanup. A source is
+therefore never exited while one of these invocation-owned operations is still
 running.
 
-Verified recursive `cp` applies the same rule to each current walk
-materialization or filesystem operation: the invocation task shields and, when
-interrupted, drains that one operation before staging and source cleanup. This
-is required because cleanup cannot race invocation-owned reads, writes, or
-iterators. It does not start later work, retry, add concurrency, or convert the
-escaping control flow to a command status.
-
-Guarded recursive `rm` applies the same current-operation rule to each of its
-four admitted filesystem hooks. The invocation task shields and, when
-interrupted, drains that one hook before source cleanup. It does not issue a
-post-check, later manifest mutation, later operand, retry, or concurrent
-deletion after interruption.
-
-Apart from the tree iterator, recursive-copy, and guarded-recursive-removal
-current-operation adapters, V1 adds no numeric `130` contract, general cleanup
-shield, cleanup timeout, background loop, or general runner thread. Source
-cleanup itself is not shielded. An exit that returns or raises permits later
-exits; an exit that never returns can prevent cleanup completion and
-propagation.
+The adapter does not cover source acquisition or cleanup, diagnostics, local
+staging I/O, or directly awaited operations that cannot outlive the invocation
+task. V1 adds no numeric `130` contract, general cleanup shield, cleanup
+timeout, background loop, or general runner thread. Source cleanup itself is
+not shielded. An exit that returns or raises permits later exits; an exit that
+never returns can prevent cleanup completion and propagation.
 
 Outcome precedence is:
 
