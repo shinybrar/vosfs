@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
 import subprocess
 import sys
 from collections.abc import ItemsView, Mapping
@@ -14,9 +13,8 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import pytest
-import typer
+from click.utils import strip_ansi
 from fsspec_cli import App
-from fsspec_cli._command import _preflight_single_mapped_operand
 from typer.main import get_command
 
 from ._support import _invoke_info, _RecordingSource
@@ -159,10 +157,9 @@ def test_info_help_matches_locked_usage() -> None:
     result = _invoke_info(["--help"])
 
     assert result.exit_code == 0
-    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
-    assert "Usage: info [--] name:/path" in plain_help
+    plain_help = strip_ansi(result.stdout)
+    assert "Usage: root info [OPTIONS] {name:/path}" in plain_help
     assert "Display normalized file information" in plain_help
-    assert "root info [OPTIONS]" not in plain_help
 
 
 def test_info_renders_every_normalized_field_and_python_extra_value() -> None:
@@ -231,14 +228,9 @@ def test_info_accepts_the_option_delimiter() -> None:
 @pytest.mark.parametrize(
     ("arguments", "diagnostic"),
     [
-        ([], "missing mapped filesystem operand"),
-        (["-x", "memory:/x"], "-x: unsupported option"),
-        (["--long", "memory:/x"], "--long: unsupported option"),
-        (["--help=value"], "--help=value: unsupported option"),
         (["bare"], "bare: invalid mapped filesystem operand"),
         (["memory:relative"], "memory:relative: invalid mapped filesystem operand"),
         (["unknown:/x"], "unknown:/x: unknown filesystem (known: memory)"),
-        (["memory:/one", "memory:/two"], "extra operand"),
         (["--", "-x"], "-x: invalid mapped filesystem operand"),
     ],
 )
@@ -253,6 +245,31 @@ def test_info_rejects_invalid_argv_before_source_entry(
         "",
         f"info: {diagnostic}\n",
     )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "contexts"),
+    [
+        ([], ("Missing argument", "name:/path")),
+        (["-x", "memory:/x"], ("No such option", "-x")),
+        (["--long", "memory:/x"], ("No such option", "--long")),
+        (["--help=value"], ("Option '--help' does not take a value",)),
+        (
+            ["memory:/one", "memory:/two"],
+            ("unexpected extra argument", "memory:/two"),
+        ),
+    ],
+)
+def test_info_leaves_usage_failures_to_typer(
+    arguments: list[str],
+    contexts: tuple[str, ...],
+) -> None:
+    result = _invoke_info(arguments)
+
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = strip_ansi(result.stderr)
+    for context in contexts:
+        assert context in diagnostic
 
 
 @pytest.mark.parametrize(
@@ -566,13 +583,3 @@ def test_info_propagates_control_flow_unchanged_after_cleanup() -> None:
     assert exception_type is asyncio.CancelledError
     assert exception is control
     assert traceback is not None
-
-
-def test_single_mapped_operand_preflight_escapes_the_command_label(capsys) -> None:
-    with pytest.raises(typer.Exit) as caught:
-        _preflight_single_mapped_operand("future\\command\0\r\n", ("bad",), {"memory"})
-
-    assert caught.value.exit_code == 2
-    assert capsys.readouterr().err == (
-        "future\\\\command\\x00\\x0d\\x0a: bad: invalid mapped filesystem operand\n"
-    )

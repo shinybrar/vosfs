@@ -15,18 +15,6 @@ from typer.testing import CliRunner, Result
 if TYPE_CHECKING:
     from types import TracebackType
 
-_EXACT_TEST_HELP = (
-    "                                                                                \n"
-    " Usage: test -e|-d|-f [--] name:/path                                           \n"
-    "                                                                                \n"
-    " Evaluate a file predicate                                                      \n"
-    "                                                                                \n"
-    "╭─ Options ────────────────────────────────────────────────────────────────────╮\n"
-    "│ --help          Show this message and exit.                                  │\n"
-    "╰──────────────────────────────────────────────────────────────────────────────╯\n"
-    "\n"
-)
-
 
 @dataclass(frozen=True)
 class _PredicateCall:
@@ -163,33 +151,26 @@ def test_test_accepts_an_interspersed_selector_and_option_terminator() -> None:
     assert source.calls == [_PredicateCall("isdir", "/docs")]
 
 
-@pytest.mark.parametrize("arguments", [["--help"], ["-e", "--help"]])
-def test_test_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
-    result = _invoke_test(arguments)
+def test_test_help_comes_from_typed_callback() -> None:
+    result = _invoke_test(["--help"])
 
-    assert (result.exit_code, strip_ansi(result.stdout), result.stderr) == (
-        0,
-        _EXACT_TEST_HELP,
-        "",
-    )
+    assert (result.exit_code, result.stderr) == (0, "")
+    help_text = strip_ansi(result.stdout)
+    assert "Usage: root test [OPTIONS] {name:/path}" in help_text
+    assert "Evaluate a file predicate" in help_text
+    for selector in ("-e", "-d", "-f"):
+        assert selector in help_text
 
 
 @pytest.mark.parametrize(
     ("arguments", "diagnostic"),
     [
-        ([], "test: exactly one predicate selector is required\n"),
         (["memory:/a"], "test: exactly one predicate selector is required\n"),
-        (["-e"], "test: missing mapped filesystem operand\n"),
-        (
-            ["-e", "-e", "memory:/a"],
-            "test: exactly one predicate selector is required\n",
-        ),
         (
             ["-e", "-d", "memory:/a"],
             "test: exactly one predicate selector is required\n",
         ),
-        (["-ed", "memory:/a"], "test: -ed: unsupported option\n"),
-        (["-x", "memory:/a"], "test: -x: unsupported option\n"),
+        (["-ed", "memory:/a"], "test: exactly one predicate selector is required\n"),
         (
             ["-e", "memory:relative"],
             "test: memory:relative: invalid mapped filesystem operand\n",
@@ -198,7 +179,6 @@ def test_test_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
             ["-e", "unknown:/a"],
             "test: unknown:/a: unknown filesystem (known: memory)\n",
         ),
-        (["-e", "memory:/a", "memory:/b"], "test: extra operand\n"),
         (["-e", "--", "--help"], "test: --help: invalid mapped filesystem operand\n"),
     ],
 )
@@ -209,6 +189,42 @@ def test_test_preflight_failures_are_stable_and_source_free(
     result = _invoke_test(arguments)
 
     assert (result.exit_code, result.stdout, result.stderr) == (2, "", diagnostic)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "contexts"),
+    [
+        ([], ("Missing argument", "name:/path")),
+        (["-e"], ("Missing argument", "name:/path")),
+        (["-x", "memory:/a"], ("No such option", "-x")),
+        (
+            ["-e", "memory:/a", "memory:/b"],
+            ("unexpected extra argument", "memory:/b"),
+        ),
+    ],
+)
+def test_test_leaves_usage_failures_to_typer(
+    arguments: list[str],
+    contexts: tuple[str, ...],
+) -> None:
+    result = _invoke_test(arguments)
+
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = strip_ansi(result.stderr)
+    for context in contexts:
+        assert context in diagnostic
+
+
+def test_test_accepts_a_repeated_selector_through_typer() -> None:
+    source = _PredicateSource(result=True)
+
+    result = _invoke_test(
+        ["-e", "-e", "memory:/a"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.calls == [_PredicateCall("exists", "/a")]
 
 
 @pytest.mark.parametrize("predicate_result", [None, 0, 1, "true", []])

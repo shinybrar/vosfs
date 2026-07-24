@@ -8,7 +8,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
-from typing import Annotated, Any, TypeAlias, TypedDict
+from typing import Annotated, Any, Literal, TypeAlias, TypedDict
 
 import typer
 from fsspec import AbstractFileSystem
@@ -29,16 +29,16 @@ from ._dirname import _run_dirname
 from ._du import _DuCommand, _run_du
 from ._find import _FindCommand, _run_find
 from ._head_tail import _run_head, _run_tail
-from ._info import _InfoCommand, _run_info
+from ._info import _run_info
 from ._ls import _run_ls
 from ._mkdir import _MkdirRequest, _run_mkdir
 from ._mv import _run_mv
 from ._path import _has_final_dot_segment, _is_root
 from ._rm import _run_rm
 from ._rmdir import _run_rmdir
-from ._size import _run_size, _SizeCommand
-from ._stat import _run_stat, _StatCommand
-from ._test import _run_test, _TestCommand
+from ._size import _run_size
+from ._stat import _run_stat
+from ._test import _run_test
 from ._tree import _run_tree, _TreeCommand
 from ._unlink import _run_unlink
 
@@ -70,7 +70,6 @@ class CommandContext:
     sources: Mapping[str, AsyncFilesystemSource]
 
 
-_SourceFreeRunner: TypeAlias = Callable[[str, tuple[str, ...]], None]
 _AsyncRunner: TypeAlias = Callable[
     [str, tuple[str, ...], Mapping[str, AsyncFilesystemSource]],
     Coroutine[Any, Any, None],
@@ -118,11 +117,6 @@ def _snapshot_capabilities(capabilities: AppCapabilities | None) -> _Capabilitie
     )
 
 
-# Commands that render their raw arguments without acquiring a source.
-_SOURCE_FREE_COMMANDS: tuple[tuple[str, str, _SourceFreeRunner], ...] = (
-    ("basename", "Strip directory and suffix from a path", _run_basename),
-    ("dirname", "Strip the last component from a path", _run_dirname),
-)
 # Commands that acquire mapped sources and run on the invocation event loop.
 _ASYNC_COMMANDS: tuple[_AsyncCommand, ...] = (
     ("ls", "List directory contents", _run_ls, _RawCommand),
@@ -134,14 +128,10 @@ _ASYNC_COMMANDS: tuple[_AsyncCommand, ...] = (
     ),
     ("du", "Estimate file space usage", _run_du, _DuCommand),
     ("find", "Find files recursively", _run_find, _FindCommand),
-    ("size", "Display exact file sizes", _run_size, _SizeCommand),
-    ("test", "Evaluate a file predicate", _run_test, _TestCommand),
     ("tree", "Display a recursive directory tree", _run_tree, _TreeCommand),
-    ("info", "Display normalized file information", _run_info, _InfoCommand),
     ("cp", "Copy files or one directory with -R or -r", _run_cp, _RawCommand),
     ("mv", "Move or rename files", _run_mv, _RawCommand),
     ("rm", "Remove files", _run_rm, _RawCommand),
-    ("stat", "Display file status", _run_stat, _StatCommand),
 )
 
 
@@ -314,8 +304,86 @@ class App:
             _ensure_no_active_event_loop("unlink")
             asyncio.run(_run_unlink("unlink", mapped, self._sources))
 
-        for name, help_text, source_free_runner in _SOURCE_FREE_COMMANDS:
-            self._register_source_free(name, help_text, source_free_runner)
+        @self.typer_app.command()
+        def basename(
+            operand: Annotated[str, typer.Argument(metavar="OPERAND")],
+            suffix: Annotated[
+                str | None,
+                typer.Argument(metavar="SUFFIX"),
+            ] = None,
+        ) -> None:
+            """Strip directory and suffix from a path."""
+            _run_basename("basename", operand, suffix)
+
+        @self.typer_app.command()
+        def dirname(
+            operand: Annotated[str, typer.Argument(metavar="OPERAND")],
+        ) -> None:
+            """Strip the last component from a path."""
+            _run_dirname("dirname", operand)
+
+        @self.typer_app.command()
+        def info(
+            operand: Annotated[str, typer.Argument(metavar="name:/path")],
+        ) -> None:
+            """Display normalized file information."""
+            mapped = _parse_mapped_operand("info", operand, self._sources)
+            _ensure_no_active_event_loop("info")
+            asyncio.run(_run_info("info", mapped, self._sources))
+
+        @self.typer_app.command()
+        def size(
+            operands: Annotated[
+                list[str],
+                typer.Argument(metavar="name:/path"),
+            ],
+        ) -> None:
+            """Display exact file sizes."""
+            mapped = tuple(
+                _parse_mapped_operand("size", operand, self._sources)
+                for operand in operands
+            )
+            _ensure_no_active_event_loop("size")
+            asyncio.run(_run_size("size", mapped, self._sources))
+
+        @self.typer_app.command()
+        def test(
+            operand: Annotated[str, typer.Argument(metavar="name:/path")],
+            exists: Annotated[bool, typer.Option("-e")] = False,  # noqa: FBT002
+            directory: Annotated[bool, typer.Option("-d")] = False,  # noqa: FBT002
+            file: Annotated[bool, typer.Option("-f")] = False,  # noqa: FBT002
+        ) -> None:
+            """Evaluate a file predicate."""
+            mapped = _parse_mapped_operand("test", operand, self._sources)
+            selected: list[Literal["e", "d", "f"]] = [
+                predicate
+                for predicate, enabled in (
+                    ("e", exists),
+                    ("d", directory),
+                    ("f", file),
+                )
+                if enabled
+            ]
+            if len(selected) != 1:
+                _usage_error("test", "exactly one predicate selector is required")
+            _ensure_no_active_event_loop("test")
+            asyncio.run(_run_test("test", selected[0], mapped, self._sources))
+
+        @self.typer_app.command()
+        def stat(
+            operands: Annotated[
+                list[str],
+                typer.Argument(metavar="name:/path"),
+            ],
+        ) -> None:
+            """Display file status."""
+            mapped = tuple(
+                _parse_mapped_operand("stat", operand, self._sources)
+                for operand in operands
+            )
+            _ensure_no_active_event_loop("stat")
+            asyncio.run(_run_stat("stat", mapped, self._sources))
+
         for registered_command in _ASYNC_COMMANDS:
             command = registered_command
             if registered_command[0] == "cp":
@@ -353,18 +421,3 @@ class App:
                 self._sources,
                 command,
             )
-
-    def _register_source_free(
-        self,
-        name: str,
-        help_text: str,
-        runner: _SourceFreeRunner,
-    ) -> None:
-        @self.typer_app.command(
-            name,
-            cls=_RawCommand,
-            help=help_text,
-            context_settings=_COMMAND_CONTEXT,
-        )
-        def handler(ctx: typer.Context) -> None:
-            runner(name, _raw_arguments(ctx))
