@@ -58,7 +58,7 @@ _LongDirectoryResult: TypeAlias = _DirectoryResult[ListingRow]
 _LongResult: TypeAlias = _LongFileResult | _LongDirectoryResult
 
 
-async def _run_ls(
+async def _run_ls(  # noqa: C901 - one compatibility-profile adapter.
     command: str,
     request: _LsRequest,
     sources: Mapping[str, AsyncFilesystemSource],
@@ -69,19 +69,10 @@ async def _run_ls(
                 request,
                 filesystems,
             )
-            output = _format_long_successes(
-                long_successes,
-                human_readable=request.human_readable,
-                multiple_operands=len(request.operands) > 1,
-            )
         else:
             plain_successes, failures = await _trace_plain_operands(
                 request,
                 filesystems,
-            )
-            output = _format_plain_successes(
-                plain_successes,
-                multiple_operands=len(request.operands) > 1,
             )
         backend_error = next(
             (
@@ -93,6 +84,17 @@ async def _run_ls(
         )
         output_error = None
         try:
+            if request.long_listing:
+                output = _format_long_successes(
+                    long_successes,
+                    human_readable=request.human_readable,
+                    multiple_operands=len(request.operands) > 1,
+                )
+            else:
+                output = _format_plain_successes(
+                    plain_successes,
+                    multiple_operands=len(request.operands) > 1,
+                )
             for failure in failures:
                 _render_failure(command, failure)
             if output:
