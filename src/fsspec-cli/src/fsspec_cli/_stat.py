@@ -1,4 +1,4 @@
-"""Raw Typer parsing and async execution for reduced BSD/macOS ``stat``.
+"""Reduced BSD/macOS ``stat`` execution for typed callbacks.
 
 Owner and group names resolve through the local ``pwd``/``grp`` account
 databases on a best-effort basis: they describe the local namespace, not the
@@ -19,23 +19,16 @@ import typer
 
 from ._command import (
     _binary_stdout,
+    _CommandFailureError,
     _MappedOperand,
-    _parse_mapped_operand,
-    _RawCommand,
     _render_backend_failure,
-    _render_output_failure,
-    _usage_error,
+    _run_mapped_command,
     _write_binary,
 )
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
-from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
-
     from fsspec.asyn import AsyncFileSystem
-    from typer._click import Context
-    from typer._click.formatting import HelpFormatter
 
     from ._app import AsyncFilesystemSource
 
@@ -64,11 +57,6 @@ _MONTHS = (
 
 
 @dataclass(frozen=True)
-class _StatRequest:
-    operands: tuple[_MappedOperand, ...]
-
-
-@dataclass(frozen=True)
 class _StatFailure:
     operand: _MappedOperand
     backend_error: Exception | None = None
@@ -79,36 +67,6 @@ class _StatFailure:
 class _StatSuccess:
     operand: _MappedOperand
     line: bytes
-
-
-class _StatCommand(_RawCommand):
-    def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        del ctx
-        formatter.write_usage("stat", "[--] name:/path...")
-
-
-def _preflight(
-    command: str,
-    raw_arguments: tuple[str, ...],
-    known_names: Collection[str],
-) -> _StatRequest:
-    operands: list[_MappedOperand] = []
-    options_active = True
-
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            continue
-        if options_active and argument.startswith("-") and argument != "-":
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: unsupported option")
-
-        operands.append(_parse_mapped_operand(command, argument, known_names))
-
-    if not operands:
-        _usage_error(command, "missing mapped filesystem operand")
-
-    return _StatRequest(operands=tuple(operands))
 
 
 def _owner_name(uid: int) -> str:
@@ -238,46 +196,30 @@ async def _read_operand(
 
 async def _trace_operands(
     command: str,
-    request: _StatRequest,
+    operands: tuple[_MappedOperand, ...],
     filesystems: Mapping[str, AsyncFileSystem],
-    failures: list[_StatFailure],
-) -> Exception | None:
-    for operand in request.operands:
+) -> None:
+    failures: list[_StatFailure] = []
+    for operand in operands:
         result = await _read_operand(operand, filesystems[operand.name])
         if isinstance(result, _StatFailure):
             failures.append(result)
-            _render_failure(command, result)
+            try:
+                _render_failure(command, result)
+            except Exception as error:
+                raise _CommandFailureError(
+                    error=result.backend_error,
+                    render=False,
+                    propagate=error,
+                ) from error
             continue
         try:
             _write_line(result.line)
-        except BrokenPipeError as error:
-            return error
-        except Exception as error:  # noqa: BLE001 - stdout boundary.
-            _render_output_failure(command, error)
-            return error
-    return None
+        except Exception as error:
+            raise _CommandFailureError(error=error) from error
 
-
-async def _run_stat(
-    command: str,
-    raw_arguments: tuple[str, ...],
-    sources: Mapping[str, AsyncFilesystemSource],
-) -> None:
-    request = _preflight(command, raw_arguments, sources)
-    invocation = _SourceInvocation(command, sources)
-    succeeded = False
-    failures: list[_StatFailure] = []
-    output_error: Exception | None = None
-    try:
-        names = dict.fromkeys(operand.name for operand in request.operands)
-        filesystems = await invocation.acquire(names)
-        if filesystems is not None:
-            output_error = await _trace_operands(
-                command, request, filesystems, failures
-            )
-            succeeded = not failures and output_error is None
-    finally:
-        backend_error = next(
+    if failures:
+        first_backend_error = next(
             (
                 failure.backend_error
                 for failure in failures
@@ -285,7 +227,24 @@ async def _run_stat(
             ),
             None,
         )
-        command_error = backend_error if backend_error is not None else output_error
-        cleanup_failed = await invocation.close_with_command_error(command_error)
-    if not succeeded or cleanup_failed:
-        raise typer.Exit(1)
+        raise _CommandFailureError(
+            error=first_backend_error,
+            render=False,
+        )
+
+
+async def _run_stat(
+    command: str,
+    operands: tuple[_MappedOperand, ...],
+    sources: Mapping[str, AsyncFilesystemSource],
+) -> None:
+    async def execute(filesystems: Mapping[str, AsyncFileSystem]) -> None:
+        await _trace_operands(command, operands, filesystems)
+
+    await _run_mapped_command(
+        command,
+        operands,
+        sources,
+        execute,
+        broken_pipe_exit_code=1,
+    )

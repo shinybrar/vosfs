@@ -1,8 +1,6 @@
-"""Raw Typer parsing and lexical execution for ``dirname``."""
+"""Lexical execution for typed ``dirname``."""
 
 from __future__ import annotations
-
-from dataclasses import dataclass
 
 import typer
 
@@ -11,41 +9,8 @@ from ._diagnostics import _render_diagnostic_value
 from ._path import _lexical_parent
 
 
-@dataclass(frozen=True)
-class _DirnameRequest:
-    operand: str
-
-
-def _preflight(
-    command: str,
-    raw_arguments: tuple[str, ...],
-) -> _DirnameRequest:
-    operands = []
-    options_active = True
-
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            continue
-        if options_active and argument.startswith("-") and argument != "-":
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: unsupported option")
-
-        if len(operands) >= 1:
-            _usage_error(command, "extra operand")
-
-        if "\0" in argument:
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: invalid operand")
-
-        operands.append(argument)
-
-    if not operands:
-        _usage_error(command, "missing operand")
-
-    return _DirnameRequest(operand=operands[0])
-
-
-def _run_dirname(command: str, raw_arguments: tuple[str, ...]) -> None:
-    request = _preflight(command, raw_arguments)
-    typer.echo(_lexical_parent(request.operand), nl=True, color=True)
+def _run_dirname(command: str, operand: str) -> None:
+    if "\0" in operand:
+        rendered = _render_diagnostic_value(operand)
+        _usage_error(command, f"{rendered}: invalid operand")
+    typer.echo(_lexical_parent(operand), nl=True, color=True)

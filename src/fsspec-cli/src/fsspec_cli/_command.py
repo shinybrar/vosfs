@@ -1,11 +1,9 @@
 """Shared scaffolding for mapped-source command modules.
 
-Every mapped-operand command (``ls``, ``du``, ``find``, ``size``, ``test``,
-``head``, ``tail``, ``tree``, ``info``, ``cat``, ``cp``, ``mv``, ``mkdir``,
-``rmdir``, ``rm``, ``unlink``, and ``stat``) parses its own raw ``argv`` and
-renders stable diagnostics. This module is the single home for the pieces they
-share: raw-argument capture, the malformed-help shield, mapped operands, usage
-errors, binary stdout, and the single-operand buffered-text lifecycle.
+Typed commands receive validated operands from central callbacks; commands not
+yet migrated still parse raw ``argv``. This module owns both seams during the
+migration, plus mapped operands, diagnostics, binary stdout, and invocation
+lifecycle.
 """
 
 from __future__ import annotations
@@ -188,6 +186,8 @@ async def _run_mapped_command(
     operands: tuple[_MappedOperand, ...],
     sources: Mapping[str, AsyncFilesystemSource],
     operation: Callable[[Mapping[str, AsyncFileSystem]], Awaitable[None]],
+    *,
+    broken_pipe_exit_code: int = _BROKEN_PIPE_EXIT_CODE,
 ) -> None:
     """Acquire referenced sources, run one command, and own final status."""
     invocation = _SourceInvocation(command, sources)
@@ -226,7 +226,7 @@ async def _run_mapped_command(
             and isinstance(failure.error, BrokenPipeError)
             and not cleanup_failed
         ):
-            raise typer.Exit(_BROKEN_PIPE_EXIT_CODE)
+            raise typer.Exit(broken_pipe_exit_code)
         raise typer.Exit(1)
 
 

@@ -12,7 +12,6 @@ from fsspec_cli._command import _MappedOperand
 from fsspec_cli._ls import _preflight as _ls_preflight
 from fsspec_cli._ls import _run_ls
 from fsspec_cli._sources import _SourceInvocation
-from fsspec_cli._stat import _preflight as _stat_preflight
 from fsspec_cli._stat import _run_stat
 
 from ._support import _RecordingSource
@@ -24,16 +23,6 @@ _RENDERED_COMMAND = "future\\\\command\\x00\\x0d\\x0a"
 def test_ls_preflight_diagnostic_escapes_concrete_command_label(capsys) -> None:
     with pytest.raises(typer.Exit) as caught:
         _ls_preflight(_COMMAND, ("bad",), {"memory"})
-
-    assert caught.value.exit_code == 2
-    assert capsys.readouterr().err == (
-        f"{_RENDERED_COMMAND}: bad: invalid mapped filesystem operand\n"
-    )
-
-
-def test_stat_preflight_diagnostic_escapes_concrete_command_label(capsys) -> None:
-    with pytest.raises(typer.Exit) as caught:
-        _stat_preflight(_COMMAND, ("bad",), {"memory"})
 
     assert caught.value.exit_code == 2
     assert capsys.readouterr().err == (
@@ -223,7 +212,13 @@ def test_stat_output_failure_diagnostic_uses_concrete_command_label(
     monkeypatch.setattr("fsspec_cli._stat._write_line", fail_stdout)
 
     with pytest.raises(typer.Exit) as caught:
-        asyncio.run(_run_stat(_COMMAND, ("memory:/file",), {"memory": source}))
+        asyncio.run(
+            _run_stat(
+                _COMMAND,
+                (_MappedOperand("memory:/file", "memory", "/file"),),
+                {"memory": source},
+            )
+        )
 
     assert caught.value.exit_code == 1
     assert capsys.readouterr().err == (
