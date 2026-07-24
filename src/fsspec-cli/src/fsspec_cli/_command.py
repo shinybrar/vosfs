@@ -8,10 +8,12 @@ lifecycle.
 
 from __future__ import annotations
 
+import asyncio
 import locale
 import sys
+from contextlib import suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NoReturn, Protocol, cast
+from typing import TYPE_CHECKING, NoReturn, Protocol, TypeVar, cast
 
 import typer
 from typer.core import TyperCommand
@@ -31,6 +33,7 @@ _RAW_ARGUMENTS = "fsspec_cli.raw_arguments"
 # 128 + SIGPIPE (13): lets pipeline consumers distinguish a closed reader from
 # an ordinary command failure when the broken pipe is the sole failure.
 _BROKEN_PIPE_EXIT_CODE = 141
+_ResultT = TypeVar("_ResultT")
 
 
 class _RawCommand(TyperCommand):
@@ -127,6 +130,30 @@ class _CommandFailureError(Exception):
         self.error = error
         self.render = render
         self.propagate = propagate
+
+
+async def _drain_current_operation(operation: Awaitable[_ResultT]) -> _ResultT:
+    """Drain one started operation before propagating caller control flow."""
+
+    async def capture() -> tuple[BaseException | None, _ResultT | None]:
+        try:
+            return None, await operation
+        except BaseException as error:  # noqa: BLE001 - preserve exact control flow.
+            return error, None
+
+    task = asyncio.create_task(capture())
+    try:
+        error, result = await asyncio.shield(task)
+    except BaseException:
+        while not task.done():
+            with suppress(BaseException):
+                await asyncio.shield(task)
+        with suppress(BaseException):
+            task.result()
+        raise
+    if error is not None:
+        raise error
+    return cast("_ResultT", result)
 
 
 def _render_operand_diagnostic(

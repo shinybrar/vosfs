@@ -26,11 +26,11 @@ from ._command import (
 from ._cp import _run_cp
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._dirname import _run_dirname
-from ._du import _DuCommand, _run_du
-from ._find import _FindCommand, _run_find
+from ._du import _DuRequest, _run_du
+from ._find import _FindRequest, _run_find
 from ._head_tail import _run_head, _run_tail
 from ._info import _run_info
-from ._ls import _run_ls
+from ._ls import _LsRequest, _run_ls
 from ._mkdir import _MkdirRequest, _run_mkdir
 from ._mv import _run_mv
 from ._path import _has_final_dot_segment, _is_root
@@ -39,7 +39,7 @@ from ._rmdir import _run_rmdir
 from ._size import _run_size
 from ._stat import _run_stat
 from ._test import _run_test
-from ._tree import _run_tree, _TreeCommand
+from ._tree import _run_tree, _TreeRequest
 from ._unlink import _run_unlink
 
 AsyncFilesystemSource: TypeAlias = Callable[
@@ -119,16 +119,6 @@ def _snapshot_capabilities(capabilities: AppCapabilities | None) -> _Capabilitie
 
 # Commands that acquire mapped sources and run on the invocation event loop.
 _ASYNC_COMMANDS: tuple[_AsyncCommand, ...] = (
-    ("ls", "List directory contents", _run_ls, _RawCommand),
-    (
-        "ll",
-        "List directory contents in long form",
-        partial(_run_ls, long_by_default=True),
-        _RawCommand,
-    ),
-    ("du", "Estimate file space usage", _run_du, _DuCommand),
-    ("find", "Find files recursively", _run_find, _FindCommand),
-    ("tree", "Display a recursive directory tree", _run_tree, _TreeCommand),
     ("cp", "Copy files or one directory with -R or -r", _run_cp, _RawCommand),
     ("mv", "Move or rename files", _run_mv, _RawCommand),
     ("rm", "Remove files", _run_rm, _RawCommand),
@@ -385,6 +375,142 @@ class App:
             )
             _ensure_no_active_event_loop("stat")
             asyncio.run(_run_stat("stat", mapped, self._sources))
+
+        def run_listing(
+            command: Literal["ls", "ll"],
+            operands: list[str],
+            *,
+            include_almost_all: bool,
+            long_listing: bool,
+            human_readable: bool,
+        ) -> None:
+            mapped = tuple(
+                _parse_mapped_operand(command, operand, self._sources)
+                for operand in operands
+            )
+            if human_readable and not long_listing:
+                _usage_error(command, "-h: requires long listing")
+            _ensure_no_active_event_loop(command)
+            asyncio.run(
+                _run_ls(
+                    command,
+                    _LsRequest(
+                        include_almost_all=include_almost_all,
+                        long_listing=long_listing,
+                        human_readable=human_readable,
+                        operands=mapped,
+                    ),
+                    self._sources,
+                )
+            )
+
+        @self.typer_app.command()
+        def ls(
+            operands: Annotated[
+                list[str],
+                typer.Argument(metavar="name:/path"),
+            ],
+            *,
+            include_almost_all: Annotated[bool, typer.Option("-A")] = False,
+            long_listing: Annotated[bool, typer.Option("-l")] = False,
+            human_readable: Annotated[bool, typer.Option("-h")] = False,
+        ) -> None:
+            """List directory contents."""
+            run_listing(
+                "ls",
+                operands,
+                include_almost_all=include_almost_all,
+                long_listing=long_listing,
+                human_readable=human_readable,
+            )
+
+        @self.typer_app.command()
+        def ll(
+            operands: Annotated[
+                list[str],
+                typer.Argument(metavar="name:/path"),
+            ],
+            *,
+            include_almost_all: Annotated[bool, typer.Option("-A")] = False,
+            _long_listing: Annotated[bool, typer.Option("-l")] = False,
+            human_readable: Annotated[bool, typer.Option("-h")] = False,
+        ) -> None:
+            """List directory contents in long form."""
+            run_listing(
+                "ll",
+                operands,
+                include_almost_all=include_almost_all,
+                long_listing=True,
+                human_readable=human_readable,
+            )
+
+        @self.typer_app.command()
+        def du(
+            operand: Annotated[str, typer.Argument(metavar="name:/path")],
+            *,
+            summarize: Annotated[bool, typer.Option("-s")] = False,
+            human_readable: Annotated[bool, typer.Option("-h")] = False,
+        ) -> None:
+            """Estimate file space usage."""
+            mapped = _parse_mapped_operand("du", operand, self._sources)
+            _ensure_no_active_event_loop("du")
+            asyncio.run(
+                _run_du(
+                    "du",
+                    _DuRequest(
+                        summarize=summarize,
+                        human_readable=human_readable,
+                        operand=mapped,
+                    ),
+                    self._sources,
+                )
+            )
+
+        @self.typer_app.command()
+        def find(
+            operand: Annotated[str, typer.Argument(metavar="name:/path")],
+            maxdepth: Annotated[
+                int | None,
+                typer.Option("--maxdepth", metavar="N", min=0),
+            ] = None,
+            kind: Annotated[
+                Literal["f", "d"],
+                typer.Option("--type", metavar="f|d"),
+            ] = "f",
+        ) -> None:
+            """Find files recursively."""
+            mapped = _parse_mapped_operand("find", operand, self._sources)
+            _ensure_no_active_event_loop("find")
+            asyncio.run(
+                _run_find(
+                    "find",
+                    _FindRequest(
+                        maxdepth=maxdepth,
+                        kind=kind,
+                        operand=mapped,
+                    ),
+                    self._sources,
+                )
+            )
+
+        @self.typer_app.command()
+        def tree(
+            operand: Annotated[str, typer.Argument(metavar="name:/path")],
+            maxdepth: Annotated[
+                int | None,
+                typer.Option("--maxdepth", metavar="N", min=0),
+            ] = None,
+        ) -> None:
+            """Display a recursive directory tree."""
+            mapped = _parse_mapped_operand("tree", operand, self._sources)
+            _ensure_no_active_event_loop("tree")
+            asyncio.run(
+                _run_tree(
+                    "tree",
+                    _TreeRequest(maxdepth=maxdepth, operand=mapped),
+                    self._sources,
+                )
+            )
 
         for registered_command in _ASYNC_COMMANDS:
             command = registered_command
