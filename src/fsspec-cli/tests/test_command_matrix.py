@@ -7,7 +7,6 @@ from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 
 import pytest
-from click.utils import strip_ansi
 from fsspec.asyn import AsyncFileSystem
 from fsspec.implementations.asyn_wrapper import AsyncFileSystemWrapper
 from fsspec.implementations.local import LocalFileSystem
@@ -375,9 +374,8 @@ def test_typer_rejects_ls_long_option_spelling_without_source_work() -> None:
     )
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = strip_ansi(result.stderr)
-    assert "No such option" in diagnostic
-    assert "--long" in diagnostic
+    assert "No such option" in result.stderr
+    assert "--long" in result.stderr
     assert source_calls == 0
 
 
