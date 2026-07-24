@@ -20,9 +20,11 @@ unsupported capability.
 mv [--] source:/file destination:/target
 ```
 
-After complete option, operand-grammar, mapped-name, and operand-count
-preflight identifies distinct configured source names, `mv` rejects before
-either async filesystem source is called. It writes no stdout, writes exactly
+After Typer completes option parsing, operand collection, and usage validation,
+the annotated callback validates every mapped name. When that synchronous
+validation identifies distinct configured source names, `mv` rejects before
+event-loop entry or either async filesystem source call. It writes no stdout,
+writes exactly
 
 ```text
 mv: cross-source move unsupported
