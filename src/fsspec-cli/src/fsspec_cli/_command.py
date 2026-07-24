@@ -7,7 +7,16 @@ import locale
 import sys
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NoReturn, Protocol, TypeVar, cast
+from typing import (
+    TYPE_CHECKING,
+    Literal,
+    NoReturn,
+    Protocol,
+    TypeAlias,
+    TypeGuard,
+    TypeVar,
+    cast,
+)
 
 import typer
 
@@ -15,7 +24,14 @@ from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Collection, Mapping
+    from collections.abc import (
+        Awaitable,
+        Callable,
+        Collection,
+        Iterable,
+        Mapping,
+        Sequence,
+    )
 
     from fsspec.asyn import AsyncFileSystem
 
@@ -68,10 +84,30 @@ def _write_binary(stdout: _BinaryWriter, payload: bytes) -> None:
         raise OSError(message)
 
 
+# The result shapes a command can reject without a backend exception. Commands
+# translate these into their own diagnostic vocabulary when rendering.
+_Incompatible: TypeAlias = Literal["directory", "result", "same_path"]
+
+
 @dataclass(frozen=True)
 class _Failure:
+    """One operand-scoped command failure.
+
+    ``backend_error`` carries an exception raised by a filesystem hook;
+    ``incompatible`` marks a hook that returned successfully with a result the
+    command's contract rejects. ``uncertain`` marks a failure observed after a
+    mutation was dispatched, so the remote state is not known to be unchanged.
+    """
+
     operand: _MappedOperand
     backend_error: Exception | None = None
+    incompatible: _Incompatible | None = None
+    uncertain: bool = False
+
+
+# Commands that need to tell apart the code path a failure came from subclass
+# `_Failure` as a tag; the shared helpers stay usable through this bound.
+_FailureT = TypeVar("_FailureT", bound=_Failure)
 
 
 class _CommandFailureError(Exception):
@@ -154,6 +190,42 @@ def _backend_category(error: Exception) -> str:
     rendered_class = _render_diagnostic_value(type(error).__name__)
     rendered_message = _render_diagnostic_value(str(error))
     return f"backend failure ({rendered_class}): {rendered_message}"
+
+
+def _first_backend_error(failures: Iterable[_Failure]) -> Exception | None:
+    """Return the first backend exception among ``failures``, if any."""
+    return next(
+        (
+            failure.backend_error
+            for failure in failures
+            if failure.backend_error is not None
+        ),
+        None,
+    )
+
+
+def _raise_operand_failures(
+    command: str,
+    failures: Sequence[_FailureT],
+    render: Callable[[str, _FailureT], None],
+) -> NoReturn:
+    """Render every operand failure, then fail the invocation exactly once.
+
+    An exception escaping ``render`` (an output failure) propagates instead of
+    the command failure, but the invocation still reports the backend error it
+    had already observed.
+    """
+    backend_error = _first_backend_error(failures)
+    try:
+        for failure in failures:
+            render(command, failure)
+    except Exception as error:
+        raise _CommandFailureError(
+            error=backend_error,
+            render=False,
+            propagate=error,
+        ) from error
+    raise _CommandFailureError(error=backend_error, render=False)
 
 
 def _render_output_failure(command: str, error: Exception) -> None:
@@ -246,11 +318,27 @@ async def _run_single_operand_text(
     )
 
 
+def _collate(value: str) -> tuple[str, str]:
+    """Return the locale-aware sort key used for every ordered CLI listing.
+
+    The raw value breaks ties so that strings the current locale considers
+    equal still order deterministically.
+    """
+    return locale.strxfrm(value), value
+
+
+def _valid_size(value: object) -> TypeGuard[int]:
+    """Accept only an exact non-negative ``int`` byte count.
+
+    ``type(...) is int`` rather than ``isinstance``: ``bool`` subclasses
+    ``int``, so a backend returning ``True`` would otherwise pass as size 1.
+    """
+    return type(value) is int and value >= 0
+
+
 def _sorted_known(known_names: Collection[str]) -> list[str]:
     """Return the configured source names in locale order for diagnostics."""
-    return sorted(
-        known_names, key=lambda candidate: (locale.strxfrm(candidate), candidate)
-    )
+    return sorted(known_names, key=_collate)
 
 
 def _parse_mapped_operand(

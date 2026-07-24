@@ -96,6 +96,12 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"src/fsspec-cli/src/fsspec_cli/*.py" = [
+    # fsspec's async filesystem API is underscore-prefixed by convention
+    # (`_info`, `_ls`, `_cat_file`, ...). Awaiting those hooks is the documented
+    # way to drive an AsyncFileSystem, not private-member access.
+    "SLF001",
+]
 "**/tests/**/*.py" = [
     "ANN",  # Tests are outside the ty gate.
     "D",    # Tests describe behavior through their names.

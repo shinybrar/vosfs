@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeGuard
+from typing import TYPE_CHECKING
 
 from ._command import (
     _binary_stdout,
     _CommandFailureError,
     _MappedOperand,
     _run_mapped_command,
+    _valid_size,
     _write_binary,
 )
 
@@ -28,16 +29,12 @@ class _ByteRangeRequest:
     operand: _MappedOperand
 
 
-def _valid_size(value: object) -> TypeGuard[int]:
-    return type(value) is int and value >= 0
-
-
 async def _read_head(
     request: _ByteRangeRequest,
     filesystem: AsyncFileSystem,
 ) -> bytes:
     try:
-        result = await filesystem._cat_file(  # noqa: SLF001
+        result = await filesystem._cat_file(
             request.operand.path,
             start=0,
             end=request.count,
@@ -66,12 +63,12 @@ async def _read_tail(
     filesystem: AsyncFileSystem,
 ) -> bytes:
     try:
-        info = await filesystem._info(request.operand.path)  # noqa: SLF001
+        info = await filesystem._info(request.operand.path)
     except Exception as error:
         raise _CommandFailureError(request.operand, error) from error
     size = _size_from_info(request.operand, info)
     try:
-        result = await filesystem._cat_file(  # noqa: SLF001
+        result = await filesystem._cat_file(
             request.operand.path,
             start=size - request.count,
             end=None,

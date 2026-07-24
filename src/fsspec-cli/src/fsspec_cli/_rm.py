@@ -76,7 +76,7 @@ async def _remove_directory_entry(
     filesystem: AsyncFileSystem,
 ) -> _UnlinkFailure | _RmdirFailure | None:
     try:
-        info = await filesystem._info(operand.path)  # noqa: SLF001
+        info = await filesystem._info(operand.path)
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _UnlinkFailure(operand, backend_error=error)
 

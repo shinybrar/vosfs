@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import locale
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias, TypeGuard
 
 from ._command import (
+    _collate,
     _drain_current_operation,
     _Failure,
     _MappedOperand,
@@ -159,7 +159,7 @@ def _validated_rows(
 
 
 def _sorted_entries(entries: tuple[str, ...]) -> list[str]:
-    return sorted(entries, key=lambda entry: (locale.strxfrm(entry), entry))
+    return sorted(entries, key=_collate)
 
 
 def _render_tree(request: _TreeRequest, rows: Mapping[str, _WalkRow]) -> str:
@@ -240,7 +240,7 @@ async def _next_async(iterator: AsyncIterator[object]) -> tuple[bool, object]:
 
 async def _walk(request: _TreeRequest, filesystem: AsyncFileSystem) -> str | _Failure:
     try:
-        result = filesystem._walk(  # noqa: SLF001
+        result = filesystem._walk(
             request.operand.path,
             maxdepth=1 if request.maxdepth == 0 else request.maxdepth,
             detail=False,

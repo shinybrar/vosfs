@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeGuard
+from typing import TYPE_CHECKING
 
 import typer
 
@@ -10,6 +10,7 @@ from ._command import (
     _CommandFailureError,
     _MappedOperand,
     _run_mapped_command,
+    _valid_size,
 )
 
 if TYPE_CHECKING:
@@ -18,10 +19,6 @@ if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
 
     from ._app import AsyncFilesystemSource
-
-
-def _valid_size(value: object) -> TypeGuard[int]:
-    return type(value) is int and value >= 0
 
 
 def _group_operands(
@@ -47,7 +44,7 @@ async def _measure_one(
     filesystems: Mapping[str, AsyncFileSystem],
 ) -> str:
     try:
-        result = await filesystems[operand.name]._size(operand.path)  # noqa: SLF001
+        result = await filesystems[operand.name]._size(operand.path)
     except Exception as error:
         raise _CommandFailureError(operand, error) from error
     if not _valid_size(result):
@@ -63,7 +60,7 @@ async def _measure_many(
     for name, group in _group_operands(operands).items():
         paths = [operand.path for _, operand in group]
         try:
-            result = await filesystems[name]._sizes(paths)  # noqa: SLF001
+            result = await filesystems[name]._sizes(paths)
         except Exception as error:
             raise _CommandFailureError(group[0][1], error) from error
         if type(result) is not list or len(result) != len(group):

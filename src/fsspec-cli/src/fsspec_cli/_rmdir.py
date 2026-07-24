@@ -5,11 +5,12 @@ from __future__ import annotations
 import errno
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from ._command import (
-    _CommandFailureError,
+    _Failure,
     _MappedOperand,
+    _raise_operand_failures,
     _render_backend_failure,
     _render_operand_diagnostic,
     _run_mapped_command,
@@ -22,11 +23,13 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class _RmdirFailure:
-    operand: _MappedOperand
-    backend_error: Exception | None = None
-    incompatible: Literal["directory", "result"] | None = None
-    uncertain: bool = False
+class _RmdirFailure(_Failure):
+    """A failure raised on the empty-directory removal path.
+
+    Structurally identical to the base failure; the distinct type is how ``rm``
+    tells a directory-path failure from a file-path one, because the two render
+    different diagnostic vocabularies for the same condition.
+    """
 
 
 async def _require_directory(
@@ -34,7 +37,7 @@ async def _require_directory(
     filesystem: AsyncFileSystem,
 ) -> _RmdirFailure | None:
     try:
-        info = await filesystem._info(operand.path)  # noqa: SLF001
+        info = await filesystem._info(operand.path)
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _RmdirFailure(operand, backend_error=error)
 
@@ -55,7 +58,7 @@ async def _observe_post_mutation(
     mutation_error: Exception | None,
 ) -> _RmdirFailure | None:
     try:
-        await filesystem._info(operand.path)  # noqa: SLF001
+        await filesystem._info(operand.path)
     except FileNotFoundError:
         # Absence proves success, including after a mutation-call exception.
         return None
@@ -140,25 +143,7 @@ async def _run_rmdir(
 ) -> None:
     async def operation(filesystems: Mapping[str, AsyncFileSystem]) -> None:
         failures = await _trace_operands(operands, filesystems)
-        if not failures:
-            return
-        backend_error = next(
-            (
-                failure.backend_error
-                for failure in failures
-                if failure.backend_error is not None
-            ),
-            None,
-        )
-        try:
-            for failure in failures:
-                _render_failure(command, failure)
-        except Exception as error:
-            raise _CommandFailureError(
-                error=backend_error,
-                render=False,
-                propagate=error,
-            ) from error
-        raise _CommandFailureError(error=backend_error, render=False)
+        if failures:
+            _raise_operand_failures(command, failures, _render_failure)
 
     await _run_mapped_command(command, operands, sources, operation)

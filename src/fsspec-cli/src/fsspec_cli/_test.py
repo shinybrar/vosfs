@@ -27,11 +27,11 @@ async def _evaluate(
 ) -> object:
     path = operand.path
     if predicate == "e":
-        result = await filesystem._exists(path)  # noqa: SLF001
+        result = await filesystem._exists(path)
     elif predicate == "d":
-        result = await filesystem._isdir(path)  # noqa: SLF001
+        result = await filesystem._isdir(path)
     else:
-        result = await filesystem._isfile(path)  # noqa: SLF001
+        result = await filesystem._isfile(path)
     return result
 
 

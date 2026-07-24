@@ -79,7 +79,7 @@ class _WalkRow:
 
 
 @dataclass(frozen=True)
-class _Failure:
+class _RecursiveCpFailure:
     operand: _MappedOperand
     category: str | None = None
     error: Exception | None = None
@@ -433,7 +433,7 @@ async def _manifest(
     )
 
 
-def _render_failure(command: str, failure: _Failure) -> None:
+def _render_failure(command: str, failure: _RecursiveCpFailure) -> None:
     if failure.rendered:
         return
     suffix = "; destination residue may remain" if failure.residue else ""
@@ -444,13 +444,13 @@ def _render_failure(command: str, failure: _Failure) -> None:
     )
 
 
-def _read_failure(operand: _MappedOperand, error: Exception) -> _Failure:
-    return _Failure(operand, _backend_category(error), error=error)
+def _read_failure(operand: _MappedOperand, error: Exception) -> _RecursiveCpFailure:
+    return _RecursiveCpFailure(operand, _backend_category(error), error=error)
 
 
-def _staging_failure(source: _MappedOperand, error: Exception) -> _Failure:
+def _staging_failure(source: _MappedOperand, error: Exception) -> _RecursiveCpFailure:
     rendered_class = _render_diagnostic_value(type(error).__name__)
-    return _Failure(
+    return _RecursiveCpFailure(
         source,
         f"staging failure ({rendered_class})",
         error=error,
@@ -473,20 +473,20 @@ async def _optional_info(
 def _classify_source_info(
     operand: _MappedOperand,
     info: object,
-) -> _Failure | None:
+) -> _RecursiveCpFailure | None:
     if not isinstance(info, Mapping):
-        return _Failure(operand, "incompatible result")
+        return _RecursiveCpFailure(operand, "incompatible result")
     typed_info = cast("Mapping[object, object]", info)
     kind = typed_info.get("type")
     if type(kind) is not str:
-        return _Failure(operand, "incompatible result")
+        return _RecursiveCpFailure(operand, "incompatible result")
     islink = typed_info.get("islink", False)
     if type(islink) is not bool:
-        return _Failure(operand, "incompatible result")
+        return _RecursiveCpFailure(operand, "incompatible result")
     if islink or kind not in {"directory", "file"}:
-        return _Failure(operand, "unsupported entry type")
+        return _RecursiveCpFailure(operand, "unsupported entry type")
     if kind == "file":
-        return _Failure(operand, "not a directory")
+        return _RecursiveCpFailure(operand, "not a directory")
     return None
 
 
@@ -496,26 +496,26 @@ def _classify_existing(  # noqa: PLR0911 - stable metadata categories.
     info: object,
     *,
     require_name: bool = True,
-) -> _ManifestEntry | _Failure:
+) -> _ManifestEntry | _RecursiveCpFailure:
     if not require_name:
         if not isinstance(info, Mapping):
-            return _Failure(operand, "incompatible result")
+            return _RecursiveCpFailure(operand, "incompatible result")
         typed_info = cast("Mapping[object, object]", info)
         kind = typed_info.get("type")
         if type(kind) is not str:
-            return _Failure(operand, "incompatible result")
+            return _RecursiveCpFailure(operand, "incompatible result")
         islink = typed_info.get("islink", False)
         if type(islink) is not bool:
-            return _Failure(operand, "incompatible result")
+            return _RecursiveCpFailure(operand, "incompatible result")
         if islink or kind not in {"directory", "file"}:
-            return _Failure(operand, "unsupported entry type")
+            return _RecursiveCpFailure(operand, "unsupported entry type")
         return _ManifestEntry("", path, kind, None, ())
     try:
         entry = _entry("", path, info)
     except _UnsupportedEntryError as error:
-        return _Failure(operand, "unsupported entry type", error=error)
+        return _RecursiveCpFailure(operand, "unsupported entry type", error=error)
     except _IncompatibleResultError as error:
-        return _Failure(operand, "incompatible result", error=error)
+        return _RecursiveCpFailure(operand, "incompatible result", error=error)
     return entry
 
 
@@ -570,7 +570,7 @@ class _RecursiveCopy:
 
     async def _resolve_target(  # noqa: C901, PLR0911, PLR0912
         self,
-    ) -> tuple[str, _Failure | None]:
+    ) -> tuple[str, _RecursiveCpFailure | None]:
         destination_info, error = await _optional_info(
             self.destination_filesystem,
             self.destination.path,
@@ -588,7 +588,7 @@ class _RecursiveCopy:
                 destination_info,
                 require_name=False,
             )
-            if isinstance(entry, _Failure):
+            if isinstance(entry, _RecursiveCpFailure):
                 return resolved, entry
             if entry.kind == "directory":
                 known_parent = self.destination.path
@@ -612,19 +612,23 @@ class _RecursiveCopy:
             if error is not None:
                 return resolved, _read_failure(self.destination, error)
             if parent_info is None:
-                return resolved, _Failure(self.destination, "not found")
+                return resolved, _RecursiveCpFailure(self.destination, "not found")
             parent_entry = _classify_existing(
                 self.destination,
                 parent,
                 parent_info,
                 require_name=False,
             )
-            if isinstance(parent_entry, _Failure):
+            if isinstance(parent_entry, _RecursiveCpFailure):
                 if parent_entry.category == "unsupported entry type":
-                    return resolved, _Failure(self.destination, "not a directory")
+                    return resolved, _RecursiveCpFailure(
+                        self.destination, "not a directory"
+                    )
                 return resolved, parent_entry
             if parent_entry.kind != "directory":
-                return resolved, _Failure(self.destination, "not a directory")
+                return resolved, _RecursiveCpFailure(
+                    self.destination, "not a directory"
+                )
 
         if resolved_info is not None:
             root_entry = _classify_existing(
@@ -633,10 +637,10 @@ class _RecursiveCopy:
                 resolved_info,
                 require_name=False,
             )
-            if isinstance(root_entry, _Failure):
+            if isinstance(root_entry, _RecursiveCpFailure):
                 return resolved, root_entry
             if root_entry.kind == "file":
-                return resolved, _Failure(
+                return resolved, _RecursiveCpFailure(
                     self.destination,
                     "destination type conflict",
                 )
@@ -645,7 +649,7 @@ class _RecursiveCopy:
             self.source.path,
             resolved,
         ):
-            return resolved, _Failure(
+            return resolved, _RecursiveCpFailure(
                 self.destination,
                 "destination is inside source",
             )
@@ -655,7 +659,7 @@ class _RecursiveCopy:
         self,
         root: str,
         manifest: _Manifest,
-    ) -> tuple[tuple[_ManifestEntry, ...], _Failure | None]:
+    ) -> tuple[tuple[_ManifestEntry, ...], _RecursiveCpFailure | None]:
         missing: list[_ManifestEntry] = []
         for entry in manifest.entries:
             path = _destination_path(root, entry.relative)
@@ -667,10 +671,10 @@ class _RecursiveCopy:
                     missing.append(entry)
                 continue
             existing = _classify_existing(self.destination, path, info)
-            if isinstance(existing, _Failure):
+            if isinstance(existing, _RecursiveCpFailure):
                 return (), existing
             if existing.kind != entry.kind:
-                return (), _Failure(
+                return (), _RecursiveCpFailure(
                     self.destination,
                     "destination type conflict",
                 )
@@ -680,7 +684,7 @@ class _RecursiveCopy:
         self,
         source_entry: _ManifestEntry,
         destination_path: str,
-    ) -> _Failure | None:
+    ) -> _RecursiveCpFailure | None:
         temporary = None
         try:
             descriptor, temporary = tempfile.mkstemp(prefix="fsspec-cli-cp-recursive-")
@@ -703,7 +707,7 @@ class _RecursiveCopy:
                         temporary,
                     )
                 except Exception as error:  # noqa: BLE001 - stable transfer category.
-                    failure = _Failure(
+                    failure = _RecursiveCpFailure(
                         self.source,
                         "transfer failure",
                         error=error,
@@ -717,7 +721,7 @@ class _RecursiveCopy:
                     failure = _staging_failure(self.source, error)
                 else:
                     if staged_size != source_entry.size:
-                        failure = _Failure(
+                        failure = _RecursiveCpFailure(
                             self.source,
                             "source changed",
                             residue=True,
@@ -733,7 +737,7 @@ class _RecursiveCopy:
                         mode="overwrite",
                     )
                 except Exception as error:  # noqa: BLE001 - stable mutation category.
-                    failure = _Failure(
+                    failure = _RecursiveCpFailure(
                         self.destination,
                         "mutation failure",
                         error=error,
@@ -757,7 +761,7 @@ class _RecursiveCopy:
         if failure is not None:
             return replace(failure, rendered=True)
         if cleanup_error is not None:
-            return _Failure(self.source, error=cleanup_error, rendered=True)
+            return _RecursiveCpFailure(self.source, error=cleanup_error, rendered=True)
         return None
 
     async def _mutate(
@@ -765,7 +769,7 @@ class _RecursiveCopy:
         root: str,
         manifest: _Manifest,
         missing_directories: tuple[_ManifestEntry, ...],
-    ) -> _Failure | None:
+    ) -> _RecursiveCpFailure | None:
         for entry in sorted(
             missing_directories,
             key=lambda item: (item.relative.count("/"), item.relative),
@@ -778,7 +782,7 @@ class _RecursiveCopy:
                     create_parents=False,
                 )
             except Exception as error:  # noqa: BLE001, PERF203 - stable mutation category.
-                return _Failure(
+                return _RecursiveCpFailure(
                     self.destination,
                     "mutation failure",
                     error=error,
@@ -796,7 +800,7 @@ class _RecursiveCopy:
                 return failure
         return None
 
-    async def _revalidate_source(self, frozen: _Manifest) -> _Failure | None:
+    async def _revalidate_source(self, frozen: _Manifest) -> _RecursiveCpFailure | None:
         try:
             current_info = await _call(
                 self.source_filesystem,
@@ -809,21 +813,21 @@ class _RecursiveCopy:
                 current_info,
             )
         except Exception as error:  # noqa: BLE001 - stable revalidation category.
-            return _Failure(
+            return _RecursiveCpFailure(
                 self.source,
                 "source revalidation failure",
                 error=error,
                 residue=True,
             )
         if current != frozen:
-            return _Failure(self.source, "source changed", residue=True)
+            return _RecursiveCpFailure(self.source, "source changed", residue=True)
         return None
 
     async def _verify_destination(
         self,
         root: str,
         manifest: _Manifest,
-    ) -> _Failure | None:
+    ) -> _RecursiveCpFailure | None:
         try:
             for source_entry in manifest.entries:
                 path = _destination_path(root, source_entry.relative)
@@ -841,13 +845,13 @@ class _RecursiveCopy:
                         destination_entry.tokens,
                     )
                 ):
-                    return _Failure(
+                    return _RecursiveCpFailure(
                         self.destination,
                         "verification failure",
                         residue=True,
                     )
         except Exception as error:  # noqa: BLE001 - stable verification category.
-            return _Failure(
+            return _RecursiveCpFailure(
                 self.destination,
                 "verification failure",
                 error=error,
@@ -855,7 +859,7 @@ class _RecursiveCopy:
             )
         return None
 
-    async def run(self) -> _Failure | None:  # noqa: C901, PLR0911
+    async def run(self) -> _RecursiveCpFailure | None:  # noqa: C901, PLR0911
         try:
             source_info = await _call(
                 self.source_filesystem,
@@ -879,15 +883,17 @@ class _RecursiveCopy:
                 source_info,
             )
         except _UnsupportedEntryError as error:
-            return _Failure(self.source, "unsupported entry type", error=error)
+            return _RecursiveCpFailure(
+                self.source, "unsupported entry type", error=error
+            )
         except _EntryLimitError as error:
-            return _Failure(
+            return _RecursiveCpFailure(
                 self.source,
                 f"source tree exceeds {_MAX_ENTRIES} entries",
                 error=error,
             )
         except _IncompatibleResultError as error:
-            return _Failure(self.source, "incompatible result", error=error)
+            return _RecursiveCpFailure(self.source, "incompatible result", error=error)
         except Exception as error:  # noqa: BLE001 - classify walk boundary.
             return _read_failure(self.source, error)
 
