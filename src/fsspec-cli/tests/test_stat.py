@@ -7,7 +7,6 @@ import math
 
 import pytest
 import typer
-from click.utils import strip_ansi
 from fsspec_cli._stat import _format_mtime, _write_line
 
 from ._support import _invoke_stat, _RecordingSource, _source_must_not_run
@@ -79,7 +78,7 @@ def test_stat_help_matches_locked_usage_and_draft() -> None:
     result = _invoke_stat(["--help"])
 
     assert result.exit_code == 0
-    plain_help = strip_ansi(result.stdout)
+    plain_help = result.stdout
     assert "Usage: root stat [OPTIONS] {name:/path}" in plain_help
     assert "Display file status" in plain_help
 
@@ -320,7 +319,7 @@ def test_stat_rejects_unsupported_options_source_free(arguments: list[str]) -> N
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     assert "No such option" in diagnostic
     assert arguments[0].split("=", 1)[0] in diagnostic
 
@@ -348,7 +347,7 @@ def test_stat_leaves_missing_operand_to_typer() -> None:
     result = _invoke_stat([])
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     assert "Missing argument" in diagnostic
     assert "name:/path" in diagnostic
 

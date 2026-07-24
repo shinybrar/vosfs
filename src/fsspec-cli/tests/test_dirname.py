@@ -3,7 +3,6 @@
 from typing import NoReturn
 
 import pytest
-from click.utils import strip_ansi
 from fsspec_cli import App, AsyncFilesystemSource
 from fsspec_cli._dirname import _posix_dirname_string
 from typer.testing import CliRunner, Result
@@ -103,7 +102,7 @@ def test_dirname_rejects_a_missing_operand() -> None:
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert "Missing argument 'OPERAND'" in strip_ansi(result.stderr)
+    assert "Missing argument 'OPERAND'" in result.stderr
 
 
 def test_dirname_rejects_an_extra_operand() -> None:
@@ -111,7 +110,7 @@ def test_dirname_rejects_an_extra_operand() -> None:
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     assert "unexpected extra argument" in diagnostic
     assert "suffix" in diagnostic
 
@@ -125,7 +124,7 @@ def test_dirname_rejects_every_unsupported_option(option: str) -> None:
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     assert "Option '--help' does not take a value" in diagnostic or (
         "No such option" in diagnostic and option.split("=", 1)[0][:2] in diagnostic
     )
@@ -151,7 +150,7 @@ def test_dirname_help_comes_from_typed_callback() -> None:
 
     assert result.exit_code == 0
     assert result.stderr == ""
-    help_text = strip_ansi(result.stdout)
+    help_text = result.stdout
     assert "Usage: root dirname [OPTIONS] {OPERAND}" in help_text
     assert "Strip the last component from a path" in help_text
     assert source_calls == 0

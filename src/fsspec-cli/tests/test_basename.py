@@ -3,7 +3,6 @@
 from typing import NoReturn
 
 import pytest
-from click.utils import strip_ansi
 from fsspec_cli import App, AsyncFilesystemSource
 from typer.testing import CliRunner, Result
 
@@ -97,7 +96,7 @@ def test_basename_rejects_a_missing_operand() -> None:
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert "Missing argument 'OPERAND'" in strip_ansi(result.stderr)
+    assert "Missing argument 'OPERAND'" in result.stderr
 
 
 def test_basename_rejects_a_third_operand() -> None:
@@ -105,8 +104,8 @@ def test_basename_rejects_a_third_operand() -> None:
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert "unexpected extra argument" in strip_ansi(result.stderr)
-    assert "extra" in strip_ansi(result.stderr)
+    assert "unexpected extra argument" in result.stderr
+    assert "extra" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -223,7 +222,7 @@ def test_basename_rejects_every_unsupported_option(option: str) -> None:
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     assert "Option '--help' does not take a value" in diagnostic or (
         "No such option" in diagnostic and option.split("=", 1)[0][:2] in diagnostic
     )
@@ -249,7 +248,7 @@ def test_basename_help_comes_from_typed_callback() -> None:
 
     assert result.exit_code == 0
     assert result.stderr == ""
-    help_text = strip_ansi(result.stdout)
+    help_text = result.stdout
     assert "Usage: root basename [OPTIONS] {OPERAND} [SUFFIX]" in help_text
     assert "Strip directory and suffix from a path" in help_text
     assert source_calls == 0

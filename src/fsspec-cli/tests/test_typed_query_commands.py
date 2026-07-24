@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import NoReturn
 
 import pytest
-from click.utils import strip_ansi
 from fsspec_cli import App
 from typer.testing import CliRunner
 
@@ -34,7 +33,7 @@ def test_query_help_comes_from_typed_callback_metadata(
         App({"memory": _source_must_not_run}).typer_app,
         [command, "--help"],
     )
-    help_text = strip_ansi(result.stdout)
+    help_text = result.stdout
 
     assert (result.exit_code, result.stderr) == (0, "")
     assert f"Usage: root {command} [OPTIONS]" in help_text
@@ -65,6 +64,6 @@ def test_typer_rejects_query_syntax_before_source_acquisition(
     )
 
     assert (result.exit_code, result.stdout_bytes) == (2, b"")
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     for context in contexts:
         assert context in diagnostic

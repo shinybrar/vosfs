@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Literal, NoReturn
 
 import pytest
 import typer
-from click.utils import strip_ansi
 from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App, AsyncFilesystemSource
 from typer.testing import CliRunner, Result
@@ -161,7 +160,7 @@ def test_size_help_comes_from_typed_callback() -> None:
     result = _invoke_size(["--help"])
 
     assert (result.exit_code, result.stderr) == (0, "")
-    help_text = strip_ansi(result.stdout)
+    help_text = result.stdout
     assert "Usage: root size [OPTIONS] {name:/path}" in help_text
     assert "Display exact file sizes" in help_text
 
@@ -201,7 +200,7 @@ def test_size_leaves_usage_failures_to_typer(
     result = _invoke_size(arguments)
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     for context in contexts:
         assert context in diagnostic
 
