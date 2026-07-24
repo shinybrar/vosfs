@@ -121,9 +121,12 @@ class _CommandFailureError(Exception):
         self,
         operand: _MappedOperand | None = None,
         error: Exception | None = None,
+        *,
+        reported: bool = False,
     ) -> None:
         self.operand = operand
         self.error = error
+        self.reported = reported
 
 
 def _render_operand_diagnostic(
@@ -193,13 +196,14 @@ async def _run_mapped_command(
             await operation(filesystems)
     except _CommandFailureError as error:
         failure = error
-        if error.operand is not None:
-            _render_failure(command, _Failure(error.operand, error.error))
-        elif error.error is not None and not isinstance(
-            error.error,
-            BrokenPipeError,
-        ):
-            _render_output_failure(command, error.error)
+        if not error.reported:
+            if error.operand is not None:
+                _render_failure(command, _Failure(error.operand, error.error))
+            elif error.error is not None and not isinstance(
+                error.error,
+                BrokenPipeError,
+            ):
+                _render_output_failure(command, error.error)
     finally:
         cleanup_failed = await invocation.close_with_command_error(
             failure.error if failure is not None else None
