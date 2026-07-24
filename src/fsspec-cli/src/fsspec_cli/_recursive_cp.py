@@ -12,15 +12,15 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-import typer
-
 from ._command import (
+    _backend_category,
     _CommandFailureError,
     _drain_current_operation,
     _MappedOperand,
+    _render_operand_diagnostic,
     _usage_error,
 )
-from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
+from ._diagnostics import _render_diagnostic_value
 from ._path import (
     _has_dot_segment,
     _is_root,
@@ -112,12 +112,6 @@ def _canonical_operand(
     return operand
 
 
-async def _drain_task(task: asyncio.Task[object]) -> None:
-    while not task.done():
-        with suppress(BaseException):
-            await asyncio.shield(task)
-
-
 def _close_sync_iterator(iterator: Iterator[object]) -> None:
     close = getattr(iterator, "close", None)
     if callable(close):
@@ -127,23 +121,21 @@ def _close_sync_iterator(iterator: Iterator[object]) -> None:
 async def _resolve_sync_iterator(
     awaitable: Awaitable[object],
 ) -> Iterator[object]:
-    task = asyncio.ensure_future(awaitable)
+    resolved: object | None = None
+
+    async def resolve() -> object:
+        nonlocal resolved
+        resolved = await awaitable
+        return resolved
+
     try:
-        resolved = await asyncio.shield(task)
+        resolved = await _drain_current_operation(resolve())
     except BaseException:
-        await _drain_task(task)
-        try:
-            resolved = task.result()
-        except BaseException:  # noqa: BLE001, S110 - original control flow wins.
-            pass
-        else:
-            if isinstance(resolved, Iterator):
-                close_task = asyncio.create_task(
+        if isinstance(resolved, Iterator):
+            with suppress(BaseException):
+                await _drain_current_operation(
                     asyncio.to_thread(_close_sync_iterator, resolved)
                 )
-                await _drain_task(close_task)
-                with suppress(BaseException):
-                    close_task.result()
         raise
     if not isinstance(resolved, Iterator):
         raise _IncompatibleResultError
@@ -325,16 +317,9 @@ async def _sync_rows(
     iterator: Iterator[object],
     source_path: str,
 ) -> tuple[_WalkRow, ...]:
-    worker = asyncio.create_task(
+    outcome = await _drain_current_operation(
         asyncio.to_thread(_materialize_sync, iterator, source_path)
     )
-    try:
-        outcome = await asyncio.shield(worker)
-    except BaseException:
-        await _drain_task(worker)
-        with suppress(BaseException):
-            worker.result()
-        raise
     if isinstance(outcome, _WorkerError):
         raise outcome.error
     return outcome.values
@@ -448,31 +433,19 @@ async def _manifest(
     )
 
 
-def _render_operand(command: str, operand: _MappedOperand, category: str) -> None:
-    prefix = _render_diagnostic_prefix(command)
-    rendered = _render_diagnostic_value(operand.spelling)
-    typer.echo(f"{prefix} {rendered}: {category}", err=True, color=True)
-
-
 def _render_failure(command: str, failure: _Failure) -> None:
     if failure.rendered:
         return
     suffix = "; destination residue may remain" if failure.residue else ""
-    _render_operand(command, failure.operand, f"{failure.category}{suffix}")
+    _render_operand_diagnostic(
+        command,
+        failure.operand,
+        f"{failure.category}{suffix}",
+    )
 
 
 def _read_failure(operand: _MappedOperand, error: Exception) -> _Failure:
-    if isinstance(error, FileNotFoundError):
-        category = "not found"
-    elif isinstance(error, PermissionError):
-        category = "permission denied"
-    elif isinstance(error, NotImplementedError):
-        category = "unsupported operation"
-    else:
-        rendered_class = _render_diagnostic_value(type(error).__name__)
-        rendered_message = _render_diagnostic_value(str(error))
-        category = f"backend failure ({rendered_class}): {rendered_message}"
-    return _Failure(operand, category, error=error)
+    return _Failure(operand, _backend_category(error), error=error)
 
 
 def _staging_failure(source: _MappedOperand, error: Exception) -> _Failure:
@@ -559,7 +532,7 @@ def _cleanup_staging(
         Path(path).unlink(missing_ok=True)
     except Exception as error:  # noqa: BLE001 - diagnostic boundary.
         rendered_class = _render_diagnostic_value(type(error).__name__)
-        _render_operand(
+        _render_operand_diagnostic(
             command,
             source,
             "staging cleanup failure "

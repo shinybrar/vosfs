@@ -72,10 +72,7 @@ def test_recursive_cp_rejects_malformed_walk_shapes_before_mutation(
     [
         (PermissionError("denied"), "permission denied"),
         (NotImplementedError("missing"), "unsupported operation"),
-        (
-            NotADirectoryError("backend-specific"),
-            "backend failure (NotADirectoryError): backend-specific",
-        ),
+        (NotADirectoryError("backend-specific"), "not a directory"),
     ],
 )
 def test_recursive_cp_classifies_destination_preflight_failures(
