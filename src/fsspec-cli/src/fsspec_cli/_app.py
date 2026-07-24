@@ -8,7 +8,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
-from typing import Any, Protocol, TypeAlias, TypedDict
+from typing import Annotated, Any, Protocol, TypeAlias, TypedDict
 
 import typer
 from fsspec import AbstractFileSystem
@@ -16,13 +16,13 @@ from typer.core import TyperCommand
 
 from ._basename import _run_basename
 from ._cat import _run_cat
-from ._command import _raw_arguments, _RawCommand
+from ._command import _parse_mapped_operand, _raw_arguments, _RawCommand
 from ._cp import _run_cp
 from ._diagnostics import _render_diagnostic_prefix
 from ._dirname import _run_dirname
 from ._du import _DuCommand, _run_du
 from ._find import _FindCommand, _run_find
-from ._head_tail import _HeadCommand, _run_head, _run_tail, _TailCommand
+from ._head_tail import _run_head, _run_tail
 from ._info import _InfoCommand, _run_info
 from ._ls import _run_ls
 from ._mkdir import _run_mkdir
@@ -130,8 +130,6 @@ _ASYNC_COMMANDS: tuple[_AsyncCommand, ...] = (
     ("find", "Find files recursively", _run_find, _FindCommand),
     ("size", "Display exact file sizes", _run_size, _SizeCommand),
     ("test", "Evaluate a file predicate", _run_test, _TestCommand),
-    ("head", "Display leading bytes", _run_head, _HeadCommand),
-    ("tail", "Display trailing bytes", _run_tail, _TailCommand),
     ("tree", "Display a recursive directory tree", _run_tree, _TreeCommand),
     ("info", "Display normalized file information", _run_info, _InfoCommand),
     ("cp", "Copy files or one directory with -R or -r", _run_cp, _RawCommand),
@@ -222,6 +220,26 @@ class App:
         @self.typer_app.callback()
         def root() -> None:
             pass
+
+        @self.typer_app.command()
+        def head(
+            operand: Annotated[str, typer.Argument(metavar="name:/path")],
+            count: Annotated[int, typer.Option("-c", metavar="N", min=0)],
+        ) -> None:
+            """Display leading bytes."""
+            mapped = _parse_mapped_operand("head", operand, self._sources)
+            _ensure_no_active_event_loop("head")
+            asyncio.run(_run_head("head", count, mapped, self._sources))
+
+        @self.typer_app.command()
+        def tail(
+            operand: Annotated[str, typer.Argument(metavar="name:/path")],
+            count: Annotated[int, typer.Option("-c", metavar="N", min=0)],
+        ) -> None:
+            """Display trailing bytes."""
+            mapped = _parse_mapped_operand("tail", operand, self._sources)
+            _ensure_no_active_event_loop("tail")
+            asyncio.run(_run_tail("tail", count, mapped, self._sources))
 
         for name, help_text, source_free_runner in _SOURCE_FREE_COMMANDS:
             self._register_source_free(name, help_text, source_free_runner)

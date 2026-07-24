@@ -8,7 +8,6 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, NoReturn
 
-import fsspec_cli._app as app_module
 import pytest
 from click.utils import strip_ansi
 from fsspec.asyn import AsyncFileSystem
@@ -17,22 +16,6 @@ from typer.testing import CliRunner, Result
 
 if TYPE_CHECKING:
     from types import TracebackType
-
-_EXACT_HEAD_HELP = (
-    "                                                                                \n"
-    " Usage: head -c N [--] name:/path                                               \n"
-    "                                                                                \n"
-    " Display leading bytes                                                          \n"
-    "                                                                                \n"
-    "╭─ Options ────────────────────────────────────────────────────────────────────╮\n"
-    "│ --help          Show this message and exit.                                  │\n"
-    "╰──────────────────────────────────────────────────────────────────────────────╯\n"
-    "\n"
-)
-_EXACT_TAIL_HELP = _EXACT_HEAD_HELP.replace("head", "tail").replace(
-    "leading bytes                                                          ",
-    "trailing bytes                                                         ",
-)
 
 
 @dataclass(frozen=True)
@@ -169,11 +152,10 @@ def test_byte_count_rejects_the_interpreter_configured_digit_limit(
     finally:
         sys.set_int_max_str_digits(previous_limit)
 
-    assert (result.exit_code, result.stdout_bytes, result.stderr) == (
-        2,
-        b"",
-        f"{command}: {oversized}: invalid byte count\n",
-    )
+    assert (result.exit_code, result.stdout_bytes) == (2, b"")
+    diagnostic = strip_ansi(result.stderr)
+    assert "Invalid value" in diagnostic
+    assert "-c" in diagnostic
 
 
 @pytest.mark.parametrize(
@@ -196,108 +178,107 @@ def test_tail_reads_size_then_requests_exact_suffix_range(
     ]
 
 
-def test_runner_semantics_do_not_depend_on_the_diagnostic_label(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    head_source = _ReadSource(info_result={"size": 6}, payload=b"ab")
-    tail_source = _ReadSource(info_result={"size": 6}, payload=b"ef")
-    commands = {entry[0]: entry for entry in app_module._ASYNC_COMMANDS}
-    head = commands["head"]
-    tail = commands["tail"]
-    monkeypatch.setattr(
-        app_module,
-        "_ASYNC_COMMANDS",
-        (
-            ("peek", head[1], head[2], head[3]),
-            ("suffix", tail[1], tail[2], tail[3]),
-        ),
-    )
-    app = App({"head-source": head_source, "tail-source": tail_source})
-    runner = CliRunner()
-
-    head_result = runner.invoke(
-        app.typer_app,
-        ["peek", "-c", "2", "head-source:/blob"],
-    )
-    tail_result = runner.invoke(
-        app.typer_app,
-        ["suffix", "-c", "2", "tail-source:/blob"],
-    )
-
-    assert (head_result.exit_code, head_result.stdout_bytes, head_result.stderr) == (
-        0,
-        b"ab",
-        "",
-    )
-    assert (tail_result.exit_code, tail_result.stdout_bytes, tail_result.stderr) == (
-        0,
-        b"ef",
-        "",
-    )
-    assert head_source.calls == [_ReadCall("cat_file", "/blob", 0, 2)]
-    assert tail_source.calls == [
-        _ReadCall("info", "/blob"),
-        _ReadCall("cat_file", "/blob", 4, None),
-    ]
-
-
 @pytest.mark.parametrize(
-    ("command", "expected_help"),
-    [("head", _EXACT_HEAD_HELP), ("tail", _EXACT_TAIL_HELP)],
+    ("command", "summary"),
+    [("head", "Display leading bytes"), ("tail", "Display trailing bytes")],
 )
-def test_byte_range_commands_leave_exact_help_to_the_framework(
+def test_byte_range_help_comes_from_typed_callback_metadata(
     command: Literal["head", "tail"],
-    expected_help: str,
+    summary: str,
 ) -> None:
     result = _invoke(command, ["--help"])
+    help_text = strip_ansi(result.stdout)
 
-    assert (result.exit_code, strip_ansi(result.stdout), result.stderr) == (
-        0,
-        expected_help,
-        "",
-    )
+    assert (result.exit_code, result.stderr) == (0, "")
+    assert f"Usage: root {command} [OPTIONS] {{name:/path}}" in help_text
+    assert summary in help_text
+    assert "name:/path" in help_text
+    assert "<str>" in help_text
+    assert "-c" in help_text
+    assert "N [x>=0]" in help_text
 
 
 @pytest.mark.parametrize("command", ["head", "tail"])
 @pytest.mark.parametrize(
-    ("arguments", "diagnostic"),
+    ("arguments", "contexts"),
     [
-        ([], "exactly one byte-count selector is required"),
-        (["memory:/a"], "exactly one byte-count selector is required"),
-        (["-c"], "-c: option requires an argument"),
-        (["-c", "1"], "missing mapped filesystem operand"),
+        ([], ("Missing argument", "name:/path")),
+        (["memory:/a"], ("Missing option", "-c")),
+        (["-c"], ("requires an argument", "-c")),
+        (["-c", "1"], ("Missing argument", "name:/path")),
+        (["-c", "nope", "memory:/a"], ("Invalid value", "-c", "int range")),
+        (["-c", "-1", "memory:/a"], ("Invalid value", "-c", "x>=0")),
+        (["--unknown", "-c", "1", "memory:/a"], ("No such option", "--unknown")),
         (
-            ["-c", "1", "-c", "2", "memory:/a"],
-            "exactly one byte-count selector is required",
+            ["-c", "1", "memory:/a", "memory:/b"],
+            ("unexpected extra argument", "memory:/b"),
         ),
-        (
-            ["-c", "-c", "2", "memory:/a"],
-            "exactly one byte-count selector is required",
-        ),
-        (["-c1", "memory:/a"], "-c1: unsupported option"),
-        (["-cc", "1", "memory:/a"], "-cc: unsupported option"),
-        (["-n", "1", "memory:/a"], "-n: unsupported option"),
-        (["-c", "-1", "memory:/a"], "-1: invalid byte count"),
-        (["-c", "+1", "memory:/a"], "+1: invalid byte count"),
-        (["-c", "1K", "memory:/a"], "1K: invalid byte count"),
-        (["-c", "\u0661", "memory:/a"], "\u0661: invalid byte count"),
-        (["-c", "1", "memory:/a", "memory:/b"], "extra operand"),
-        (["--", "-c", "1", "memory:/a"], "-c: invalid mapped filesystem operand"),
-        (["-c", "1", "unknown:/a"], "unknown:/a: unknown filesystem (known: memory)"),
     ],
 )
-def test_byte_range_preflight_is_strict_and_source_free(
+def test_typer_rejects_byte_range_syntax_before_source_acquisition(
     command: Literal["head", "tail"],
     arguments: list[str],
-    diagnostic: str,
+    contexts: tuple[str, ...],
 ) -> None:
     result = _invoke(command, arguments)
+
+    assert (result.exit_code, result.stdout_bytes) == (2, b"")
+    for context in contexts:
+        assert context in strip_ansi(result.stderr)
+
+
+@pytest.mark.parametrize("command", ["head", "tail"])
+@pytest.mark.parametrize(
+    ("operand", "diagnostic"),
+    [
+        ("memory", "memory: invalid mapped filesystem operand"),
+        ("unknown:/a", "unknown:/a: unknown filesystem (known: memory)"),
+    ],
+)
+def test_mapped_validation_precedes_event_loop_check_and_source_acquisition(
+    monkeypatch: pytest.MonkeyPatch,
+    command: Literal["head", "tail"],
+    operand: str,
+    diagnostic: str,
+) -> None:
+    def event_loop_check_must_not_run(command: str) -> NoReturn:
+        del command
+        raise AssertionError
+
+    monkeypatch.setattr(
+        "fsspec_cli._app._ensure_no_active_event_loop",
+        event_loop_check_must_not_run,
+    )
+
+    result = _invoke(command, ["-c", "1", operand])
 
     assert (result.exit_code, result.stdout_bytes, result.stderr) == (
         2,
         b"",
         f"{command}: {diagnostic}\n",
     )
+
+
+def test_head_reports_source_acquisition_failure_without_filesystem_work() -> None:
+    events: list[str] = []
+    source_error = OSError("acquire")
+
+    def broken_source() -> NoReturn:
+        events.append("factory")
+        raise source_error
+
+    result = _invoke(
+        "head",
+        ["-c", "1", "broken:/a"],
+        sources={"broken": broken_source},
+    )
+
+    assert (result.exit_code, result.stdout_bytes, result.stderr) == (
+        1,
+        b"",
+        "head: broken: source factory failure (OSError): acquire\n",
+    )
+    assert events == ["factory"]
 
 
 @pytest.mark.parametrize(
@@ -444,6 +425,23 @@ def test_byte_range_backend_failures_stop_without_output(
     )
     assert source.calls == expected_calls
     assert source.exit_calls[0][1] is error
+
+
+def test_head_retains_primary_backend_failure_when_cleanup_also_fails() -> None:
+    source = _ReadSource(
+        cat_error=PermissionError("read"),
+        exit_error=OSError("cleanup"),
+    )
+
+    result = _invoke("head", ["-c", "2", "memory:/a"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout_bytes, result.stderr) == (
+        1,
+        b"",
+        "head: memory:/a: permission denied\n"
+        "head: memory: source exit failure (OSError): cleanup\n",
+    )
+    assert isinstance(source.exit_calls[0][1], PermissionError)
 
 
 def test_head_reports_short_binary_write_and_cleans_up(

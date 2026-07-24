@@ -114,6 +114,18 @@ class _Failure:
     backend_error: Exception | None = None
 
 
+class _CommandFailureError(Exception):
+    """One expected command or output failure crossing the invocation boundary."""
+
+    def __init__(
+        self,
+        operand: _MappedOperand | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.operand = operand
+        self.error = error
+
+
 def _render_operand_diagnostic(
     command: str,
     operand: _MappedOperand,
@@ -160,6 +172,47 @@ def _render_output_failure(command: str, error: Exception) -> None:
         err=True,
         color=True,
     )
+
+
+async def _run_mapped_command(
+    command: str,
+    operands: tuple[_MappedOperand, ...],
+    sources: Mapping[str, AsyncFilesystemSource],
+    operation: Callable[[Mapping[str, AsyncFileSystem]], Awaitable[None]],
+) -> None:
+    """Acquire referenced sources, run one command, and own final status."""
+    invocation = _SourceInvocation(command, sources)
+    acquired = False
+    failure: _CommandFailureError | None = None
+    try:
+        filesystems = await invocation.acquire(
+            tuple(dict.fromkeys(operand.name for operand in operands))
+        )
+        acquired = filesystems is not None
+        if filesystems is not None:
+            await operation(filesystems)
+    except _CommandFailureError as error:
+        failure = error
+        if error.operand is not None:
+            _render_failure(command, _Failure(error.operand, error.error))
+        elif error.error is not None and not isinstance(
+            error.error,
+            BrokenPipeError,
+        ):
+            _render_output_failure(command, error.error)
+    finally:
+        cleanup_failed = await invocation.close_with_command_error(
+            failure.error if failure is not None else None
+        )
+
+    if not acquired or failure is not None or cleanup_failed:
+        if (
+            failure is not None
+            and isinstance(failure.error, BrokenPipeError)
+            and not cleanup_failed
+        ):
+            raise typer.Exit(_BROKEN_PIPE_EXIT_CODE)
+        raise typer.Exit(1)
 
 
 async def _run_single_operand_text(
