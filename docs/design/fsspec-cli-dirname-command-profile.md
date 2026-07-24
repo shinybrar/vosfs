@@ -2,6 +2,8 @@
 
 <!-- pyml disable line-length -->
 
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
+
 Status: **Locked lexical command semantics**
 
 Question: [Add source-free `dirname string`](https://github.com/shinybrar/vosfs/issues/125)
@@ -30,31 +32,14 @@ The supported surface is deliberately smaller than GNU `dirname`:
 
 ## 2. Operand preflight
 
-Before any stdout output, the command MUST validate:
-
-1. option syntax;
-2. the presence of exactly one operand; and
-3. that the operand contains no NUL byte.
-
-`--` ends option parsing. Typer's framework-owned `--help` short circuit is
-explicitly exempt from this command compatibility profile: its text and
-successful exit are not `dirname string` behavior. Every other command
-option, including `-a`, `-z`, and grouped short-option tokens, is unsupported.
-
-The first preflight error in argument order MUST produce one diagnostic and
-exit `2`. No source may be entered and no stdout output may be written before
-it. These are the exact preflight diagnostics, before the diagnostic rendering
-defined in Section 5:
+Typer owns argument arity, option handling, `--`, help, and framework usage
+errors. Its exact rendered wording is not part of this profile. After Typer
+accepts the callback parameter, command-owned validation rejects a NUL byte
+before stdout:
 
 | Condition | Diagnostic |
 | --- | --- |
-| No operands | `dirname: missing operand` |
-| More than one operand | `dirname: extra operand` |
-| Unsupported option token | `dirname: <option token>: unsupported option` |
 | Operand containing NUL | `dirname: <operand>: invalid operand` |
-
-Option tokens and operands are inspected from left to right. A grouped option
-token is unsupported as a whole. A lone `-` is a valid operand, not an option.
 
 Embedded newline in the operand is data, not a preflight error. A token such as
 `memory:/docs/a.txt` is ordinary lexical data; the command MUST NOT validate
@@ -121,7 +106,7 @@ only diagnostic escaping algorithm.
   matrix statuses, the `source-free command` scope, and hermetic evidence
   rules.
 - Multi-operand and zero-delimited GNU extensions remain outside this profile
-  and are rejected through the `extra operand` diagnostic.
+  and are rejected through Typer's interface validation.
 
 ## Primary evidence
 

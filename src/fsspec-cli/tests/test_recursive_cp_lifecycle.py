@@ -332,9 +332,20 @@ def test_recursive_cp_passes_operation_failure_to_reverse_exits_after_cleanup(
         assert error is operation_error
 
 
-def test_recursive_cp_renders_not_a_directory_os_error_as_backend_failure() -> None:
+@pytest.mark.parametrize(
+    ("error", "category"),
+    [
+        (NotADirectoryError("backend-specific"), "not a directory"),
+        (IsADirectoryError("backend-specific"), "is a directory"),
+        (FileExistsError("backend-specific"), "file exists"),
+    ],
+)
+def test_recursive_cp_uses_shared_backend_categories(
+    error: OSError,
+    category: str,
+) -> None:
     entries: dict[str, bytes | None] = {"/": None, "/docs": None, "/out": None}
-    metadata = {"/docs": NotADirectoryError("backend-specific")}
+    metadata = {"/docs": error}
 
     result = _invoke(
         ["-R", "memory:/docs", "memory:/out/copy"],
@@ -344,7 +355,7 @@ def test_recursive_cp_renders_not_a_directory_os_error_as_backend_failure() -> N
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
         "",
-        "cp: memory:/docs: backend failure (NotADirectoryError): backend-specific\n",
+        f"cp: memory:/docs: {category}\n",
     )
 
 

@@ -1,6 +1,6 @@
 # `fsspec-cli` recursive `rm` rejection profile
 
-Status: **Superseded option rejection; locked application-disabled rejection**
+Status: **Typer-owned application-disabled rejection**
 
 Part of [#120](https://github.com/shinybrar/vosfs/issues/120) /
 [#135](https://github.com/shinybrar/vosfs/issues/135)
@@ -8,10 +8,11 @@ Part of [#120](https://github.com/shinybrar/vosfs/issues/120) /
 ## 1. Verdict
 
 In fsspec-cli 0.4.0, `rm -R` and `rm -r` were equivalent unsupported options.
-Issue #288 supersedes that diagnostic while preserving source-free rejection
-when `capabilities.recursion.remove` is false or omitted. A valid recursive
-invocation fails before recursive operand or path validation: status `2`, empty
-stdout, exactly `rm: recursive removal disabled by application`, zero source
+Issue #288 replaced that with an application-disabled diagnostic. ADR 0005 and
+issue #308 supersede both parser-era diagnostics: when
+`capabilities.recursion.remove` is false or omitted, the selected annotated
+callback does not expose `-R` or `-r`. Typer rejects either option before
+recursive operand or path validation with status `2`, empty stdout, zero source
 factories, and zero filesystem work or mutation.
 
 The [guarded recursive profile](fsspec-cli-rm-recursive-command-profile.md)

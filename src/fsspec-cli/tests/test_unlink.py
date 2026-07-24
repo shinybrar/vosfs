@@ -34,20 +34,37 @@ def test_unlink_removes_one_file_without_stdout() -> None:
     assert not any(event[0] in {"rm", "rmdir", "ls"} for event in events)
 
 
+def test_unlink_passes_nonfinal_dot_and_separator_spelling_to_backend() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
+
+    result = _invoke_unlink(
+        ["memory:/docs//./notes.txt/"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [event[2] for event in events if event[0] in {"info", "rm_file"}] == [
+        "/docs//./notes.txt/",
+        "/docs//./notes.txt/",
+        "/docs//./notes.txt/",
+    ]
+
+
 def test_unlink_rejects_a_missing_mapped_filesystem_operand() -> None:
     result = _invoke_unlink([])
 
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == "unlink: missing mapped filesystem operand\n"
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert "Missing argument" in result.stderr
+    assert "name:/path" in result.stderr
 
 
 def test_unlink_rejects_extra_operands_without_entering_sources() -> None:
     result = _invoke_unlink(["memory:/one", "memory:/two"])
 
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == "unlink: extra operand\n"
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert "unexpected extra argument" in result.stderr
+    assert "memory:/two" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -59,9 +76,9 @@ def test_unlink_reports_extra_operand_before_second_operand_validation(
 ) -> None:
     result = _invoke_unlink(["memory:/one", second])
 
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == "unlink: extra operand\n"
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert "unexpected extra argument" in result.stderr
+    assert second in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -85,9 +102,13 @@ def test_unlink_reports_extra_operand_before_second_operand_validation(
 def test_unlink_rejects_every_option_without_entering_sources(option: str) -> None:
     result = _invoke_unlink([option, "memory:/file"])
 
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == f"unlink: {option}: unsupported option\n"
+    assert (result.exit_code, result.stdout) == (2, "")
+    if option == "--help=value":
+        assert "does not take a value" in result.stderr
+    else:
+        assert "No such option" in result.stderr
+        context = option[2:] if option.startswith("--") else option[:2]
+        assert context in result.stderr
 
 
 def test_unlink_accepts_operand_after_option_terminator() -> None:
@@ -397,9 +418,8 @@ def test_unlink_reports_source_exit_failures() -> None:
     assert result.stderr == "unlink: memory: source exit failure (OSError): exit\n"
 
 
-@pytest.mark.parametrize("arguments", [["--help"], ["-f", "--help"]])
-def test_unlink_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
-    result = _invoke_unlink(arguments)
+def test_unlink_help_comes_from_typed_callback() -> None:
+    result = _invoke_unlink(["--help"])
 
     assert result.exit_code == 0
     assert "Usage:" in result.stdout

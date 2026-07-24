@@ -7,10 +7,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-import typer
-
-from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
-from ._sources import _await_current
+from ._command import (
+    _backend_category,
+    _drain_current_operation,
+    _render_operand_diagnostic,
+)
+from ._path import (
+    _has_dot_segment,
+    _lexical_parent,
+    _strip_trailing_slashes,
+)
 
 if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
@@ -60,23 +66,15 @@ async def _call(
     result = method(*args, **kwargs)
     if not inspect.isawaitable(result):
         raise NotImplementedError
-    return await _await_current(result)
+    return await _drain_current_operation(result)
 
 
 def _has_required_hooks(filesystem: AsyncFileSystem) -> bool:
     return all(callable(getattr(filesystem, name, None)) for name in _REQUIRED_HOOKS)
 
 
-def _normalized_root(path: str) -> str:
-    return path.rstrip("/")
-
-
 def _is_contained(root: str, path: str) -> bool:
     return path == root or path.startswith(f"{root}/")
-
-
-def _has_dot_segment(path: str) -> bool:
-    return any(component in {".", ".."} for component in path.split("/"))
 
 
 def _freeze_mapping(value: object) -> Mapping[object, object]:
@@ -91,7 +89,7 @@ def _freeze_mapping(value: object) -> Mapping[object, object]:
 def _root_entry(path: str, value: object) -> _ManifestEntry:
     info = _freeze_mapping(value)
     name = info.get("name")
-    if type(name) is not str or name.rstrip("/") != path:
+    if type(name) is not str or _strip_trailing_slashes(name) != path:
         raise _IncompatibleManifestError
     islink = info.get("islink", False)
     if type(islink) is not bool:
@@ -123,13 +121,13 @@ def _listed_entry(parent: str, root: str, value: object) -> _ManifestEntry:
         raise _UnsupportedEntryError
     if (
         not name
-        or name.rstrip("/") != name
+        or _strip_trailing_slashes(name) != name
         or "\0" in name
         or "\n" in name
         or "\r" in name
         or _has_dot_segment(name)
         or not _is_contained(root, name)
-        or (name.rpartition("/")[0] or "/") != parent
+        or _lexical_parent(name) != parent
     ):
         raise _IncompatibleManifestError
     return _ManifestEntry(name, kind)
@@ -199,7 +197,7 @@ def _revalidate_manifest(manifest: _Manifest) -> None:
         if entry.kind == "directory":
             directories.add(entry.path)
     for entry in manifest.entries[:-1]:
-        if (entry.path.rpartition("/")[0] or "/") not in directories:
+        if _lexical_parent(entry.path) not in directories:
             raise _IncompatibleManifestError
 
 
@@ -209,21 +207,9 @@ def _read_failure(
     *,
     root_missing: bool = False,
 ) -> _RecursiveRmFailure:
-    if isinstance(error, FileNotFoundError):
-        category = "not found"
-    elif isinstance(error, PermissionError):
-        category = "permission denied"
-    elif isinstance(error, NotADirectoryError):
-        category = "not a directory"
-    elif isinstance(error, NotImplementedError):
-        category = "unsupported operation"
-    else:
-        rendered_class = _render_diagnostic_value(type(error).__name__)
-        rendered_message = _render_diagnostic_value(str(error))
-        category = f"backend failure ({rendered_class}): {rendered_message}"
     return _RecursiveRmFailure(
         operand,
-        category,
+        _backend_category(error),
         backend_error=error,
         root_missing=root_missing,
     )
@@ -235,7 +221,7 @@ async def _plan(
 ) -> _Manifest | _RecursiveRmFailure:
     if not _has_required_hooks(filesystem):
         return _RecursiveRmFailure(operand, "unsupported operation")
-    root = _normalized_root(operand.path)
+    root = _strip_trailing_slashes(operand.path)
     try:
         root_info = await _call(filesystem, "_info", root)
     except Exception as error:  # noqa: BLE001 - classify read boundary.
@@ -307,6 +293,4 @@ def _render_recursive_failure(
     command: str,
     failure: _RecursiveRmFailure,
 ) -> None:
-    prefix = _render_diagnostic_prefix(command)
-    operand = _render_diagnostic_value(failure.operand.spelling)
-    typer.echo(f"{prefix} {operand}: {failure.category}", err=True, color=True)
+    _render_operand_diagnostic(command, failure.operand, failure.category)

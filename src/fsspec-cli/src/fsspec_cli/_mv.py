@@ -1,13 +1,17 @@
-"""Raw Typer parsing and async execution for same-source file ``mv``."""
+"""Typed async execution for same-source file ``mv``."""
 
 from __future__ import annotations
 
 import inspect
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import typer
-
-from ._command import _parse_mapped_operand, _usage_error
+from ._command import (
+    _CommandFailureError,
+    _MappedOperand,
+    _run_mapped_command,
+    _usage_error,
+)
 from ._cp import (
     _CpFailure,
     _CpRequest,
@@ -18,47 +22,34 @@ from ._cp import (
     _resolve_destination,
     _verify_transfer,
 )
-from ._diagnostics import _render_diagnostic_value
-from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
     from collections.abc import Mapping as MappingType
 
     from fsspec.asyn import AsyncFileSystem
 
     from ._app import AsyncFilesystemSource
 
-_OPERAND_COUNT = 2
+
+@dataclass(frozen=True)
+class _MvPlan:
+    operands: tuple[_MappedOperand, ...]
+    requests: tuple[_CpRequest, ...]
+    require_directory: bool
 
 
-def _preflight(
+def _plan_mv(
     command: str,
-    raw_arguments: tuple[str, ...],
-    known_names: Collection[str],
-) -> tuple[tuple[_CpRequest, ...], bool]:
-    operands: list[str] = []
-    options_active = True
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-        elif options_active and argument.startswith("-") and argument != "-":
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: unsupported option")
-        else:
-            operands.append(argument)
-    if len(operands) < _OPERAND_COUNT:
-        _usage_error(command, "missing mapped filesystem operand")
-    sources = tuple(
-        _parse_mapped_operand(command, operand, known_names)
-        for operand in operands[:-1]
-    )
-    destination = _parse_mapped_operand(command, operands[-1], known_names)
+    operands: tuple[_MappedOperand, ...],
+) -> _MvPlan:
+    sources = operands[:-1]
+    destination = operands[-1]
     if any(source.name != destination.name for source in sources):
         _usage_error(command, "cross-source move unsupported")
-    return (
-        tuple(_CpRequest(source, destination) for source in sources),
-        len(sources) > 1,
+    return _MvPlan(
+        operands=operands,
+        requests=tuple(_CpRequest(source, destination) for source in sources),
+        require_directory=len(sources) > 1,
     )
 
 
@@ -115,29 +106,34 @@ async def _confirmed_mv_file(  # noqa: PLR0911
 
 async def _run_mv(
     command: str,
-    raw_arguments: tuple[str, ...],
+    plan: _MvPlan,
     sources: MappingType[str, AsyncFilesystemSource],
 ) -> None:
-    requests, requires_directory = _preflight(command, raw_arguments, sources)
-    invocation = _SourceInvocation(command, sources)
-    succeeded = False
-    failure: _CpFailure | None = None
-    try:
-        filesystems = await invocation.acquire((requests[0].source.name,))
-        if filesystems is not None:
-            filesystem = filesystems[requests[0].source.name]
-            if requires_directory:
-                failure = await _require_directory(requests[0].destination, filesystem)
-            if failure is None:
-                for request in requests:
-                    failure = await _confirmed_mv_file(request, filesystem)
-                    if failure is not None:
-                        break
-            if failure is not None:
+    async def operation(filesystems: MappingType[str, AsyncFileSystem]) -> None:
+        filesystem = filesystems[plan.requests[0].source.name]
+        failure = None
+        if plan.require_directory:
+            failure = await _require_directory(
+                plan.requests[0].destination,
+                filesystem,
+            )
+        if failure is None:
+            for request in plan.requests:
+                failure = await _confirmed_mv_file(request, filesystem)
+                if failure is not None:
+                    break
+        if failure is not None:
+            try:
                 _render_failure(command, failure)
-            succeeded = failure is None
-    finally:
-        command_error = failure.backend_error if failure is not None else None
-        cleanup_failed = await invocation.close_with_command_error(command_error)
-    if not succeeded or cleanup_failed:
-        raise typer.Exit(1)
+            except Exception as error:
+                raise _CommandFailureError(
+                    error=failure.backend_error,
+                    render=False,
+                    propagate=error,
+                ) from error
+            raise _CommandFailureError(
+                error=failure.backend_error,
+                render=False,
+            )
+
+    await _run_mapped_command(command, plan.operands, sources, operation)

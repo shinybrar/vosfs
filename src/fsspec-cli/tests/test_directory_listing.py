@@ -2,12 +2,13 @@
 
 import asyncio
 import locale
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Coroutine
 
 import pytest
 import typer
 
-from ._support import _invoke_ls, _RecordingSource
+from ._support import _invoke_ls, _RecordingFileSystem, _RecordingSource
 
 
 def test_ls_lists_one_directory_through_names_only_async_operations() -> None:
@@ -358,3 +359,58 @@ def test_ls_preserves_directory_listing_control_flow_unchanged(
     assert exception_type is type(control)
     assert exception is control
     assert traceback is not None
+
+
+def test_ls_drains_current_operation_then_stops_on_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[object, ...]] = []
+    started = threading.Event()
+    release: asyncio.Event
+    alpha = _RecordingSource(events)
+    beta = _RecordingSource(events)
+    real_run = asyncio.run
+
+    async def blocking_info(
+        filesystem: _RecordingFileSystem,
+        path: str,
+        **kwargs: object,
+    ) -> object:
+        assert not kwargs
+        filesystem.source.events.append(("info-start", path))
+        started.set()
+        await release.wait()
+        filesystem.source.events.append(("info-done", path))
+        return {"type": "file"}
+
+    def cancelling_run(coroutine: Coroutine[object, object, None]) -> None:
+        async def supervise() -> None:
+            nonlocal release
+            release = asyncio.Event()
+            command_task = asyncio.create_task(coroutine)
+            assert await asyncio.to_thread(started.wait, 5)
+            command_task.cancel("listing cancelled")
+            asyncio.get_running_loop().call_later(0.01, release.set)
+            await command_task
+
+        real_run(supervise())
+
+    monkeypatch.setattr(_RecordingFileSystem, "_info", blocking_info)
+    monkeypatch.setattr(asyncio, "run", cancelling_run)
+
+    with pytest.raises(asyncio.CancelledError):
+        _invoke_ls(
+            ["alpha:/one", "beta:/two"],
+            sources={"alpha": alpha, "beta": beta},
+        )
+
+    assert [event[0] for event in events] == [
+        "factory",
+        "enter",
+        "factory",
+        "enter",
+        "info-start",
+        "info-done",
+        "exit",
+        "exit",
+    ]

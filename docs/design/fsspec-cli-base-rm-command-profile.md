@@ -37,21 +37,21 @@ The supported surface is deliberately smaller than POSIX Issue 8:
 
 - at least one mapped filesystem operand is required;
 - only entries classified as fsspec `type == "file"` are removed;
-- no options are supported in this profile; and
+- no option is selected in this profile; and
 - successful invocations emit no stdout.
 
 `type == "file"` is only fsspec's common type shape. It does not prove POSIX
 regular-file or non-link identity. Implicit permission-based POSIX prompting
 is unavailable in this profile.
 
-`-i`, grouped forms, and long forms remain unsupported until their
-dedicated profiles exist. [`rm -d`](fsspec-cli-rm-directory-command-profile.md),
+Unregistered options such as `-i` and long aliases remain Typer usage errors.
+Typer accepts registered short options in normal combined forms and before or
+after operands. [`rm -d`](fsspec-cli-rm-directory-command-profile.md),
 [`rm -f`](fsspec-cli-rm-force-command-profile.md), and
 [`rm -v`](fsspec-cli-rm-verbose-command-profile.md) are separate profiles.
-[`rm -R`/`-r`](fsspec-cli-rm-recursive-rejection-profile.md) are source-free
-rejections in fsspec-cli 0.4.0. After #288 implements the application policy,
-the same rejection remains required whenever
-`capabilities.recursion.remove` is false. The locked
+[`rm -R`/`-r`](fsspec-cli-rm-recursive-rejection-profile.md) are absent from
+the callback when `capabilities.recursion.remove` is false, so Typer rejects
+them before source acquisition. The locked
 [guarded recursive profile](fsspec-cli-rm-recursive-command-profile.md) defines
 the capability-enabled implementation frontier without changing this base
 file-only contract.
@@ -72,22 +72,19 @@ destructive guards are source-free and exit with status `2`.
 
 ### 2.1 Option and operand preflight
 
+Typer validates registered option syntax and owns help and usage failures.
 Before any source factory call, context entry, backend call, or stdout output,
-the command MUST validate option syntax, operand presence, operand grammar,
-mapped filesystem names, and root or final dot-component safety guards across
-the entire argv.
+the callback MUST then validate operand presence, operand grammar, mapped
+filesystem names, option relationships, and root or final dot-component safety
+guards across the complete parsed argument set.
 
-`--` ends option parsing. Every option token is unsupported in this profile.
-Typer's framework-owned `--help` short circuit is explicitly exempt from this
-command compatibility profile.
-
-The first preflight error in argument order MUST produce one diagnostic and
-exit `2`. No source may be entered and no stdout output written before it.
+One preflight error exits `2`. No source may be entered and no stdout output
+written before it.
 
 | Condition | Diagnostic |
 | --- | --- |
 | No operands | `rm: missing mapped filesystem operand` |
-| Unsupported option token | `rm: <option token>: unsupported option` |
+| Typer parsing or conversion failure | Typer standard usage diagnostic |
 | Malformed operand | `rm: <operand>: invalid mapped filesystem operand` |
 | Unknown mapped name | `rm: <operand>: unknown filesystem (known: <name>, ...)` |
 | Root or final `.` / `..` | `rm: <operand>: rejected path` |
@@ -149,8 +146,7 @@ match the plain `ls` profile.
 
 Hermetic matrix probes exercise adapted async Local, adapted async Memory, and
 native async `vosfs` through the production `App` seam. Source-free rejection
-tests prove unsupported options complete during command preflight without
-entering a source.
+tests prove Typer usage failures complete without entering a source.
 
 Native `vosfs` hermetic evidence does not broaden into a general service
 guarantee.

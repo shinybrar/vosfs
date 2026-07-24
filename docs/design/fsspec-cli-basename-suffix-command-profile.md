@@ -2,6 +2,8 @@
 
 <!-- pyml disable line-length -->
 
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
+
 Status: **Locked lexical suffix delta**
 
 Part of [#120](https://github.com/shinybrar/vosfs/issues/120) / [#124](https://github.com/shinybrar/vosfs/issues/124)
@@ -31,13 +33,12 @@ The supported surface remains deliberately smaller than GNU `basename`:
 
 ## 2. Operand preflight
 
-The base profile's option syntax, NUL rejection, `--` delimiter behavior, and
-framework-owned `--help` exemption apply unchanged. This profile adds only the
-second-operand shape:
+The base profile's Typer-owned interface and command-owned NUL rejection apply
+unchanged. This profile adds only the optional second operand:
 
 1. exactly one operand remains valid and preserves the base profile byte-for-byte;
 2. exactly two operands select the suffix form; and
-3. three or more operands produce `basename: extra operand`.
+3. every other arity is a Typer usage error before callback execution.
 
 Both operands are inspected for NUL bytes using the same diagnostic rendering as
 the base profile. Embedded newline in either operand is data, not a preflight
@@ -46,10 +47,7 @@ suffix has no backend meaning.
 
 | Condition | Diagnostic |
 | --- | --- |
-| Three or more operands | `basename: extra operand` |
 | Operand or suffix containing NUL | `basename: <token>: invalid operand` |
-
-Every other preflight diagnostic remains owned by the base profile.
 
 ## 3. Lexical algorithm
 

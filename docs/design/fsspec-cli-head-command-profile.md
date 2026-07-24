@@ -2,6 +2,8 @@
 
 <!-- pyml disable line-length -->
 
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
+
 Status: **Locked command semantics and async execution contract**
 
 Question: [Add the `head` command](https://github.com/shinybrar/vosfs/issues/198)
@@ -26,31 +28,12 @@ head -c N [--] name:/path
 ```
 
 Exactly one byte-count selector and one mapped filesystem operand are REQUIRED.
-Only the separate-token `-c N` selector is supported. The selector MAY appear
-before or after the operand while option parsing is active. `--` ends option
-parsing.
-
-`N` MUST contain one or more ASCII decimal digits. It is non-negative and MAY
-contain leading zeros. Signs, suffixes, whitespace, fractions, empty values,
-non-ASCII digits, and values rejected by Python's configured integer-conversion
-safety ceiling are invalid. Inline or grouped selectors, repeated selectors,
-`-n`, default counts, stdin, multiple operands, and every other option are
-unsupported.
-
-Exact `--help` remains the framework-owned help spelling. The mapped-operand
-grammar and validation order are those of the shared command toolkit. The
-command adds these stable preflight diagnostics:
-
-| Condition | Diagnostic |
-| --- | --- |
-| Missing or repeated selector | `head: exactly one byte-count selector is required` |
-| Selector without a following token | `head: -c: option requires an argument` |
-| Invalid count | `head: <value>: invalid byte count` |
-| Zero operands after a valid selector | `head: missing mapped filesystem operand` |
-| More than one operand | `head: extra operand` |
-
-Every preflight failure completes with status `2`, empty stdout, exactly one
-stable diagnostic, and no source factory or filesystem call.
+`-c N` supplies a non-negative integer count. The annotated callback and Typer
+own option syntax, argument arity, integer conversion, `--`, help, and framework
+usage errors. Exact framework diagnostic wording is not compatibility surface.
+Callback-owned mapped-operand validation then runs before event-loop entry or
+source acquisition. Every preflight failure has status `2`, empty stdout, and
+no source or filesystem work.
 
 ## 2. Backend operation contract
 
@@ -117,8 +100,8 @@ Hermetic binary-output and call-shape tests MUST exercise the public
 - adapted async Memory; and
 - native async `vosfs` with a mocked transport and no network access.
 
-Focused tests additionally lock strict count parsing, option ordering, exact
-`--help`, the `--` terminator, source-free preflight, the single bounded
+Focused tests additionally lock Typer count conversion, option placement,
+help, the `--` terminator, source-free preflight, the single bounded
 `_cat_file` call, exact bytes, strict result validation, backend diagnostics,
 short writes, flush failures, broken pipes, and invocation-owned cleanup.
 Native `vosfs` evidence MUST observe its truthful whole-object GET without a

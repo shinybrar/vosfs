@@ -16,6 +16,11 @@ sources stay under the separate directory-mv admission verdict. Cross-source
 names, prompt flags, `-f`, and other options reject before source entry with
 status `2`.
 
+The annotated `mv` callback exposes one variadic `name:/path` argument whose
+help identifies the final value as the destination. Typer owns collection,
+option parsing, option termination, and usage errors; mapped-source validation
+completes synchronously before event-loop entry or source acquisition.
+
 ## Execution
 
 Preflight validates mapped operands and same configured name before acquisition.

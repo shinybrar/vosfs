@@ -231,54 +231,6 @@ def test_rm_force_accepts_repeated_and_grouped_flags(arguments: list[str]) -> No
 
 
 @pytest.mark.parametrize(
-    "option",
-    [
-        "-i",
-        "-l",
-        "--force",
-        "--recursive",
-        "--verbose",
-        "-A",
-        "-h",
-        "--help=value",
-        "-fd",
-        "-fi",
-        "-fv",
-        "-vf",
-        "-vv",
-        "-dv",
-        "-vd",
-    ],
-)
-def test_rm_rejects_every_option_without_entering_sources(option: str) -> None:
-    result = _invoke_rm([option, "memory:/file"])
-
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == f"rm: {option}: unsupported option\n"
-
-
-@pytest.mark.parametrize("option", ["-R", "-r", "-fr", "-Rf"])
-def test_rm_recursive_options_are_equivalent_source_free_rejections(
-    option: str,
-) -> None:
-    events: list[tuple[object, ...]] = []
-    source = _RecordingSource(events)
-
-    result = _invoke_rm(
-        [option, "memory:/docs"],
-        sources={"memory": source},
-    )
-
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "rm: recursive removal disabled by application\n",
-    )
-    assert events == []
-
-
-@pytest.mark.parametrize(
     ("error_factory", "category"),
     [
         (PermissionError, "permission denied"),
@@ -392,23 +344,13 @@ def test_rm_force_accepts_operand_after_option_terminator() -> None:
     ]
 
 
-@pytest.mark.parametrize("arguments", [["memory:/file", "-f"], ["-i"], ["--force"]])
-def test_rm_force_profile_rejects_unsupported_options_before_source_entry(
-    arguments: list[str],
-) -> None:
-    source_calls = 0
+def test_rm_force_option_after_operand_is_parsed_by_typer() -> None:
+    source = _RecordingSource([])
 
-    def source_must_not_run() -> object:
-        nonlocal source_calls
-        source_calls += 1
-        raise AssertionError
+    result = _invoke_rm(["memory:/file", "-f"], sources={"memory": source})
 
-    result = _invoke_rm(arguments, sources={"memory": source_must_not_run})
-
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert "unsupported option" in result.stderr
-    assert source_calls == 0
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.call_count == 1
 
 
 @pytest.mark.parametrize(
@@ -928,6 +870,23 @@ def test_rm_accepts_hidden_file_paths_that_are_not_final_dot_components() -> Non
     ]
 
 
+def test_rm_passes_nonfinal_dot_and_repeated_separator_spelling_literally() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
+
+    result = _invoke_rm(
+        ["memory:/docs//./notes.txt/"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [event[2] for event in events if event[0] in {"info", "rm_file"}] == [
+        "/docs//./notes.txt/",
+        "/docs//./notes.txt/",
+        "/docs//./notes.txt/",
+    ]
+
+
 def test_rm_never_calls_rm_or_rmdir_primitives() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events, trap_rmdir=True)
@@ -1132,48 +1091,31 @@ def test_rm_d_preserves_directory_removal_cancellation() -> None:
 
 
 @pytest.mark.parametrize(
-    ("arguments", "option"),
+    "arguments",
     [
-        (["-df", "memory:/file"], "-df"),
-        (["-fd", "memory:/file"], "-fd"),
-        (["-d", "-f", "memory:/file"], "-f"),
-        (["-dd", "memory:/file"], "-dd"),
-        (["-d", "-R", "memory:/file"], "-R"),
-        (["-d", "-v", "memory:/file"], "-v"),
+        ["-df", "memory:/file"],
+        ["-fd", "memory:/file"],
+        ["-d", "-f", "memory:/file"],
+        ["-d", "-v", "memory:/file"],
     ],
 )
 def test_rm_d_rejects_unsupported_option_combinations_before_source_entry(
     arguments: list[str],
-    option: str,
 ) -> None:
     result = _invoke_rm(arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert result.stderr == f"rm: {option}: unsupported option\n"
+    assert result.stderr == "rm: -d: cannot combine with other options\n"
 
 
-@pytest.mark.parametrize(
-    "option",
-    ["--directory", "--force", "--recursive", "--verbose"],
-)
-def test_rm_d_rejects_long_options_before_source_entry(option: str) -> None:
-    source_calls = 0
+def test_rm_d_repeated_option_is_parsed_by_typer() -> None:
+    source = _RecordingSource([], info_result={"type": "directory"})
 
-    def source_must_not_run() -> object:
-        nonlocal source_calls
-        source_calls += 1
-        raise AssertionError
+    result = _invoke_rm(["-dd", "memory:/file"], sources={"memory": source})
 
-    result = _invoke_rm(
-        ["-d", option, "memory:/file"],
-        sources={"memory": source_must_not_run},
-    )
-
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == f"rm: {option}: unsupported option\n"
-    assert source_calls == 0
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert source.call_count == 1
 
 
 def test_rm_d_without_operands_rejects_without_source_entry() -> None:
@@ -1539,6 +1481,29 @@ def test_rm_verbose_keeps_broken_pipe_silent_but_reports_exit_failure(
     assert traceback is not None
 
 
+def test_rm_verbose_solo_broken_pipe_is_silent_status_141(
+    monkeypatch,
+) -> None:
+    broken_pipe = BrokenPipeError()
+    source = _RecordingSource([])
+
+    def break_stdout(spelling: str) -> None:
+        del spelling
+        raise broken_pipe
+
+    monkeypatch.setattr("fsspec_cli._rm._write_verbose_line", break_stdout)
+    result = _invoke_rm(
+        ["-v", "memory:/docs/notes.txt"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (141, "", "")
+    exception_type, exception, traceback = source.exit_calls[0]
+    assert exception_type is BrokenPipeError
+    assert exception is broken_pipe
+    assert traceback is not None
+
+
 def test_rm_verbose_preserves_backend_error_when_diagnostic_write_fails(
     monkeypatch,
 ) -> None:
@@ -1612,7 +1577,6 @@ def test_rm_verbose_reports_cleanup_failure() -> None:
         ["-d", "-v", "memory:/file"],
         ["-v", "-d", "memory:/file"],
         ["-fv", "memory:/file"],
-        ["memory:/file", "-v"],
     ],
 )
 def test_rm_verbose_rejects_unsupported_shapes_before_source_entry(
@@ -1630,6 +1594,18 @@ def test_rm_verbose_rejects_unsupported_shapes_before_source_entry(
     assert result.exit_code == 2
     assert result.stdout == ""
     assert source_calls == 0
+
+
+def test_rm_verbose_option_after_operand_is_parsed_by_typer() -> None:
+    source = _RecordingSource([])
+
+    result = _invoke_rm(["memory:/file", "-v"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "memory:/file\n",
+        "",
+    )
 
 
 def test_rm_verbose_rejects_root_and_final_dot_paths_before_source_entry() -> None:

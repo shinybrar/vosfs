@@ -2,6 +2,13 @@
 
 Status: Accepted
 
+> **Partially superseded by
+> [Define Typer-owned commands and callback extensions](./0005-define-typer-owned-commands-and-callback-extensions.md):**
+> the `CommandExtension` registrar and `register(...)` clauses are replaced by
+> annotated callbacks. Explicit opt-in, omission behavior, core-first caller
+> order, immutable source snapshots, application-capability separation, and
+> Typer's command-conflict behavior remain accepted.
+
 Question: [Add the backend-specific extension seam](https://github.com/shinybrar/vosfs/issues/191)
 
 ## Decision
@@ -15,19 +22,18 @@ App(sources, *, capabilities=capabilities, extensions=[...]).typer_app
 [ADR 0002](0002-own-async-filesystems-per-invocation.md) defines application
 capabilities on that constructor for core command policy. That parameter does
 not amend extension behavior. Omitting `extensions` preserves the core command
-surface. `App` snapshots the source mapping, registers core commands first,
-then calls each selected
-`CommandExtension.register(typer_app, sources)` with the same Typer app and an
-immutable view of that snapshot. The extension register signature and
-registration order are unchanged; extensions will not receive the core
-capability configuration.
+surface. As superseded by ADR 0005, `App` snapshots the source mapping,
+registers core commands first, then registers each selected annotated callback
+in caller order. Source-aware callbacks retrieve the immutable snapshot from
+the public `CommandContext` installed on `typer.Context`; source-free callbacks
+need no context parameter. Extensions do not receive core capability
+configuration.
 
-An extension registers commands only. It adds no public runner, lifecycle
-policy, backend registry, extension capability metadata, or async invocation
-seam. Mapped-source extension commands use the existing internal command
-toolkit and invocation-owned source lifecycle. Each extension command detects
-its required filesystem operation by calling it; backend type and protocol do
-not select extension commands or behavior.
+An extension callback defines one command through its name, docstring, and
+annotations. It adds no public runner, lifecycle policy, backend registry,
+extension capability metadata, or async invocation seam. Each extension
+command detects its required filesystem operation by calling it; backend type
+and protocol do not select extension commands or behavior.
 
 This decision amends only the exact `App(sources).typer_app` constructor wording
 in [ADR 0002](0002-own-async-filesystems-per-invocation.md) and

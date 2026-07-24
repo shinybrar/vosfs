@@ -4,7 +4,8 @@ from ._app import (
     App,
     AppCapabilities,
     AsyncFilesystemSource,
-    CommandExtension,
+    CommandCallback,
+    CommandContext,
     RecursionCapabilities,
 )
 
@@ -12,6 +13,7 @@ __all__ = [
     "App",
     "AppCapabilities",
     "AsyncFilesystemSource",
-    "CommandExtension",
+    "CommandCallback",
+    "CommandContext",
     "RecursionCapabilities",
 ]

@@ -1,4 +1,4 @@
-"""Raw Typer parsing and async execution for ``info``."""
+"""Normalized metadata execution for typed ``info``."""
 
 from __future__ import annotations
 
@@ -7,25 +7,17 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-import typer
-
 from ._command import (
     _binary_stdout,
-    _Failure,
+    _CommandFailureError,
     _MappedOperand,
-    _preflight_single_mapped_operand,
-    _RawCommand,
-    _render_failure,
-    _render_output_failure,
+    _run_mapped_command,
     _write_binary,
 )
 from ._listing import ListingRow, to_listing
-from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
-    from typer._click import Context
-    from typer._click.formatting import HelpFormatter
 
     from ._app import AsyncFilesystemSource
 
@@ -39,12 +31,6 @@ class _StablePresentation:
 
     def __repr__(self) -> str:
         return self.text
-
-
-class _InfoCommand(_RawCommand):
-    def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        del ctx
-        formatter.write_usage("info", "[--] name:/path")
 
 
 def _canonical_value(value: object, active: set[int]) -> object:
@@ -164,45 +150,35 @@ def _normalize_info(result: object) -> bytes | None:
 async def _read_info(
     operand: _MappedOperand,
     filesystem: AsyncFileSystem,
-) -> bytes | _Failure:
+) -> bytes:
     try:
         result = await filesystem._info(operand.path)  # noqa: SLF001
-    except Exception as error:  # noqa: BLE001 - awaited backend boundary.
-        return _Failure(operand, backend_error=error)
+    except Exception as error:
+        raise _CommandFailureError(operand, error) from error
     payload = _normalize_info(result)
-    return _Failure(operand) if payload is None else payload
+    if payload is None:
+        raise _CommandFailureError(operand)
+    return payload
 
 
 async def _run_info(
     command: str,
-    raw_arguments: tuple[str, ...],
+    operand: _MappedOperand,
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    operand = _preflight_single_mapped_operand(command, raw_arguments, sources)
-    invocation = _SourceInvocation(command, sources)
-    succeeded = False
-    failure: _Failure | None = None
-    output_error: Exception | None = None
-    try:
-        filesystems = await invocation.acquire((operand.name,))
-        if filesystems is not None:
-            result = await _read_info(operand, filesystems[operand.name])
-            if isinstance(result, _Failure):
-                failure = result
-                _render_failure(command, result)
-            else:
-                try:
-                    stdout = _binary_stdout()
-                    _write_binary(stdout, result)
-                    stdout.flush()
-                except BrokenPipeError as error:
-                    output_error = error
-                except Exception as error:  # noqa: BLE001 - stdout boundary.
-                    output_error = error
-                    _render_output_failure(command, error)
-            succeeded = failure is None and output_error is None
-    finally:
-        command_error = failure.backend_error if failure is not None else output_error
-        cleanup_failed = await invocation.close_with_command_error(command_error)
-    if not succeeded or cleanup_failed:
-        raise typer.Exit(1)
+    async def execute(filesystems: Mapping[str, AsyncFileSystem]) -> None:
+        payload = await _read_info(operand, filesystems[operand.name])
+        try:
+            stdout = _binary_stdout()
+            _write_binary(stdout, payload)
+            stdout.flush()
+        except Exception as error:
+            raise _CommandFailureError(error=error) from error
+
+    await _run_mapped_command(
+        command,
+        (operand,),
+        sources,
+        execute,
+        broken_pipe_exit_code=1,
+    )

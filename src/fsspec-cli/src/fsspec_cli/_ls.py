@@ -1,4 +1,4 @@
-"""Raw Typer parsing and async execution for ``ls``."""
+"""Listing execution for the central ``ls`` and ``ll`` callbacks."""
 
 from __future__ import annotations
 
@@ -10,20 +10,18 @@ from typing import TYPE_CHECKING, Generic, TypeAlias, TypeVar, cast
 import typer
 
 from ._command import (
+    _CommandFailureError,
+    _drain_current_operation,
     _Failure,
     _MappedOperand,
-    _parse_mapped_operand,
     _render_failure,
     _render_output_failure,
-    _usage_error,
+    _run_mapped_command,
 )
-from ._diagnostics import _render_diagnostic_value
 from ._listing import ListingRow, render_listing, to_listing
-from ._sources import _SourceInvocation
+from ._path import _strip_trailing_slashes
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
-
     from fsspec.asyn import AsyncFileSystem
 
     from ._app import AsyncFilesystemSource
@@ -60,115 +58,39 @@ _LongDirectoryResult: TypeAlias = _DirectoryResult[ListingRow]
 _LongResult: TypeAlias = _LongFileResult | _LongDirectoryResult
 
 
-def _short_options(argument: str) -> str | None:
-    characters = argument[1:]
-    if not characters or not set(characters) <= {"A", "h", "l"}:
-        return None
-    return characters
-
-
-def _long_requested(
-    raw_arguments: tuple[str, ...],
-    *,
-    long_by_default: bool,
-) -> bool:
-    if long_by_default:
-        return True
-
-    options_active = True
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            continue
-        if not options_active or not argument.startswith("-") or argument == "-":
-            continue
-        options = _short_options(argument)
-        if options is not None and "l" in options:
-            return True
-    return False
-
-
-def _preflight(
+async def _run_ls(  # noqa: C901 - one compatibility-profile adapter.
     command: str,
-    raw_arguments: tuple[str, ...],
-    known_names: Collection[str],
-    *,
-    long_by_default: bool = False,
-) -> _LsRequest:
-    include_almost_all = False
-    long_listing = _long_requested(
-        raw_arguments,
-        long_by_default=long_by_default,
-    )
-    human_readable = False
-    operands = []
-    options_active = True
-
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            continue
-        if options_active and argument.startswith("-") and argument != "-":
-            options = _short_options(argument)
-            if options is None:
-                rendered = _render_diagnostic_value(argument)
-                _usage_error(command, f"{rendered}: unsupported option")
-            if "h" in options and not long_listing:
-                rendered = _render_diagnostic_value(argument)
-                _usage_error(command, f"{rendered}: unsupported option")
-            include_almost_all = include_almost_all or "A" in options
-            human_readable = human_readable or "h" in options
-            continue
-
-        operands.append(_parse_mapped_operand(command, argument, known_names))
-
-    if not operands:
-        _usage_error(command, "missing mapped filesystem operand")
-
-    return _LsRequest(
-        include_almost_all=include_almost_all,
-        long_listing=long_listing,
-        human_readable=human_readable,
-        operands=tuple(operands),
-    )
-
-
-async def _run_ls(
-    command: str,
-    raw_arguments: tuple[str, ...],
+    request: _LsRequest,
     sources: Mapping[str, AsyncFilesystemSource],
-    *,
-    long_by_default: bool = False,
 ) -> None:
-    request = _preflight(
-        command,
-        raw_arguments,
-        sources,
-        long_by_default=long_by_default,
-    )
-    invocation = _SourceInvocation(command, sources)
-    succeeded = False
-    failures: tuple[_Failure, ...] = ()
-    output_error: Exception | None = None
-    try:
-        names = dict.fromkeys(operand.name for operand in request.operands)
-        filesystems = await invocation.acquire(names)
-        if filesystems is not None:
+    async def execute(filesystems: Mapping[str, AsyncFileSystem]) -> None:
+        if request.long_listing:
+            long_successes, failures = await _trace_long_operands(
+                request,
+                filesystems,
+            )
+        else:
+            plain_successes, failures = await _trace_plain_operands(
+                request,
+                filesystems,
+            )
+        backend_error = next(
+            (
+                failure.backend_error
+                for failure in failures
+                if failure.backend_error is not None
+            ),
+            None,
+        )
+        output_error = None
+        try:
             if request.long_listing:
-                long_successes, failures = await _trace_long_operands(
-                    request,
-                    filesystems,
-                )
                 output = _format_long_successes(
                     long_successes,
                     human_readable=request.human_readable,
                     multiple_operands=len(request.operands) > 1,
                 )
             else:
-                plain_successes, failures = await _trace_plain_operands(
-                    request,
-                    filesystems,
-                )
                 output = _format_plain_successes(
                     plain_successes,
                     multiple_operands=len(request.operands) > 1,
@@ -183,20 +105,28 @@ async def _run_ls(
                 except Exception as error:  # noqa: BLE001 - output boundary.
                     output_error = error
                     _render_output_failure(command, error)
-            succeeded = not failures and output_error is None
-    finally:
-        backend_error = next(
-            (
-                failure.backend_error
-                for failure in failures
-                if failure.backend_error is not None
-            ),
-            None,
-        )
-        command_error = backend_error if backend_error is not None else output_error
-        cleanup_failed = await invocation.close_with_command_error(command_error)
-    if not succeeded or cleanup_failed:
-        raise typer.Exit(1)
+        except Exception as error:  # Preserve backend/output cause through cleanup.
+            command_error = backend_error if backend_error is not None else output_error
+            if command_error is None:
+                command_error = error
+            raise _CommandFailureError(
+                error=command_error,
+                render=False,
+                propagate=error,
+            ) from error
+        if failures or output_error is not None:
+            raise _CommandFailureError(
+                error=backend_error if backend_error is not None else output_error,
+                render=False,
+            )
+
+    await _run_mapped_command(
+        command,
+        request.operands,
+        sources,
+        execute,
+        broken_pipe_exit_code=1,
+    )
 
 
 async def _trace_plain_operands(
@@ -243,7 +173,9 @@ async def _classify_operand(
 ) -> Mapping[str, object] | _Failure:
     # fsspec's native async API intentionally exposes underscore coroutines.
     try:
-        info = await filesystem._info(operand.path)  # noqa: SLF001
+        info = await _drain_current_operation(
+            filesystem._info(operand.path)  # noqa: SLF001
+        )
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _Failure(operand, backend_error=error)
 
@@ -319,9 +251,11 @@ async def _list_directory(
     detail: bool,
 ) -> object | _Failure:
     try:
-        return await filesystem._ls(  # noqa: SLF001
-            operand.path,
-            detail=detail,
+        return await _drain_current_operation(
+            filesystem._ls(  # noqa: SLF001
+                operand.path,
+                detail=detail,
+            )
         )
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _Failure(operand, backend_error=error)
@@ -434,7 +368,7 @@ def _directory_basename(path: str, name: object) -> str | None:
     if not isinstance(name, str):
         return None
 
-    comparison_path = path.rstrip("/")
+    comparison_path = _strip_trailing_slashes(path)
     prefix = "/" if not comparison_path else f"{comparison_path}/"
     if not name.startswith(prefix):
         return None

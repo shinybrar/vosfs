@@ -9,6 +9,7 @@ from types import MethodType
 from typing import TYPE_CHECKING, NoReturn
 
 import pytest
+import typer
 from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App
 from typer.testing import CliRunner
@@ -155,6 +156,52 @@ def test_recursive_cp_reports_source_factory_failure() -> None:
         "",
         "cp: broken: source factory failure (ValueError): factory\n",
     )
+
+
+def test_recursive_cp_preserves_backend_error_when_diagnostic_write_fails(
+    monkeypatch,
+) -> None:
+    backend_error = PermissionError("denied")
+    renderer_error = RuntimeError("stderr failed")
+    exit_calls: list[tuple[object, ...]] = []
+    filesystem = _TreeFileSystem(
+        {"/": None, "/docs": None, "/out": None},
+        [],
+        {"/docs": backend_error},
+    )
+
+    class RecordingSource:
+        async def __aenter__(self) -> _TreeFileSystem:
+            return filesystem
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            exit_calls.append(exc_info)
+
+    def fail_diagnostic(
+        _message: object = None,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        del args
+        if kwargs.get("err") is True:
+            raise renderer_error
+        raise AssertionError
+
+    monkeypatch.setattr(typer, "echo", fail_diagnostic)
+
+    result = _invoke(
+        ["-R", "memory:/docs", "memory:/out"],
+        {"memory": RecordingSource},
+    )
+
+    assert result.exit_code == 1
+    assert result.exception is renderer_error
+    assert result.stdout == ""
+    assert result.stderr == ""
+    exception_type, exception, traceback = exit_calls[0]
+    assert exception_type is PermissionError
+    assert exception is backend_error
+    assert traceback is not None
 
 
 def test_recursive_cp_reports_source_exit_failure_after_verified_copy() -> None:
@@ -376,10 +423,11 @@ def test_recursive_cp_rejects_existing_resolved_root_file_or_link(
 def test_recursive_cp_merges_existing_tree_and_replaces_files() -> None:
     entries: dict[str, bytes | None] = {
         "/": None,
-        "/docs": None,
+        "/docs/": None,
         "/docs/empty": None,
         "/docs/notes.txt": b"new",
         "/target": None,
+        "/target//": None,
         "/target/docs": None,
         "/target/docs/extra.txt": b"keep",
         "/target/docs/notes.txt": b"old",
@@ -395,6 +443,9 @@ def test_recursive_cp_merges_existing_tree_and_replaces_files() -> None:
     assert entries["/target/docs/notes.txt"] == b"new"
     assert entries["/target/docs/extra.txt"] == b"keep"
     assert entries["/target/docs/empty"] is None
+    assert ("info", "/docs/") in calls
+    assert ("info", "/target//") in calls
+    assert ("walk", "/docs/", True, "raise") in calls
 
 
 @pytest.mark.parametrize(
@@ -408,10 +459,6 @@ def test_recursive_cp_merges_existing_tree_and_replaces_files() -> None:
         (
             ["-R", "memory:/docs", "memory:/out/./copy"],
             "cp: memory:/out/./copy: dot segment unsupported\n",
-        ),
-        (
-            ["-R", "-r", "memory:/docs", "memory:/out"],
-            "cp: -r: unsupported option\n",
         ),
     ],
 )

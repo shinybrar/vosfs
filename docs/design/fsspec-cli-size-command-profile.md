@@ -2,6 +2,8 @@
 
 <!-- pyml disable line-length -->
 
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
+
 Status: **Locked command semantics and async execution contract**
 
 Question: [Add the `size` command](https://github.com/shinybrar/vosfs/issues/197)
@@ -25,15 +27,12 @@ The supported form is:
 size [--] name:/path...
 ```
 
-At least one mapped filesystem operand is REQUIRED. No option is supported.
-`--` ends option parsing; every preceding token beginning with `-`, other than
-exact framework-owned `--help`, is an unsupported option. After `--`, every
-token is an operand. The mapped-operand grammar and validation order are those
-of the shared command toolkit.
-
-Zero operands produce `size: missing mapped filesystem operand`. Every
-preflight failure completes with status `2`, empty stdout, exactly one stable
-diagnostic, and no source factory or filesystem call.
+At least one mapped filesystem operand is REQUIRED. The annotated callback and
+Typer own option handling, argument collection, `--`, help, and framework usage
+errors. Exact framework diagnostic wording is not compatibility surface.
+Callback-owned mapped-operand validation then runs before event-loop entry or
+source acquisition. Every preflight failure has status `2`, empty stdout, and
+no source or filesystem work.
 
 ## 2. Backend operation contract
 
@@ -130,7 +129,7 @@ Hermetic golden and call-shape tests MUST exercise the public
 - adapted async Memory; and
 - native async `vosfs` with a mocked transport and no network access.
 
-Focused tests additionally lock exact `--help`, the `--` terminator, source-free
+Focused tests additionally lock Typer help, the `--` terminator, source-free
 preflight, the single `_size` call, per-source `_sizes` grouping, duplicates,
 cross-source output association, strict result validation, atomic failures,
 backend diagnostics, output failure, and invocation-owned cleanup.

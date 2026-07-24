@@ -1,22 +1,15 @@
-"""Shared scaffolding for mapped-source command modules.
-
-Every mapped-operand command (``ls``, ``du``, ``find``, ``size``, ``test``,
-``head``, ``tail``, ``tree``, ``info``, ``cat``, ``cp``, ``mv``, ``mkdir``,
-``rmdir``, ``rm``, ``unlink``, and ``stat``) parses its own raw ``argv`` and
-renders stable diagnostics. This module is the single home for the pieces they
-share: raw-argument capture, the malformed-help shield, mapped operands, usage
-errors, binary stdout, and the single-operand buffered-text lifecycle.
-"""
+"""Shared execution support for mapped-source command modules."""
 
 from __future__ import annotations
 
+import asyncio
 import locale
 import sys
+from contextlib import suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NoReturn, Protocol, cast
+from typing import TYPE_CHECKING, NoReturn, Protocol, TypeVar, cast
 
 import typer
-from typer.core import TyperCommand
 
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._sources import _SourceInvocation
@@ -25,46 +18,13 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Collection, Mapping
 
     from fsspec.asyn import AsyncFileSystem
-    from typer._click import Context
 
     from ._app import AsyncFilesystemSource
 
-_RAW_ARGUMENTS = "fsspec_cli.raw_arguments"
 # 128 + SIGPIPE (13): lets pipeline consumers distinguish a closed reader from
 # an ordinary command failure when the broken pipe is the sole failure.
 _BROKEN_PIPE_EXIT_CODE = 141
-
-
-class _RawCommand(TyperCommand):
-    """A Typer command that captures raw ``argv`` before framework parsing.
-
-    Command preflight needs the exact tokens the user supplied, so the raw
-    arguments are stashed on ``ctx.meta`` and malformed ``--help=`` tokens are
-    shielded from Click's eager help option.
-    """
-
-    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
-        ctx.meta[_RAW_ARGUMENTS] = tuple(args)
-        return super().parse_args(ctx, _shield_help_values(args))
-
-
-def _shield_help_values(arguments: list[str]) -> list[str]:
-    """Keep malformed help tokens available to command preflight."""
-    shielded = []
-    options_active = True
-    for argument in arguments:
-        if argument == "--":
-            options_active = False
-        if options_active and argument.startswith("--help="):
-            shielded.append("--fsspec-cli-unsupported-help-value")
-        else:
-            shielded.append(argument)
-    return shielded
-
-
-def _raw_arguments(ctx: typer.Context) -> tuple[str, ...]:
-    """Return the raw ``argv`` captured by :class:`_RawCommand`."""
-    return cast("tuple[str, ...]", ctx.meta[_RAW_ARGUMENTS])
+_ResultT = TypeVar("_ResultT")
 
 
 def _usage_error(command: str, diagnostic: str) -> NoReturn:
@@ -114,6 +74,47 @@ class _Failure:
     backend_error: Exception | None = None
 
 
+class _CommandFailureError(Exception):
+    """One expected command or output failure crossing the invocation boundary."""
+
+    def __init__(
+        self,
+        operand: _MappedOperand | None = None,
+        error: Exception | None = None,
+        *,
+        render: bool = True,
+        propagate: Exception | None = None,
+    ) -> None:
+        self.operand = operand
+        self.error = error
+        self.render = render
+        self.propagate = propagate
+
+
+async def _drain_current_operation(operation: Awaitable[_ResultT]) -> _ResultT:
+    """Drain one started operation before propagating caller control flow."""
+
+    async def capture() -> tuple[BaseException | None, _ResultT | None]:
+        try:
+            return None, await operation
+        except BaseException as error:  # noqa: BLE001 - preserve exact control flow.
+            return error, None
+
+    task = asyncio.create_task(capture())
+    try:
+        error, result = await asyncio.shield(task)
+    except BaseException:
+        while not task.done():
+            with suppress(BaseException):
+                await asyncio.shield(task)
+        with suppress(BaseException):
+            task.result()
+        raise
+    if error is not None:
+        raise error
+    return cast("_ResultT", result)
+
+
 def _render_operand_diagnostic(
     command: str,
     operand: _MappedOperand,
@@ -136,19 +137,23 @@ def _render_backend_failure(
     operand: _MappedOperand,
     error: Exception,
 ) -> None:
-    if isinstance(error, FileNotFoundError):
-        category = "not found"
-    elif isinstance(error, PermissionError):
-        category = "permission denied"
-    elif isinstance(error, NotADirectoryError):
-        category = "not a directory"
-    elif isinstance(error, NotImplementedError):
-        category = "unsupported operation"
-    else:
-        rendered_class = _render_diagnostic_value(type(error).__name__)
-        rendered_message = _render_diagnostic_value(str(error))
-        category = f"backend failure ({rendered_class}): {rendered_message}"
-    _render_operand_diagnostic(command, operand, category)
+    _render_operand_diagnostic(command, operand, _backend_category(error))
+
+
+def _backend_category(error: Exception) -> str:
+    for error_type, category in (
+        (FileNotFoundError, "not found"),
+        (FileExistsError, "file exists"),
+        (PermissionError, "permission denied"),
+        (IsADirectoryError, "is a directory"),
+        (NotADirectoryError, "not a directory"),
+        (NotImplementedError, "unsupported operation"),
+    ):
+        if isinstance(error, error_type):
+            return category
+    rendered_class = _render_diagnostic_value(type(error).__name__)
+    rendered_message = _render_diagnostic_value(str(error))
+    return f"backend failure ({rendered_class}): {rendered_message}"
 
 
 def _render_output_failure(command: str, error: Exception) -> None:
@@ -162,6 +167,55 @@ def _render_output_failure(command: str, error: Exception) -> None:
     )
 
 
+async def _run_mapped_command(
+    command: str,
+    operands: tuple[_MappedOperand, ...],
+    sources: Mapping[str, AsyncFilesystemSource],
+    operation: Callable[[Mapping[str, AsyncFileSystem]], Awaitable[None]],
+    *,
+    broken_pipe_exit_code: int = _BROKEN_PIPE_EXIT_CODE,
+) -> None:
+    """Acquire referenced sources, run one command, and own final status."""
+    invocation = _SourceInvocation(command, sources)
+    acquired = False
+    failure: _CommandFailureError | None = None
+    try:
+        filesystems = await invocation.acquire(
+            tuple(dict.fromkeys(operand.name for operand in operands))
+        )
+        acquired = filesystems is not None
+        if filesystems is not None:
+            await operation(filesystems)
+    except _CommandFailureError as error:
+        failure = error
+        if error.render and error.operand is not None:
+            _render_failure(command, _Failure(error.operand, error.error))
+        elif (
+            error.render
+            and error.error is not None
+            and not isinstance(
+                error.error,
+                BrokenPipeError,
+            )
+        ):
+            _render_output_failure(command, error.error)
+    finally:
+        cleanup_failed = await invocation.close_with_command_error(
+            failure.error if failure is not None else None
+        )
+
+    if failure is not None and failure.propagate is not None:
+        raise failure.propagate
+    if not acquired or failure is not None or cleanup_failed:
+        if (
+            failure is not None
+            and isinstance(failure.error, BrokenPipeError)
+            and not cleanup_failed
+        ):
+            raise typer.Exit(broken_pipe_exit_code)
+        raise typer.Exit(1)
+
+
 async def _run_single_operand_text(
     command: str,
     operand: _MappedOperand,
@@ -169,31 +223,27 @@ async def _run_single_operand_text(
     operation: Callable[[AsyncFileSystem], Awaitable[str | _Failure]],
 ) -> None:
     """Run one mapped async operation with buffered text output and cleanup."""
-    invocation = _SourceInvocation(command, sources)
-    succeeded = False
-    failure: _Failure | None = None
-    output_error: Exception | None = None
-    try:
-        filesystems = await invocation.acquire((operand.name,))
-        if filesystems is not None:
-            result = await operation(filesystems[operand.name])
-            if isinstance(result, _Failure):
-                failure = result
-                _render_failure(command, failure)
-            elif result:
-                try:
-                    typer.echo(result, nl=False, color=True)
-                except BrokenPipeError as error:
-                    output_error = error
-                except Exception as error:  # noqa: BLE001 - output boundary.
-                    output_error = error
-                    _render_output_failure(command, error)
-            succeeded = failure is None and output_error is None
-    finally:
-        command_error = failure.backend_error if failure is not None else output_error
-        cleanup_failed = await invocation.close_with_command_error(command_error)
-    if not succeeded or cleanup_failed:
-        raise typer.Exit(1)
+
+    async def execute(filesystems: Mapping[str, AsyncFileSystem]) -> None:
+        result = await operation(filesystems[operand.name])
+        if isinstance(result, _Failure):
+            raise _CommandFailureError(operand, result.backend_error)
+        if not result:
+            return
+        try:
+            typer.echo(result, nl=False, color=True)
+        except BrokenPipeError as error:
+            raise _CommandFailureError(error=error, render=False) from error
+        except Exception as error:
+            raise _CommandFailureError(error=error) from error
+
+    await _run_mapped_command(
+        command,
+        (operand,),
+        sources,
+        execute,
+        broken_pipe_exit_code=1,
+    )
 
 
 def _sorted_known(known_names: Collection[str]) -> list[str]:
@@ -232,26 +282,3 @@ def _parse_mapped_operand(
         )
 
     return _MappedOperand(spelling=argument, name=name, path=path)
-
-
-def _preflight_single_mapped_operand(
-    command: str,
-    raw_arguments: tuple[str, ...],
-    known_names: Collection[str],
-) -> _MappedOperand:
-    """Parse one mapped operand for a command with no options."""
-    operand = None
-    options_active = True
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            continue
-        if options_active and argument.startswith("-"):
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: unsupported option")
-        if operand is not None:
-            _usage_error(command, "extra operand")
-        operand = _parse_mapped_operand(command, argument, known_names)
-    if operand is None:
-        _usage_error(command, "missing mapped filesystem operand")
-    return operand

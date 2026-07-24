@@ -22,14 +22,16 @@ app = App(sources, extensions=[sign]).typer_app
 ```
 
 Without `sign` in `extensions`, the command is absent. `App` registers core
-commands first, then asks each extension to register against the same Typer app
-and an immutable snapshot of the configured source mapping. Extensions add
-commands; they do not add a runner, source-lifecycle API, backend registry, or
-runtime matrix. Core command modules do not import or branch on this extension.
+commands first, then registers each selected annotated callback in caller
+order. The `sign` callback retrieves the public immutable source snapshot as
+`CommandContext` through `typer.Context`. Extensions add commands; they do not
+add a runner, source-lifecycle API, backend registry, or runtime matrix. Core
+command modules do not import or branch on this extension.
 
-This additive constructor argument amends the sole stable host integration seam
-as accepted by [ADR 0004](../adr/0004-add-opt-in-command-extensions.md). The
-integration point remains `App(...).typer_app`; no second host seam is added.
+The callback-and-context contract is accepted by
+[ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
+The integration point remains `App(...).typer_app`; no second host seam is
+added.
 
 ## 2. Command form and preflight
 

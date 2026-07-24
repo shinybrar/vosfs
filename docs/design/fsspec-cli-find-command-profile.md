@@ -2,6 +2,8 @@
 
 <!-- pyml disable line-length -->
 
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
+
 Status: **Locked command semantics and async execution contract**
 
 Question: [Add the `find` command](https://github.com/shinybrar/vosfs/issues/196)
@@ -31,33 +33,12 @@ forms render fsspec's recursive file-name result. `--type d` renders directory
 paths. `--maxdepth N` bounds results to a non-negative depth where the operand
 is depth zero, direct children are depth one, and so on.
 
-Long-option values use only the separate-token spellings shown above.
-`--maxdepth=N` and `--type=f` are unsupported rather than silently accepted as
-alternate grammar. Options MAY appear before or after the operand while option
-parsing is active. Repeating an option is allowed and the final value wins.
-`--` ends option parsing.
-
-`N` MUST contain one or more ASCII decimal digits. Leading zeros are accepted.
-A sign, fraction, whitespace, empty value, or non-ASCII digit is invalid. The
-only accepted type values are the lowercase single characters `f` and `d`.
-
-Exact `--help` remains the framework-owned help spelling. Every other token
-that starts with `-` while option parsing is active is unsupported; the
-complete token is diagnosed.
-
-The mapped-operand grammar and validation order are those of the shared command
-toolkit. The command adds these stable preflight diagnostics:
-
-| Condition | Diagnostic |
-| --- | --- |
-| Zero operands | `find: missing mapped filesystem operand` |
-| More than one operand | `find: extra operand` |
-| Missing option value | `find: <option>: option requires an argument` |
-| Invalid depth | `find: <value>: invalid --maxdepth value` |
-| Invalid type | `find: <value>: invalid --type value` |
-
-Every preflight failure completes with status `2`, empty stdout, exactly one
-stable diagnostic, and no source factory or filesystem call.
+The annotated callback and Typer own option syntax, argument arity, integer and
+literal conversion, `--`, help, and framework usage errors. Exact framework
+diagnostic wording is not compatibility surface. Callback-owned mapped-operand
+validation then runs before event-loop entry or source acquisition. Every
+preflight failure has status `2`, empty stdout, and no source or filesystem
+work.
 
 ## 2. Backend operation contract
 

@@ -11,15 +11,17 @@ rm -d [--] name:/path...
 ```
 
 This exact extension removes source-reported files and empty directories. It
-does not combine with `-f`, accept grouped forms, recurse, list children, or
-fall back to `_rm`.
+does not combine with `-f`, `-v`, or recursive removal, recurse, list children,
+or fall back to `_rm`.
 
 ## Preflight
 
-`-d` is accepted once before operands. It retains base `rm` mapped-operand
-validation and whole-argv root/final-dot guards before source acquisition.
-Zero operands, `-df`, `-fd`, `-dd`, `-R`, `-v`, long options, and every other
-option form are rejected with status `2`.
+Typer accepts `-d` in registered short-option groups and before or after
+operands; repeated `-d` is idempotent. The callback retains base `rm`
+mapped-operand validation and whole-argument root/final-dot guards before
+source acquisition. Zero operands and incompatible `-f`, `-v`, or recursive
+combinations are semantic usage errors. Unregistered long options remain Typer
+usage errors.
 
 ## Backend operation semantics
 

@@ -2,6 +2,8 @@
 
 <!-- pyml disable line-length -->
 
+> Current interface ownership: [ADR 0005](../adr/0005-define-typer-owned-commands-and-callback-extensions.md).
+
 Status: **Locked command semantics and async execution contract**
 
 Part of [#120](https://github.com/shinybrar/vosfs/issues/120) / [#130](https://github.com/shinybrar/vosfs/issues/130)
@@ -61,21 +63,14 @@ These are source-free safety guards with exit status `2`.
 
 ### 2.1 Option and operand preflight
 
-Before any source factory call, context entry, backend call, or stdout output,
-the command MUST validate option syntax, operand presence, operand grammar,
-mapped filesystem names, and root or final dot-component safety guards.
-
-`--` ends option parsing. Every option token is unsupported in this profile.
-Typer's framework-owned `--help` short circuit is explicitly exempt from this
-command compatibility profile.
-
-The first preflight error in argument order MUST produce one diagnostic and
-exit `2`. No source may be entered and no stdout output written before it.
+Typer owns argument collection, option handling, help, and framework usage
+errors. Its exact rendered wording is not part of this profile. Framework
+failures exit `2` before callback execution. The callback then validates every
+mapped operand and destructive-path guard before event-loop entry or source
+acquisition.
 
 | Condition | Diagnostic |
 | --- | --- |
-| No operands | `rmdir: missing mapped filesystem operand` |
-| Unsupported option token | `rmdir: <option token>: unsupported option` |
 | Malformed operand | `rmdir: <operand>: invalid mapped filesystem operand` |
 | Unknown mapped name | `rmdir: <operand>: unknown filesystem (known: <name>, ...)` |
 | Root or final `.` / `..` | `rmdir: <operand>: rejected path` |

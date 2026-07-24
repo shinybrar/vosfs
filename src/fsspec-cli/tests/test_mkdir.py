@@ -29,6 +29,22 @@ def test_mkdir_creates_one_directory_without_stdout() -> None:
     ]
 
 
+def test_mkdir_passes_literal_separator_and_dot_spelling_to_backend() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
+
+    result = _invoke_mkdir(
+        ["memory:/docs//./new/"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [event[2] for event in events if event[0] in {"mkdir", "info"}] == [
+        "/docs//./new/",
+        "/docs//./new/",
+    ]
+
+
 def test_mkdir_acquires_distinct_sources_before_reusing_them() -> None:
     events: list[tuple[object, ...]] = []
     shared_source = _RecordingSource(events)
@@ -256,23 +272,30 @@ def test_mkdir_help_discloses_source_default_mode_divergence() -> None:
 def test_mkdir_rejects_a_missing_mapped_filesystem_operand() -> None:
     result = _invoke_mkdir([])
 
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == "mkdir: missing mapped filesystem operand\n"
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert "Missing argument" in result.stderr
+    assert "name:/path" in result.stderr
 
 
 @pytest.mark.parametrize(
-    "option",
-    ["-m", "-pm", "--parents", "--mode", "-h", "--help=value"],
+    ("option", "context"),
+    [
+        ("-m", "-m"),
+        ("-pm", "-m"),
+        ("--parents", "parents"),
+        ("--mode", "mode"),
+        ("-h", "-h"),
+        ("--help=value", "does not take a value"),
+    ],
 )
 def test_mkdir_rejects_unsupported_options_without_entering_sources(
     option: str,
+    context: str,
 ) -> None:
     result = _invoke_mkdir([option, "memory:/docs/new"])
 
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == f"mkdir: {option}: unsupported option\n"
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert context in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -383,6 +406,33 @@ def test_mkdir_preserves_backend_error_when_its_diagnostic_write_fails(
     exception_type, exception, traceback = source.exit_calls[0]
     assert exception_type is PermissionError
     assert exception is backend_error
+    assert traceback is not None
+
+
+def test_mkdir_keeps_diagnostic_control_flow_active_during_cleanup(
+    monkeypatch,
+) -> None:
+    backend_error = PermissionError("denied")
+    control = _ControlFlow("stderr stopped")
+    source = _RecordingSource([], mkdir_error=backend_error)
+
+    def fail_diagnostic(
+        _message: object = None,
+        *args: object,
+        **kwargs: object,
+    ) -> NoReturn:
+        del args, kwargs
+        raise control
+
+    monkeypatch.setattr(typer, "echo", fail_diagnostic)
+
+    with pytest.raises(_ControlFlow) as caught:
+        _invoke_mkdir(["memory:/docs/new"], sources={"memory": source})
+
+    assert caught.value is control
+    exception_type, exception, traceback = source.exit_calls[0]
+    assert exception_type is _ControlFlow
+    assert exception is control
     assert traceback is not None
 
 
@@ -528,12 +578,17 @@ def test_mkdir_p_accepts_grouped_and_repeated_parent_options(
     assert any(event[0] == "makedirs" for event in events)
 
 
-def test_mkdir_p_rejects_parent_option_after_first_operand() -> None:
-    result = _invoke_mkdir(["memory:/docs/a", "-p", "memory:/docs/b"])
+def test_mkdir_p_accepts_parent_option_after_first_operand() -> None:
+    events: list[tuple[object, ...]] = []
+    source = _RecordingSource(events)
 
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == "mkdir: -p: unsupported option\n"
+    result = _invoke_mkdir(
+        ["memory:/docs/a", "-p", "memory:/docs/b"],
+        sources={"memory": source},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert [event[0] for event in events].count("makedirs") == 2
 
 
 def test_mkdir_p_acquires_distinct_sources_before_reusing_them() -> None:

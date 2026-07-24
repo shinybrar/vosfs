@@ -97,8 +97,9 @@ from being observed is inconclusive and therefore `unverified`, not `fail`.
 
 The locked command profile deliberately excludes the requested behavior and a
 qualifying negative test proves its complete rejection contract. For an
-unsupported option such as `rmdir -p`, that includes the diagnostic, empty
-stdout, exit status `2`, and zero source entry or filesystem work.
+unsupported option such as `rmdir -p`, that includes Typer's relevant parameter
+context, empty stdout, exit status `2`, and zero source entry or filesystem
+work. Complete Rich-rendered panels are not compatibility evidence.
 
 An observed `NotImplementedError`, a missing backend field, an absent test, or
 a failing positive test does not automatically make a row `unsupported`.
@@ -149,15 +150,15 @@ status. It MUST:
 - prohibit unplanned network access;
 - use deterministic Local temporary storage, isolated Memory state, or a
   fully mocked `vosfs` transport;
-- exercise the same production handler and async source contract;
+- exercise the same central annotated callback and async source contract;
 - run against the project's declared supported Python and operating-system CI
   matrix; and
 - test an isolated built wheel before release so undeclared dependency leakage
   cannot satisfy the result accidentally.
 
-For an unsupported option whose rejection completes during command preflight,
-the hermetic negative test enters no source. No backend-specific execution is
-invented for that row.
+For an unsupported option whose rejection Typer completes before callback
+execution, the hermetic negative test enters no source. No backend-specific
+execution is invented for that row.
 
 ## 7. Freshness and classification
 
@@ -275,8 +276,8 @@ Section 9 still requires the release candidate to rerun every required gate.
 | [Metadata-verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic size-only boundary | Qualifying immutable evidence absent |
 | [Metadata-verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic size-only boundary | Qualifying immutable evidence absent |
 | [Metadata-verified same-source `cp`](fsspec-cli-same-source-cp-command-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic | Hermetic mocked transport present; qualifying immutable evidence absent |
-| [Metadata-verified same-source `cp` option rejection](fsspec-cli-same-source-cp-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | — |
-| [Application-disabled recursive `cp -R`/`-r`](fsspec-cli-recursive-cp-rejection-profile.md#1-verdict-and-scope) | command preflight | `not entered` | `unverified` | — | Hermetic negative rejection | `test_cp.py` added; qualifying exact-commit evidence absent |
+| [Typer-owned `cp` option rejection](fsspec-cli-same-source-cp-command-profile.md#21-option-and-operand-preflight) | command preflight | `not entered` | `unverified` | `unsupported` | Hermetic negative rejection | `test_typed_cp.py`; qualifying exact-commit evidence absent |
+| [Application-disabled recursive `cp -R`/`-r`](fsspec-cli-recursive-cp-rejection-profile.md#1-verdict-and-scope) | command preflight | `not entered` | `unverified` | — | Capability-selected callback omits recursive options | `test_typed_cp.py`; qualifying exact-commit evidence absent |
 | [Verified recursive `cp -R`/`-r`](fsspec-cli-recursive-cp-rejection-profile.md) | source | `local / adapted async` | `unverified` | — | Hermetic and isolated wheel | `test_command_matrix.py` added; qualifying exact-commit evidence absent |
 | [Verified recursive `cp -R`/`-r`](fsspec-cli-recursive-cp-rejection-profile.md) | source | `memory / adapted async` | `unverified` | — | Hermetic and isolated wheel | `test_command_matrix.py` added; qualifying exact-commit evidence absent |
 | [Verified recursive `cp -R`/`-r`](fsspec-cli-recursive-cp-rejection-profile.md) | source | `vosfs / native async` | `unverified` | — | Hermetic and isolated wheel | Fully mocked `test_vosfs_recursive_command_matrix.py` added; qualifying exact-commit evidence absent |
