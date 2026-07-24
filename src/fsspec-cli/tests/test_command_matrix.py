@@ -7,7 +7,6 @@ from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 
 import pytest
-from click.utils import strip_ansi
 from fsspec.asyn import AsyncFileSystem
 from fsspec.implementations.asyn_wrapper import AsyncFileSystemWrapper
 from fsspec.implementations.local import LocalFileSystem
@@ -433,7 +432,7 @@ def test_basename_extra_operand_rejection_is_source_free() -> None:
     )
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     assert "unexpected extra argument" in diagnostic
     assert "c" in diagnostic
     assert source_calls == 0
@@ -453,7 +452,7 @@ def test_basename_option_rejection_is_source_free() -> None:
     )
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     assert "No such option" in diagnostic
     assert "-a" in diagnostic
     assert source_calls == 0
@@ -494,7 +493,7 @@ def test_dirname_option_rejection_is_source_free() -> None:
     )
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     assert "No such option" in diagnostic
     assert "-a" in diagnostic
     assert source_calls == 0
@@ -1402,7 +1401,7 @@ def test_stat_option_rejection_is_source_free() -> None:
     )
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     assert "No such option" in diagnostic
     assert "-l" in diagnostic
     assert source_calls == 0

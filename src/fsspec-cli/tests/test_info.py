@@ -13,7 +13,6 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import pytest
-from click.utils import strip_ansi
 from fsspec_cli import App
 from typer.main import get_command
 
@@ -157,7 +156,7 @@ def test_info_help_matches_locked_usage() -> None:
     result = _invoke_info(["--help"])
 
     assert result.exit_code == 0
-    plain_help = strip_ansi(result.stdout)
+    plain_help = result.stdout
     assert "Usage: root info [OPTIONS] {name:/path}" in plain_help
     assert "Display normalized file information" in plain_help
 
@@ -267,7 +266,7 @@ def test_info_leaves_usage_failures_to_typer(
     result = _invoke_info(arguments)
 
     assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = strip_ansi(result.stderr)
+    diagnostic = result.stderr
     for context in contexts:
         assert context in diagnostic
 
