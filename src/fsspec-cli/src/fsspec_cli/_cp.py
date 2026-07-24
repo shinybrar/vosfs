@@ -1,4 +1,4 @@
-"""Raw Typer parsing and async execution for verified file ``cp``."""
+"""Typed request planning and async execution for verified ``cp``."""
 
 from __future__ import annotations
 
@@ -13,15 +13,17 @@ from typing import TYPE_CHECKING, Literal
 import typer
 
 from ._command import (
+    _CommandFailureError,
+    _drain_current_operation,
     _MappedOperand,
     _parse_mapped_operand,
     _render_backend_failure,
+    _run_mapped_command,
     _usage_error,
 )
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._path import _lexical_basename, _lexical_join, _lexical_parent
-from ._recursive_cp import _run_recursive_cp
-from ._sources import _SourceInvocation
+from ._recursive_cp import _canonical_operand, _run_recursive_cp
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -68,30 +70,13 @@ class _TransferProof:
     tokens: tuple[tuple[str, frozenset[str | bytes]], ...]
 
 
-def _preflight(
+def _cp_plan(
     command: str,
-    raw_arguments: tuple[str, ...],
+    operands: tuple[str, ...],
     known_names: Collection[str],
+    *,
+    recursive: bool,
 ) -> _CpPlan:
-    operands: list[str] = []
-    options_active = True
-    recursive = False
-
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-            continue
-        if options_active and argument in {"-R", "-r"}:
-            if recursive:
-                rendered = _render_diagnostic_value(argument)
-                _usage_error(command, f"{rendered}: unsupported option")
-            recursive = True
-            continue
-        if options_active and argument.startswith("-") and argument != "-":
-            rendered = _render_diagnostic_value(argument)
-            _usage_error(command, f"{rendered}: unsupported option")
-        operands.append(argument)
-
     if len(operands) < _MIN_OPERAND_COUNT:
         _usage_error(command, "missing mapped filesystem operand")
     if recursive and len(operands) > _MIN_OPERAND_COUNT:
@@ -100,6 +85,11 @@ def _preflight(
     mapped = tuple(
         _parse_mapped_operand(command, operand, known_names) for operand in operands
     )
+    if recursive:
+        mapped = (
+            _canonical_operand(command, mapped[0], source=True),
+            _canonical_operand(command, mapped[1], source=False),
+        )
     destination = mapped[-1]
     return _CpPlan(
         requests=tuple(
@@ -115,7 +105,9 @@ async def _require_directory(
     filesystem: AsyncFileSystem,
 ) -> _CpFailure | None:
     try:
-        info = await filesystem._info(destination.path)  # noqa: SLF001
+        info = await _drain_current_operation(
+            filesystem._info(destination.path)  # noqa: SLF001
+        )
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _CpFailure(destination, backend_error=error)
     if not isinstance(info, Mapping) or not isinstance(info.get("type"), str):
@@ -165,7 +157,9 @@ async def _resolve_destination(  # noqa: C901, PLR0911, PLR0912 - explicit targe
 ) -> tuple[str, _CpFailure | None]:
     known_directory: str | None = None
     try:
-        dest_info = await filesystem._info(destination.path)  # noqa: SLF001
+        dest_info = await _drain_current_operation(
+            filesystem._info(destination.path)  # noqa: SLF001
+        )
     except FileNotFoundError:
         resolved = destination.path
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
@@ -189,7 +183,9 @@ async def _resolve_destination(  # noqa: C901, PLR0911, PLR0912 - explicit targe
 
     if resolved != destination.path:
         try:
-            collision = await filesystem._info(resolved)  # noqa: SLF001
+            collision = await _drain_current_operation(
+                filesystem._info(resolved)  # noqa: SLF001
+            )
         except FileNotFoundError:
             collision = None
         except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
@@ -208,7 +204,9 @@ async def _resolve_destination(  # noqa: C901, PLR0911, PLR0912 - explicit targe
     if parent == known_directory:
         return resolved, None
     try:
-        parent_info = await filesystem._info(parent)  # noqa: SLF001
+        parent_info = await _drain_current_operation(
+            filesystem._info(parent)  # noqa: SLF001
+        )
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return resolved, _CpFailure(destination, backend_error=error)
 
@@ -246,7 +244,9 @@ async def _stage_remote(
         raise
 
     try:
-        await filesystem._get_file(remote, temporary)  # noqa: SLF001
+        await _drain_current_operation(
+            filesystem._get_file(remote, temporary)  # noqa: SLF001
+        )
     except Exception as error:  # noqa: BLE001 - staging download boundary.
         _remove_temporary(temporary)
         return None, error
@@ -317,8 +317,8 @@ async def _verify_transfer(  # noqa: PLR0913 - one explicit transfer-proof bound
     require_source_absent: bool,
 ) -> _CpFailure | None:
     try:
-        destination_info = await destination_filesystem._info(  # noqa: SLF001
-            destination_path
+        destination_info = await _drain_current_operation(
+            destination_filesystem._info(destination_path)  # noqa: SLF001
         )
     except Exception as error:  # noqa: BLE001 - post-copy verify is residue-bearing.
         return _CpFailure(
@@ -342,7 +342,9 @@ async def _verify_transfer(  # noqa: PLR0913 - one explicit transfer-proof bound
 
     if require_source_absent:
         try:
-            await source_filesystem._info(source_path)  # noqa: SLF001
+            await _drain_current_operation(
+                source_filesystem._info(source_path)  # noqa: SLF001
+            )
         except FileNotFoundError:
             return None
         except Exception as error:  # noqa: BLE001 - post-move absence proof.
@@ -366,7 +368,9 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - exp
     destination_filesystem: AsyncFileSystem,
 ) -> _CpFailure | None:
     try:
-        source_info = await source_filesystem._info(request.source.path)  # noqa: SLF001
+        source_info = await _drain_current_operation(
+            source_filesystem._info(request.source.path)  # noqa: SLF001
+        )
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _CpFailure(request.source, backend_error=error)
 
@@ -423,8 +427,12 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - exp
         if primary_failure is None:
             mutated = True
             try:
-                await destination_filesystem._put_file(  # noqa: SLF001
-                    temporary, resolved, mode="overwrite"
+                await _drain_current_operation(
+                    destination_filesystem._put_file(  # noqa: SLF001
+                        temporary,
+                        resolved,
+                        mode="overwrite",
+                    )
                 )
             except Exception as error:  # noqa: BLE001 - mutation may leave residue.
                 primary_failure = _CpFailure(
@@ -466,7 +474,9 @@ async def _confirmed_cp_file(  # noqa: PLR0911 - explicit copy outcomes.
     filesystem: AsyncFileSystem,
 ) -> _CpFailure | None:
     try:
-        source_info = await filesystem._info(request.source.path)  # noqa: SLF001
+        source_info = await _drain_current_operation(
+            filesystem._info(request.source.path)  # noqa: SLF001
+        )
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _CpFailure(request.source, backend_error=error)
 
@@ -491,7 +501,12 @@ async def _confirmed_cp_file(  # noqa: PLR0911 - explicit copy outcomes.
         return _CpFailure(request.source, incompatible="same_path")
 
     try:
-        await filesystem._cp_file(request.source.path, resolved)  # noqa: SLF001
+        await _drain_current_operation(
+            filesystem._cp_file(  # noqa: SLF001
+                request.source.path,
+                resolved,
+            )
+        )
     except Exception as error:  # noqa: BLE001 - mutation may leave destination residue.
         return _CpFailure(
             request.destination,
@@ -570,85 +585,54 @@ def _render_failure(  # noqa: C901 - stable diagnostic categories.
         _render_backend_failure(command, failure.operand, failure.backend_error)
 
 
-def _reject_disabled_recursive_copy(
-    raw_arguments: tuple[str, ...],
-    *,
-    recursive_enabled: bool,
-) -> None:
-    if recursive_enabled:
-        return
-    options_active = True
-    for argument in raw_arguments:
-        if options_active and argument == "--":
-            options_active = False
-        elif options_active and argument in {"-R", "-r"}:
-            typer.echo(
-                "cp: recursive copy disabled by application",
-                err=True,
-            )
-            raise typer.Exit(2)
-        elif options_active and argument.startswith("-") and argument != "-":
-            break
-
-
 async def _run_cp(
     command: str,
-    raw_arguments: tuple[str, ...],
+    plan: _CpPlan,
     sources: Mapping[str, AsyncFilesystemSource],
-    *,
-    recursive_enabled: bool = True,
 ) -> None:
-    _reject_disabled_recursive_copy(
-        raw_arguments,
-        recursive_enabled=recursive_enabled,
-    )
-    plan = _preflight(command, raw_arguments, sources)
-    if plan.recursive:
-        await _run_recursive_cp(
-            command,
-            plan.requests[0].source,
-            plan.requests[0].destination,
-            sources,
-        )
-        return
-    invocation = _SourceInvocation(command, sources)
-    succeeded = False
-    failure: _CpFailure | None = None
-    try:
-        names = tuple(
-            dict.fromkeys(
-                (
-                    *(request.source.name for request in plan.requests),
-                    plan.requests[0].destination.name,
-                )
+    async def operation(filesystems: Mapping[str, AsyncFileSystem]) -> None:
+        if plan.recursive:
+            await _run_recursive_cp(
+                command,
+                plan.requests[0].source,
+                plan.requests[0].destination,
+                filesystems,
             )
-        )
-        filesystems = await invocation.acquire(names)
-        if filesystems is not None:
-            if plan.require_directory:
-                failure = await _require_directory(
-                    plan.requests[0].destination,
-                    filesystems[plan.requests[0].destination.name],
+            return
+
+        failure = None
+        if plan.require_directory:
+            failure = await _require_directory(
+                plan.requests[0].destination,
+                filesystems[plan.requests[0].destination.name],
+            )
+        for request in plan.requests if failure is None else ():
+            if request.source.name == request.destination.name:
+                failure = await _confirmed_cp_file(
+                    request,
+                    filesystems[request.source.name],
                 )
-            for request in plan.requests if failure is None else ():
-                if request.source.name == request.destination.name:
-                    failure = await _confirmed_cp_file(
-                        request,
-                        filesystems[request.source.name],
-                    )
-                else:
-                    failure = await _confirmed_cross_source_cp_file(
-                        request,
-                        filesystems[request.source.name],
-                        filesystems[request.destination.name],
-                    )
-                if failure is not None:
-                    break
+            else:
+                failure = await _confirmed_cross_source_cp_file(
+                    request,
+                    filesystems[request.source.name],
+                    filesystems[request.destination.name],
+                )
             if failure is not None:
-                _render_failure(command, failure)
-            succeeded = failure is None
-    finally:
-        command_error = failure.backend_error if failure is not None else None
-        cleanup_failed = await invocation.close_with_command_error(command_error)
-    if not succeeded or cleanup_failed:
-        raise typer.Exit(1)
+                break
+        if failure is not None:
+            _render_failure(command, failure)
+            raise _CommandFailureError(
+                error=failure.backend_error,
+                render=False,
+            )
+
+    await _run_mapped_command(
+        command,
+        (
+            *(request.source for request in plan.requests),
+            plan.requests[0].destination,
+        ),
+        sources,
+        operation,
+    )

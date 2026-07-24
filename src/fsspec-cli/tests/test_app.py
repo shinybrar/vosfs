@@ -132,13 +132,11 @@ def test_app_snapshots_nested_capabilities_at_construction() -> None:
     result = CliRunner().invoke(
         typer_app,
         ["cp", "-R", "bad", "also-bad"],
+        env={"FORCE_COLOR": "1"},
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "cp: recursive copy disabled by application\n",
-    )
+    assert (result.exit_code, result.stdout_bytes) == (2, b"")
+    assert "No such option: -R" in strip_ansi(result.stderr)
 
 
 def test_ls_rejects_a_missing_mapped_filesystem_operand() -> None:

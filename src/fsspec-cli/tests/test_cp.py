@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from contextlib import asynccontextmanager
 from pathlib import Path
-from types import MappingProxyType, SimpleNamespace
+from types import MappingProxyType, MethodType, SimpleNamespace
 from typing import NoReturn
 
 import pytest
@@ -555,6 +554,64 @@ def test_cp_cleans_later_cross_source_stage_on_multi_source_cancellation() -> No
     )
 
 
+def test_cp_drains_current_download_before_staging_and_source_cleanup() -> None:
+    source = _file_source()
+    destination = _file_source(
+        source_path="/other.txt",
+        parent="/out",
+        directories={"/", "/out"},
+    )
+    order: list[str] = []
+    temporary_paths: list[str] = []
+
+    @asynccontextmanager
+    async def source_factory():
+        async with source() as filesystem:
+            owner = asyncio.current_task()
+            assert owner is not None
+
+            async def get_file(
+                self: _RecordingFileSystem,
+                remote: str,
+                local: str,
+                **kwargs: object,
+            ) -> None:
+                del self, remote, kwargs
+                temporary_paths.append(local)
+                owner.cancel()
+                await asyncio.sleep(0)
+                Path(local).write_bytes(b"payload")  # noqa: ASYNC240
+                order.append("drained")
+
+            filesystem._get_file = MethodType(get_file, filesystem)  # type: ignore[method-assign]
+            try:
+                yield filesystem
+            finally:
+                order.append("source exit")
+
+    @asynccontextmanager
+    async def destination_factory():
+        async with destination() as filesystem:
+            try:
+                yield filesystem
+            finally:
+                order.append("destination exit")
+
+    with pytest.raises(asyncio.CancelledError):
+        _invoke_cp(
+            ["source:/docs/notes.txt", "destination:/out/copy.txt"],
+            sources={
+                "source": source_factory,
+                "destination": destination_factory,
+            },
+        )
+
+    assert order == ["drained", "destination exit", "source exit"]
+    assert len(temporary_paths) == 1
+    assert not Path(temporary_paths[0]).exists()
+    assert "/out/copy.txt" not in destination.file_contents
+
+
 def test_cp_requires_existing_directory_for_multiple_sources() -> None:
     source = _file_source(
         file_contents={"/docs/first.txt": b"first", "/docs/second.txt": b"second"},
@@ -909,14 +966,6 @@ def test_cp_uses_distinct_names_even_when_backends_are_similar() -> None:
     assert right.file_contents["/docs/copy.txt"] == b"payload"
 
 
-def test_cp_rejects_missing_operands() -> None:
-    result = _invoke_cp([])
-
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == "cp: missing mapped filesystem operand\n"
-
-
 def test_cp_rejects_one_operand() -> None:
     result = _invoke_cp(["memory:/one"])
 
@@ -950,30 +999,6 @@ def test_cp_rejects_invalid_multi_source_operand_before_source_entry(
     result = _invoke_cp(arguments)
 
     assert (result.exit_code, result.stdout, result.stderr) == (2, "", diagnostic)
-
-
-@pytest.mark.parametrize(
-    "option",
-    [
-        "-f",
-        "-i",
-        "-p",
-        "-H",
-        "-L",
-        "-P",
-        "--force",
-        "-A",
-        "-h",
-        "--help=value",
-        "-Rf",
-    ],
-)
-def test_cp_rejects_every_option_without_entering_sources(option: str) -> None:
-    result = _invoke_cp([option, "memory:/a", "memory:/b"])
-
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == f"cp: {option}: unsupported option\n"
 
 
 def test_cp_accepts_operands_after_option_terminator() -> None:
@@ -1136,16 +1161,6 @@ def test_cp_reports_unknown_names_with_locale_sorted_known_names() -> None:
     assert result.stderr == ("cp: other:/a: unknown filesystem (known: alpha, zeta)\n")
 
 
-@pytest.mark.parametrize("arguments", [["--help"], ["-f", "--help"]])
-def test_cp_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
-    result = _invoke_cp(arguments)
-
-    assert result.exit_code == 0
-    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
-    help_text = " ".join(plain_help.split())
-    assert "Copy files or one directory with -R or -r" in help_text
-
-
 @pytest.mark.parametrize(
     "capabilities",
     [
@@ -1170,65 +1185,6 @@ def test_cp_recursive_copy_defaults_enabled_for_partial_capabilities(
         2,
         "",
         "cp: memory:/: source root unsupported\n",
-    )
-
-
-@pytest.mark.parametrize("recursive_option", ["-R", "-r"])
-def test_cp_disabled_recursive_copy_precedes_operand_validation_without_sources(
-    recursive_option: str,
-) -> None:
-    source_calls = 0
-
-    def source() -> NoReturn:
-        nonlocal source_calls
-        source_calls += 1
-        raise AssertionError
-
-    result = CliRunner().invoke(
-        App(
-            {"memory": source},
-            capabilities={"recursion": {"copy": False}},
-        ).typer_app,
-        ["cp", recursive_option, "bad", "also-bad"],
-    )
-
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "cp: recursive copy disabled by application\n",
-    )
-    assert source_calls == 0
-
-
-def test_cp_disabled_recursive_copy_retains_file_only_help() -> None:
-    result = CliRunner().invoke(
-        App(
-            {"memory": _source_must_not_run},
-            capabilities={"recursion": {"copy": False}},
-        ).typer_app,
-        ["cp", "--help"],
-    )
-
-    assert result.exit_code == 0
-    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
-    help_text = " ".join(plain_help.split())
-    assert "Copy a file (no recursion)" in help_text
-    assert "one directory" not in help_text
-
-
-def test_cp_disabled_recursive_copy_preserves_earlier_option_error() -> None:
-    result = CliRunner().invoke(
-        App(
-            {"memory": _source_must_not_run},
-            capabilities={"recursion": {"copy": False}},
-        ).typer_app,
-        ["cp", "-L", "-R", "bad", "also-bad"],
-    )
-
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "cp: -L: unsupported option\n",
     )
 
 

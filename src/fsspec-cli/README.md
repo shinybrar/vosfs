@@ -68,15 +68,16 @@ guarded = App(
 )
 ```
 
-With `copy` false, `cp -R` and `cp -r` exit `2` before operand or source work
-with `cp: recursive copy disabled by application`; `cp --help` retains the
-file-only wording. With `remove` false or omitted, `rm -R` and `rm -r` exit `2`
-before operand or source work with Typer's standard unknown-option diagnostic;
-`rm --help` omits `-R` and `-r`. Setting `remove` true adds those annotated
-options and is the host's assertion that every configured target satisfies the
-locked guarded recursive-removal profile. The command never infers that policy
-from a backend type, protocol, or matrix row. Extensions receive only the
-immutable source snapshot, never the capability policy.
+With `copy` false, the annotated `cp` callback omits `-R` and `-r`; Typer
+rejects either option with status `2` before operand or source work, and
+`cp --help` shows only file-copy parameters. With `remove` false or omitted,
+the annotated `rm` callback also omits `-R` and `-r`; Typer rejects either
+option before operand or source work, and `rm --help` omits both aliases.
+Setting `remove` true adds those options and is the host's assertion that every
+configured target satisfies the locked guarded recursive-removal profile. The
+command never infers that policy from a backend type, protocol, or matrix row.
+Extensions receive only the immutable source snapshot, never the capability
+policy.
 
 Backend-specific commands are opt-in extensions. For example, add `sign` only
 when the host wants to expose a filesystem's signed-URL capability:
@@ -168,9 +169,11 @@ does not mean one remote request.
 through a bounded 10,000-entry manifest and one-file host-local staging. The
 command supports same-source and cross-source routes, preserves empty
 directories, rejects links and special entries before mutation, and verifies
-the source manifest plus destination metadata before success. It does not
-promise a snapshot, transaction, rollback, exact mirror, or POSIX metadata
-preservation.
+the source manifest plus destination metadata before success. Mapped operand
+spelling reaches the selected backend literally; shared lexical helpers derive
+root, dot-segment, parent, basename, joining, and containment facts without
+rewriting that input. The command does not promise a snapshot, transaction,
+rollback, exact mirror, or POSIX metadata preservation.
 The operation uses one backend-neutral runner over required async hooks. Matrix
 support remains limited to the exact source forms and versions with qualifying
 evidence; this is not an all-fsspec claim.

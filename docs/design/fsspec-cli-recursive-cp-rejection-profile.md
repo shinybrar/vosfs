@@ -20,7 +20,8 @@ cp -R source_a:/directory source_b:/target
 cp -r source_a:/directory source_b:/target
 ```
 
-`-R` and `-r` are equivalent and exactly one MUST be present. Exactly two
+`-R` and `-r` are equivalent boolean aliases and at least one MUST be present.
+Typer may coalesce repeated aliases into the same true value. Exactly two
 [mapped filesystem operands](../../CONTEXT.md#mapped-filesystem-operand) are
 required. Configured source names, not backend class, protocol, or object
 identity, select same-source versus cross-source behavior. Every route uses the
@@ -29,17 +30,13 @@ source-entry verification. Same-source, Local-to-remote, remote-to-Local, and
 remote-to-remote routes therefore have one observable contract.
 
 `capabilities.recursion.copy` defaults to true when `capabilities`, `recursion`,
-or `copy` is omitted. Explicit false retains file-copy help wording and rejects
-the first valid `-R` or `-r` before recursive operand or path validation, source
-entry, filesystem work, staging, or mutation:
-
-```text
-cp: recursive copy disabled by application
-```
-
-That rejection has empty stdout and status `2`. Capabilities are validated and
-deep-snapshotted constructor input. They are not loaded configuration, a
-per-source registry, or a backend-discovery result.
+or `copy` is omitted. Explicit false selects a file-only annotated callback
+whose help and parameter list omit `-R` and `-r`. Typer rejects either absent
+option with its standard `No such option` usage error and status `2` before
+operand validation, source entry, filesystem work, staging, or mutation.
+Capabilities are validated and deep-snapshotted constructor input. They are
+not loaded configuration, a per-source registry, or a backend-discovery
+result.
 
 This profile replaces the prior rejection decision. Issue #286 implements and
 tests the complete contract through the public `App(sources).typer_app` seam.
@@ -112,33 +109,31 @@ matrix row and makes no all-fsspec claim.
 
 ## 4. Source-free preflight and lexical paths
 
-Before any source factory call, context entry, temporary creation, filesystem
-call, stdout byte, or mutation, the command MUST validate option syntax,
-exactly two operands, every mapped-operand grammar, and every configured name.
-`--` ends option parsing. Framework-owned `--help` is exempt.
+The capability-selected annotated callback gives Typer option syntax,
+`--` termination, help, and variadic `SOURCE... DESTINATION` parsing. Command
+validation then requires exactly two mapped operands, validates every mapped
+name, and checks lexical safeguards before any source factory call, context
+entry, temporary creation, filesystem call, stdout byte, or mutation.
 
-For this profile, each backend path is canonicalized by splitting on `/`,
-discarding empty segments, and joining the remaining segments beneath one
-leading `/`. A literal `.` or `..` segment is rejected rather than resolved.
-Percent-encoded text is opaque to the embedded command library. The canonical
-source path `/` is rejected. A trailing or repeated slash otherwise has no
-semantic effect.
+Mapped backend path spelling remains literal. Shared lexical helpers inspect
+root, dot segments, parent, basename, joining, equivalence, and containment
+without rewriting the value passed to the backend. A literal `.` or `..`
+segment is rejected rather than resolved. Percent-encoded text remains opaque.
+A source path composed only of slashes is rejected; trailing and repeated
+slashes otherwise remain part of backend input.
 
-| Condition | Exact category |
+| Condition | Diagnostic owner |
 | --- | --- |
-| Missing operand | `missing mapped filesystem operand` |
+| No operand or option absent from callback | Typer framework usage error |
+| One operand | `missing mapped filesystem operand` |
 | Third operand | `extra operand` |
-| Any option other than one `-R` or `-r` | `<option token>: unsupported option` |
 | Malformed or unknown mapped operand | Existing mapped-operand category |
 | Literal `.` or `..` path segment | `<mapped operand>: dot segment unsupported` |
-| Canonical source root | `<mapped operand>: source root unsupported` |
+| Lexical source root | `<mapped operand>: source root unsupported` |
 
-Every row above exits `2`, writes empty stdout, emits exactly one
-`cp: <category>` line on stderr, and enters zero sources.
-
-When recursive copy is disabled, its application-policy diagnostic precedes
-recursive operand and path validation. An unsupported option that appears
-before the first `-R` or `-r` retains the existing first-option diagnostic.
+Every command-owned row above writes empty stdout, emits exactly one
+`cp: <category>` stderr line, exits `2`, and enters zero sources. Typer-owned
+rows use Typer's standard status `2` usage envelope and also enter zero sources.
 
 ## 5. Acquisition, source validation, and target resolution
 
@@ -268,11 +263,11 @@ cp: D: <stable category>
 
 ### 8.1 Source-free preflight
 
-Section 4 owns every source-free failure. Each writes empty stdout, exactly
-one listed stderr line, exits `2`, enters zero sources, creates no staging
-file, and leaves the destination unchanged. A duplicate or mixed second
-recursive option is the unsupported `<option token>`; no option is silently
-coalesced.
+Section 4 owns every source-free failure. Typer-owned failures use its standard
+usage envelope; command-owned failures emit one listed diagnostic. Each exits
+`2`, enters zero sources, creates no staging file, and leaves the destination
+unchanged. Repeated `-R` and `-r` aliases select the same boolean recursive
+mode.
 
 ### 8.2 Source lifecycle
 
