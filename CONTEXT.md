@@ -60,6 +60,20 @@ enters and exits the source on the invocation loop, making the yielded
 filesystem invocation-owned.
 _Avoid_: Live filesystem instance, backend constructor, process-wide filesystem
 
+**Core command**:
+A first-party embedded command defined by one annotated callback registered on
+an `App` instance. Typer owns its token parsing, type conversion, help, and
+usage errors; the callback owns semantic validation and filesystem execution
+behavior.
+_Avoid_: Raw-token command, catalog entry
+
+**Command extension**:
+An opt-in synchronous annotated callback passed through `App(...,
+extensions=[...])`. Its name, docstring, and annotations define the Typer
+command, and a source-aware callback retrieves the immutable source snapshot
+as `CommandContext` through `typer.Context`.
+_Avoid_: Registrar, plugin registry, nested command group
+
 **Mapped filesystem operand**:
 An explicit `name:/path` command argument whose name selects one async
 filesystem source from the embedded command library's configured mapping.
@@ -68,10 +82,11 @@ current or default filesystem.
 _Avoid_: fsspec URL, protocol URL, mount point, bare path
 
 **Command compatibility profile**:
-The locked observable behavior for one embedded command and option surface,
-independent of backend type. A profile defines the consumed async operations,
-result shapes, output, diagnostics, and exit behavior that tested source forms
-must share.
+The locked command-owned execution behavior after Typer has parsed and
+converted one embedded command's annotated parameters, independent of backend
+type. A profile defines semantic validation, consumed async operations, result
+shapes, output, diagnostics, and exit behavior that tested source forms must
+share.
 _Avoid_: Generic POSIX support, backend-specific command mode
 
 **Tested command matrix**:

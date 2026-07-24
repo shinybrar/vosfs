@@ -2,6 +2,13 @@
 
 Status: Accepted
 
+> **Partially superseded by
+> [Define Typer-owned commands and callback extensions](./0005-define-typer-owned-commands-and-callback-extensions.md):**
+> the `CommandExtension` registrar and `register(...)` clauses are replaced by
+> annotated callbacks. Explicit opt-in, omission behavior, core-first caller
+> order, immutable source snapshots, application-capability separation, and
+> Typer's command-conflict behavior remain accepted.
+
 Question: [Add the backend-specific extension seam](https://github.com/shinybrar/vosfs/issues/191)
 
 ## Decision
