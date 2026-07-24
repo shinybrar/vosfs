@@ -13,18 +13,6 @@ from fsspec.asyn import AsyncFileSystem
 from fsspec_cli import App, AsyncFilesystemSource
 from typer.testing import CliRunner, Result
 
-_EXACT_FIND_HELP = (
-    "                                                                                \n"
-    " Usage: find [--maxdepth N] [--type f|d] [--] name:/path                        \n"
-    "                                                                                \n"
-    " Find files recursively                                                         \n"
-    "                                                                                \n"
-    "╭─ Options ────────────────────────────────────────────────────────────────────╮\n"
-    "│ --help          Show this message and exit.                                  │\n"
-    "╰──────────────────────────────────────────────────────────────────────────────╯\n"
-    "\n"
-)
-
 
 class _ListSubclass(list[str]):
     pass
@@ -248,6 +236,24 @@ def test_find_does_not_misclassify_an_internal_locale_failure(
             ("/docs", None, False, False),
             "/docs/a.txt\n",
         ),
+        (
+            ["--maxdepth=1", "memory:/docs"],
+            ["/docs/a.txt"],
+            ("/docs", 1, False, False),
+            "/docs/a.txt\n",
+        ),
+        (
+            ["--maxdepth", "+1", "memory:/docs"],
+            ["/docs/a.txt"],
+            ("/docs", 1, False, False),
+            "/docs/a.txt\n",
+        ),
+        (
+            ["--maxdepth", "\u0661", "--type=f", "memory:/docs"],
+            ["/docs/a.txt"],
+            ("/docs", 1, False, False),
+            "/docs/a.txt\n",
+        ),
     ],
 )
 def test_find_accepts_locked_interspersed_options_and_call_shapes(
@@ -305,78 +311,74 @@ def test_find_maxdepth_zero_filters_the_single_backend_call_to_the_root(
 
 
 @pytest.mark.parametrize("arguments", [["--help"], ["--type", "d", "--help"]])
-def test_find_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
+def test_find_help_comes_from_typed_callback(arguments: list[str]) -> None:
     result = _invoke_find(arguments)
 
-    assert (result.exit_code, strip_ansi(result.stdout), result.stderr) == (
-        0,
-        _EXACT_FIND_HELP,
-        "",
-    )
+    help_text = strip_ansi(result.stdout)
+    assert (result.exit_code, result.stderr) == (0, "")
+    assert "Usage: root find [OPTIONS] {name:/path}" in help_text
+    assert "Find files recursively" in help_text
+    assert "name:/path" in help_text
+    assert "--maxdepth" in help_text
+    assert "--type" in help_text
+    assert "f|d" in help_text
 
 
 @pytest.mark.parametrize(
-    ("arguments", "diagnostic"),
+    ("arguments", "contexts"),
     [
-        ([], "find: missing mapped filesystem operand\n"),
-        (["-x", "memory:/docs"], "find: -x: unsupported option\n"),
-        (
-            ["--maxdepth=1", "memory:/docs"],
-            "find: --maxdepth=1: unsupported option\n",
-        ),
-        (["--type=f", "memory:/docs"], "find: --type=f: unsupported option\n"),
-        (["--maxdepth"], "find: --maxdepth: option requires an argument\n"),
-        (["--type"], "find: --type: option requires an argument\n"),
+        ([], ("Missing argument", "name:/path")),
+        (["-x", "memory:/docs"], ("No such option", "-x")),
+        (["--maxdepth"], ("requires an argument", "--maxdepth")),
+        (["--type"], ("requires an argument", "--type")),
         (
             ["--maxdepth", "-1", "memory:/docs"],
-            "find: -1: invalid --maxdepth value\n",
-        ),
-        (
-            ["--maxdepth", "+1", "memory:/docs"],
-            "find: +1: invalid --maxdepth value\n",
+            ("Invalid value", "--maxdepth", "x>=0"),
         ),
         (
             ["--maxdepth", "1.0", "memory:/docs"],
-            "find: 1.0: invalid --maxdepth value\n",
+            ("Invalid value", "--maxdepth", "int range"),
         ),
         (
             ["--maxdepth", "", "memory:/docs"],
-            "find: : invalid --maxdepth value\n",
+            ("Invalid value", "--maxdepth", "int range"),
         ),
         (
             ["--maxdepth", " ", "memory:/docs"],
-            "find:  : invalid --maxdepth value\n",
-        ),
-        (
-            ["--maxdepth", "\u0661", "memory:/docs"],
-            "find: \u0661: invalid --maxdepth value\n",
+            ("Invalid value", "--maxdepth", "int range"),
         ),
         (
             ["--type", "x", "memory:/docs"],
-            "find: x: invalid --type value\n",
+            ("Invalid value", "--type", "not one of", "f", "d"),
         ),
         (
             ["memory:relative"],
-            "find: memory:relative: invalid mapped filesystem operand\n",
+            ("find: memory:relative: invalid mapped filesystem operand",),
         ),
         (
             ["unknown:/docs"],
-            "find: unknown:/docs: unknown filesystem (known: memory)\n",
+            ("find: unknown:/docs: unknown filesystem (known: memory)",),
         ),
-        (["memory:/a", "memory:/b"], "find: extra operand\n"),
+        (
+            ["memory:/a", "memory:/b"],
+            ("unexpected extra argument", "memory:/b"),
+        ),
         (
             ["--", "--help"],
-            "find: --help: invalid mapped filesystem operand\n",
+            ("find: --help: invalid mapped filesystem operand",),
         ),
     ],
 )
-def test_find_preflight_failures_are_stable_and_source_free(
+def test_find_usage_failures_are_typer_owned_and_source_free(
     arguments: list[str],
-    diagnostic: str,
+    contexts: tuple[str, ...],
 ) -> None:
     result = _invoke_find(arguments)
 
-    assert (result.exit_code, result.stdout, result.stderr) == (2, "", diagnostic)
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = strip_ansi(result.stderr)
+    for context in contexts:
+        assert context in diagnostic
 
 
 def test_find_rejects_a_depth_too_large_for_the_runtime_deterministically() -> None:
@@ -384,11 +386,10 @@ def test_find_rejects_a_depth_too_large_for_the_runtime_deterministically() -> N
 
     result = _invoke_find(["--maxdepth", value, "memory:/docs"])
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        f"find: {value}: invalid --maxdepth value\n",
-    )
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = strip_ansi(result.stderr)
+    assert "Invalid value" in diagnostic
+    assert "--maxdepth" in diagnostic
 
 
 @pytest.mark.parametrize(

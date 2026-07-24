@@ -143,9 +143,10 @@ def test_app_snapshots_nested_capabilities_at_construction() -> None:
 def test_ls_rejects_a_missing_mapped_filesystem_operand() -> None:
     result = _invoke_ls([])
 
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == "ls: missing mapped filesystem operand\n"
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = strip_ansi(result.stderr)
+    assert "Missing argument" in diagnostic
+    assert "name:/path" in diagnostic
 
 
 def test_ls_refuses_an_active_same_thread_event_loop(monkeypatch) -> None:
@@ -164,7 +165,7 @@ def test_ls_refuses_an_active_same_thread_event_loop(monkeypatch) -> None:
     assert recording_run.call_count == 0
 
 
-def test_ls_starts_exactly_one_command_coroutine_with_asyncio_run(
+def test_ls_typer_failure_precedes_command_coroutine(
     monkeypatch,
 ) -> None:
     real_run = asyncio.run
@@ -174,19 +175,28 @@ def test_ls_starts_exactly_one_command_coroutine_with_asyncio_run(
     result = _invoke_ls([])
 
     assert result.exit_code == 2
-    assert recording_run.call_count == 1
+    assert recording_run.call_count == 0
 
 
 @pytest.mark.parametrize(
-    "option",
-    ["--long", "-a", "--all", "-x", "-lx", "--help=value"],
+    ("option", "context"),
+    [
+        ("--long", "--long"),
+        ("-a", "-a"),
+        ("--all", "--all"),
+        ("-x", "-x"),
+        ("-lx", "-x"),
+        ("--help=value", "does not take a value"),
+    ],
 )
-def test_ls_rejects_the_complete_unsupported_option_token(option: str) -> None:
+def test_typer_rejects_unsupported_ls_options(
+    option: str,
+    context: str,
+) -> None:
     result = _invoke_ls([option, "memory:/docs"])
 
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == f"ls: {option}: unsupported option\n"
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert context in strip_ansi(result.stderr)
 
 
 @pytest.mark.parametrize(
@@ -215,18 +225,19 @@ def test_ls_accepts_repeated_grouped_and_interspersed_supported_options(
 
 
 @pytest.mark.parametrize(
-    ("arguments", "token"),
-    [(["-h"], "-h"), (["-Ah"], "-Ah"), (["memory:/docs", "-h"], "-h")],
+    "arguments",
+    [["memory:/docs", "-h"], ["-Ah", "memory:/docs"]],
 )
 def test_ls_rejects_human_sizes_without_long_mode(
     arguments: list[str],
-    token: str,
 ) -> None:
     result = _invoke_ls(arguments)
 
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == f"ls: {token}: unsupported option\n"
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        2,
+        "",
+        "ls: -h: requires long listing\n",
+    )
 
 
 @pytest.mark.parametrize(
@@ -424,9 +435,8 @@ def test_ls_reports_a_missing_operand_after_supported_option_syntax(
 ) -> None:
     result = _invoke_ls(arguments)
 
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == "ls: missing mapped filesystem operand\n"
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert "Missing argument" in strip_ansi(result.stderr)
 
 
 @pytest.mark.parametrize(
@@ -471,7 +481,7 @@ def test_ls_treats_help_tokens_after_the_option_delimiter_as_operands(
     assert result.stderr == (f"ls: {operand}: invalid mapped filesystem operand\n")
 
 
-def test_ls_preserves_preflight_when_mounted_below_a_parent_typer_app() -> None:
+def test_ls_preserves_typer_failures_when_mounted_below_a_parent_app() -> None:
     parent = typer.Typer(add_completion=False)
     parent.add_typer(
         App({"memory": _source_must_not_run}).typer_app,
@@ -483,20 +493,20 @@ def test_ls_preserves_preflight_when_mounted_below_a_parent_typer_app() -> None:
         ["data", "ls", "--long", "memory:/docs"],
     )
 
-    assert result.exit_code == 2
-    assert result.stdout == ""
-    assert result.stderr == "ls: --long: unsupported option\n"
+    assert (result.exit_code, result.stdout) == (2, "")
+    diagnostic = strip_ansi(result.stderr)
+    assert "Usage: root data ls" in diagnostic
+    assert "No such option: --long" in diagnostic
 
 
-def test_active_loop_refusal_precedes_command_preflight() -> None:
+def test_typer_preflight_precedes_active_loop_refusal() -> None:
     async def invoke() -> object:
         return _invoke_ls(["-l"])
 
     result = asyncio.run(invoke())
 
-    assert result.exit_code == 1
-    assert result.stdout == ""
-    assert result.stderr == "ls: cannot run from an active event loop\n"
+    assert (result.exit_code, result.stdout) == (2, "")
+    assert "Missing argument" in strip_ansi(result.stderr)
 
 
 def test_ls_renders_all_diagnostic_control_characters_in_order() -> None:
