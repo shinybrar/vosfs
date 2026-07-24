@@ -17,6 +17,7 @@ from ._command import (
     _write_binary,
 )
 from ._diagnostics import _render_diagnostic_value
+from ._path import _has_dot_segment, _has_final_dot_segment, _is_root
 from ._recursive_rm import (
     _RecursiveRmFailure,
     _remove_recursive,
@@ -42,21 +43,6 @@ class _RmRequest:
     recursive: bool
     verbose: bool
     operands: tuple[_MappedOperand, ...]
-
-
-def _is_rejected_path(path: str) -> bool:
-    normalized = path.rstrip("/")
-    if not normalized:
-        return True
-    final = normalized.rsplit("/", 1)[-1]
-    return final in {".", ".."}
-
-
-def _is_recursive_rejected_path(path: str) -> bool:
-    normalized = path.rstrip("/")
-    return not normalized or any(
-        component in {".", ".."} for component in path.split("/")
-    )
 
 
 def _reject_disabled_recursive_rm(
@@ -163,9 +149,9 @@ def _preflight(  # noqa: C901, PLR0912, PLR0915 - locked argv diagnostics.
 
         operand = _parse_mapped_operand(command, argument, known_names)
         if (
-            _is_recursive_rejected_path(operand.path)
+            _is_root(operand.path) or _has_dot_segment(operand.path)
             if recursive
-            else _is_rejected_path(operand.path)
+            else _is_root(operand.path) or _has_final_dot_segment(operand.path)
         ):
             rendered = _render_diagnostic_value(argument)
             _usage_error(command, f"{rendered}: rejected path")

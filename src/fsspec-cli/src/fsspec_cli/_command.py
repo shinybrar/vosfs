@@ -121,9 +121,14 @@ class _CommandFailureError(Exception):
         self,
         operand: _MappedOperand | None = None,
         error: Exception | None = None,
+        *,
+        render: bool = True,
+        propagate: BaseException | None = None,
     ) -> None:
         self.operand = operand
         self.error = error
+        self.render = render
+        self.propagate = propagate
 
 
 def _render_operand_diagnostic(
@@ -148,19 +153,23 @@ def _render_backend_failure(
     operand: _MappedOperand,
     error: Exception,
 ) -> None:
-    if isinstance(error, FileNotFoundError):
-        category = "not found"
-    elif isinstance(error, PermissionError):
-        category = "permission denied"
-    elif isinstance(error, NotADirectoryError):
-        category = "not a directory"
-    elif isinstance(error, NotImplementedError):
-        category = "unsupported operation"
-    else:
-        rendered_class = _render_diagnostic_value(type(error).__name__)
-        rendered_message = _render_diagnostic_value(str(error))
-        category = f"backend failure ({rendered_class}): {rendered_message}"
-    _render_operand_diagnostic(command, operand, category)
+    _render_operand_diagnostic(command, operand, _backend_category(error))
+
+
+def _backend_category(error: Exception) -> str:
+    for error_type, category in (
+        (FileNotFoundError, "not found"),
+        (FileExistsError, "file exists"),
+        (PermissionError, "permission denied"),
+        (IsADirectoryError, "is a directory"),
+        (NotADirectoryError, "not a directory"),
+        (NotImplementedError, "unsupported operation"),
+    ):
+        if isinstance(error, error_type):
+            return category
+    rendered_class = _render_diagnostic_value(type(error).__name__)
+    rendered_message = _render_diagnostic_value(str(error))
+    return f"backend failure ({rendered_class}): {rendered_message}"
 
 
 def _render_output_failure(command: str, error: Exception) -> None:
@@ -193,11 +202,15 @@ async def _run_mapped_command(
             await operation(filesystems)
     except _CommandFailureError as error:
         failure = error
-        if error.operand is not None:
+        if error.render and error.operand is not None:
             _render_failure(command, _Failure(error.operand, error.error))
-        elif error.error is not None and not isinstance(
-            error.error,
-            BrokenPipeError,
+        elif (
+            error.render
+            and error.error is not None
+            and not isinstance(
+                error.error,
+                BrokenPipeError,
+            )
         ):
             _render_output_failure(command, error.error)
     finally:
@@ -205,6 +218,8 @@ async def _run_mapped_command(
             failure.error if failure is not None else None
         )
 
+    if failure is not None and failure.propagate is not None:
+        raise failure.propagate
     if not acquired or failure is not None or cleanup_failed:
         if (
             failure is not None

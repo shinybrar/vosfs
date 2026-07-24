@@ -8,6 +8,7 @@ import typer
 
 from ._command import _usage_error
 from ._diagnostics import _render_diagnostic_value
+from ._path import _lexical_parent
 
 
 @dataclass(frozen=True)
@@ -45,25 +46,6 @@ def _preflight(
     return _DirnameRequest(operand=operands[0])
 
 
-def _posix_dirname_string(string: str) -> str:
-    if "/" not in string:
-        return "."
-
-    if string and all(character == "/" for character in string):
-        return "/"
-
-    while string.endswith("/"):
-        string = string[:-1]
-
-    if "/" not in string:
-        return "."
-
-    prefix = string.rsplit("/", 1)[0]
-    if prefix == "":
-        return "/"
-    return prefix
-
-
 def _run_dirname(command: str, raw_arguments: tuple[str, ...]) -> None:
     request = _preflight(command, raw_arguments)
-    typer.echo(_posix_dirname_string(request.operand), nl=True, color=True)
+    typer.echo(_lexical_parent(request.operand), nl=True, color=True)

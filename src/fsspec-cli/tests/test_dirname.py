@@ -4,7 +4,7 @@ from typing import NoReturn
 
 import pytest
 from fsspec_cli import App, AsyncFilesystemSource
-from fsspec_cli._dirname import _posix_dirname_string
+from fsspec_cli._path import _lexical_parent
 from typer.testing import CliRunner, Result
 
 from ._matrix_support import _block_network
@@ -213,11 +213,11 @@ def test_dirname_reports_extra_operand_before_nul_in_a_later_operand() -> None:
         ("dir\nname", "."),
     ],
 )
-def test_posix_dirname_string_applies_the_locked_algorithm(
+def test_lexical_parent_applies_the_locked_dirname_algorithm(
     operand: str,
     expected: str,
 ) -> None:
-    assert _posix_dirname_string(operand) == expected
+    assert _lexical_parent(operand) == expected
 
 
 def test_dirname_renders_all_diagnostic_control_characters_in_order() -> None:

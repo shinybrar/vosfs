@@ -16,17 +16,24 @@ from typer.core import TyperCommand
 
 from ._basename import _run_basename
 from ._cat import _run_cat
-from ._command import _parse_mapped_operand, _raw_arguments, _RawCommand
+from ._command import (
+    _MappedOperand,
+    _parse_mapped_operand,
+    _raw_arguments,
+    _RawCommand,
+    _usage_error,
+)
 from ._cp import _run_cp
-from ._diagnostics import _render_diagnostic_prefix
+from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._dirname import _run_dirname
 from ._du import _DuCommand, _run_du
 from ._find import _FindCommand, _run_find
 from ._head_tail import _run_head, _run_tail
 from ._info import _InfoCommand, _run_info
 from ._ls import _run_ls
-from ._mkdir import _run_mkdir
+from ._mkdir import _MkdirRequest, _run_mkdir
 from ._mv import _run_mv
+from ._path import _has_final_dot_segment, _is_root
 from ._rm import _run_rm
 from ._rmdir import _run_rmdir
 from ._size import _run_size, _SizeCommand
@@ -134,10 +141,7 @@ _ASYNC_COMMANDS: tuple[_AsyncCommand, ...] = (
     ("info", "Display normalized file information", _run_info, _InfoCommand),
     ("cp", "Copy files or one directory with -R or -r", _run_cp, _RawCommand),
     ("mv", "Move or rename files", _run_mv, _RawCommand),
-    ("mkdir", "Create directories", _run_mkdir, _RawCommand),
-    ("rmdir", "Remove empty directories", _run_rmdir, _RawCommand),
     ("rm", "Remove files", _run_rm, _RawCommand),
-    ("unlink", "Remove a single file", _run_unlink, _RawCommand),
     ("stat", "Display file status", _run_stat, _StatCommand),
 )
 
@@ -216,7 +220,7 @@ class App:
         for extension in extensions:
             self.typer_app.command()(extension)
 
-    def _register_commands(self) -> None:
+    def _register_commands(self) -> None:  # noqa: C901 - central command surface.
         @self.typer_app.callback()
         def root(ctx: typer.Context) -> None:
             ctx.obj = CommandContext(self._sources)
@@ -240,6 +244,59 @@ class App:
             mapped = _parse_mapped_operand("tail", operand, self._sources)
             _ensure_no_active_event_loop("tail")
             asyncio.run(_run_tail("tail", count, mapped, self._sources))
+
+        @self.typer_app.command()
+        def mkdir(
+            operands: Annotated[
+                list[str],
+                typer.Argument(metavar="name:/path"),
+            ],
+            *,
+            parents: Annotated[bool, typer.Option("-p")] = False,
+        ) -> None:
+            """Create directories."""
+            mapped = tuple(
+                _parse_mapped_operand("mkdir", operand, self._sources)
+                for operand in operands
+            )
+            _ensure_no_active_event_loop("mkdir")
+            asyncio.run(
+                _run_mkdir(
+                    "mkdir",
+                    _MkdirRequest(create_parents=parents, operands=mapped),
+                    self._sources,
+                )
+            )
+
+        def destructive_operand(command: str, spelling: str) -> _MappedOperand:
+            operand = _parse_mapped_operand(command, spelling, self._sources)
+            if _is_root(operand.path) or _has_final_dot_segment(operand.path):
+                rendered = _render_diagnostic_value(spelling)
+                _usage_error(command, f"{rendered}: rejected path")
+            return operand
+
+        @self.typer_app.command()
+        def rmdir(
+            operands: Annotated[
+                list[str],
+                typer.Argument(metavar="name:/path"),
+            ],
+        ) -> None:
+            """Remove empty directories."""
+            mapped = tuple(
+                destructive_operand("rmdir", operand) for operand in operands
+            )
+            _ensure_no_active_event_loop("rmdir")
+            asyncio.run(_run_rmdir("rmdir", mapped, self._sources))
+
+        @self.typer_app.command()
+        def unlink(
+            operand: Annotated[str, typer.Argument(metavar="name:/path")],
+        ) -> None:
+            """Remove a single file."""
+            mapped = destructive_operand("unlink", operand)
+            _ensure_no_active_event_loop("unlink")
+            asyncio.run(_run_unlink("unlink", mapped, self._sources))
 
         for name, help_text, source_free_runner in _SOURCE_FREE_COMMANDS:
             self._register_source_free(name, help_text, source_free_runner)
