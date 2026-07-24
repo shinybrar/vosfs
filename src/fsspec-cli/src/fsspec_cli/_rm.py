@@ -63,7 +63,7 @@ def _render_rm_failure_or_raise(
 ) -> None:
     try:
         _render_rm_failure(command, failure)
-    except BaseException as error:
+    except Exception as error:
         raise _CommandFailureError(
             error=failure.backend_error,
             render=False,
@@ -124,7 +124,7 @@ async def _trace_operands(
             except Exception as error:  # noqa: BLE001 - stdout boundary.
                 try:
                     _render_output_failure(command, error)
-                except BaseException as render_error:
+                except Exception as render_error:
                     raise _CommandFailureError(
                         error=error,
                         render=False,

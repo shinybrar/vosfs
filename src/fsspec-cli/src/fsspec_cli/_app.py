@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Annotated, Literal, TypeAlias, TypedDict
+from typing import Annotated, Any, Literal, TypeAlias, TypedDict
 
 import typer
 from fsspec import AbstractFileSystem
@@ -130,6 +130,15 @@ def _ensure_no_active_event_loop(command: str) -> None:
     raise typer.Exit(1)
 
 
+def _run_async_command(
+    command: str,
+    operation: Callable[[], Coroutine[Any, Any, None]],
+) -> None:
+    """Run one preflighted command coroutine from a synchronous callback."""
+    _ensure_no_active_event_loop(command)
+    asyncio.run(operation())
+
+
 class App:
     """Embedded core commands plus explicitly selected extensions."""
 
@@ -170,8 +179,10 @@ class App:
         ) -> None:
             """Display leading bytes."""
             mapped = _parse_mapped_operand("head", operand, self._sources)
-            _ensure_no_active_event_loop("head")
-            asyncio.run(_run_head("head", count, mapped, self._sources))
+            _run_async_command(
+                "head",
+                lambda: _run_head("head", count, mapped, self._sources),
+            )
 
         @self.typer_app.command()
         def tail(
@@ -180,8 +191,10 @@ class App:
         ) -> None:
             """Display trailing bytes."""
             mapped = _parse_mapped_operand("tail", operand, self._sources)
-            _ensure_no_active_event_loop("tail")
-            asyncio.run(_run_tail("tail", count, mapped, self._sources))
+            _run_async_command(
+                "tail",
+                lambda: _run_tail("tail", count, mapped, self._sources),
+            )
 
         @self.typer_app.command()
         def cat(
@@ -197,13 +210,17 @@ class App:
                 else _parse_mapped_operand("cat", operand, self._sources)
                 for operand in operands or ("-",)
             )
-            _ensure_no_active_event_loop("cat")
-            asyncio.run(_run_cat("cat", parsed, self._sources))
+            _run_async_command(
+                "cat",
+                lambda: _run_cat("cat", parsed, self._sources),
+            )
 
         def run_cp(operands: list[str], *, recursive: bool) -> None:
             plan = _cp_plan("cp", tuple(operands), self._sources, recursive=recursive)
-            _ensure_no_active_event_loop("cp")
-            asyncio.run(_run_cp("cp", plan, self._sources))
+            _run_async_command(
+                "cp",
+                lambda: _run_cp("cp", plan, self._sources),
+            )
 
         if self._capabilities.recursive_copy:
 
@@ -245,13 +262,13 @@ class App:
                 _parse_mapped_operand("mkdir", operand, self._sources)
                 for operand in operands
             )
-            _ensure_no_active_event_loop("mkdir")
-            asyncio.run(
-                _run_mkdir(
+            _run_async_command(
+                "mkdir",
+                lambda: _run_mkdir(
                     "mkdir",
                     _MkdirRequest(create_parents=parents, operands=mapped),
                     self._sources,
-                )
+                ),
             )
 
         def destructive_operand(command: str, spelling: str) -> _MappedOperand:
@@ -272,8 +289,10 @@ class App:
             mapped = tuple(
                 destructive_operand("rmdir", operand) for operand in operands
             )
-            _ensure_no_active_event_loop("rmdir")
-            asyncio.run(_run_rmdir("rmdir", mapped, self._sources))
+            _run_async_command(
+                "rmdir",
+                lambda: _run_rmdir("rmdir", mapped, self._sources),
+            )
 
         @self.typer_app.command()
         def unlink(
@@ -281,8 +300,10 @@ class App:
         ) -> None:
             """Remove a single file."""
             mapped = destructive_operand("unlink", operand)
-            _ensure_no_active_event_loop("unlink")
-            asyncio.run(_run_unlink("unlink", mapped, self._sources))
+            _run_async_command(
+                "unlink",
+                lambda: _run_unlink("unlink", mapped, self._sources),
+            )
 
         def run_rm(
             operands: list[str] | None,
@@ -314,9 +335,9 @@ class App:
                 if rejected:
                     rendered = _render_diagnostic_value(spelling)
                     _usage_error("rm", f"{rendered}: rejected path")
-            _ensure_no_active_event_loop("rm")
-            asyncio.run(
-                _run_rm(
+            _run_async_command(
+                "rm",
+                lambda: _run_rm(
                     "rm",
                     _RmRequest(
                         force=force,
@@ -326,7 +347,7 @@ class App:
                         operands=mapped,
                     ),
                     self._sources,
-                )
+                ),
             )
 
         if self._capabilities.recursive_remove:
@@ -422,8 +443,10 @@ class App:
         ) -> None:
             """Display normalized file information."""
             mapped = _parse_mapped_operand("info", operand, self._sources)
-            _ensure_no_active_event_loop("info")
-            asyncio.run(_run_info("info", mapped, self._sources))
+            _run_async_command(
+                "info",
+                lambda: _run_info("info", mapped, self._sources),
+            )
 
         @self.typer_app.command()
         def size(
@@ -437,8 +460,10 @@ class App:
                 _parse_mapped_operand("size", operand, self._sources)
                 for operand in operands
             )
-            _ensure_no_active_event_loop("size")
-            asyncio.run(_run_size("size", mapped, self._sources))
+            _run_async_command(
+                "size",
+                lambda: _run_size("size", mapped, self._sources),
+            )
 
         @self.typer_app.command()
         def test(
@@ -460,8 +485,10 @@ class App:
             ]
             if len(selected) != 1:
                 _usage_error("test", "exactly one predicate selector is required")
-            _ensure_no_active_event_loop("test")
-            asyncio.run(_run_test("test", selected[0], mapped, self._sources))
+            _run_async_command(
+                "test",
+                lambda: _run_test("test", selected[0], mapped, self._sources),
+            )
 
         @self.typer_app.command()
         def stat(
@@ -475,8 +502,10 @@ class App:
                 _parse_mapped_operand("stat", operand, self._sources)
                 for operand in operands
             )
-            _ensure_no_active_event_loop("stat")
-            asyncio.run(_run_stat("stat", mapped, self._sources))
+            _run_async_command(
+                "stat",
+                lambda: _run_stat("stat", mapped, self._sources),
+            )
 
         def run_listing(
             command: Literal["ls", "ll"],
@@ -492,9 +521,9 @@ class App:
             )
             if human_readable and not long_listing:
                 _usage_error(command, "-h: requires long listing")
-            _ensure_no_active_event_loop(command)
-            asyncio.run(
-                _run_ls(
+            _run_async_command(
+                command,
+                lambda: _run_ls(
                     command,
                     _LsRequest(
                         include_almost_all=include_almost_all,
@@ -503,7 +532,7 @@ class App:
                         operands=mapped,
                     ),
                     self._sources,
-                )
+                ),
             )
 
         @self.typer_app.command()
@@ -555,9 +584,9 @@ class App:
         ) -> None:
             """Estimate file space usage."""
             mapped = _parse_mapped_operand("du", operand, self._sources)
-            _ensure_no_active_event_loop("du")
-            asyncio.run(
-                _run_du(
+            _run_async_command(
+                "du",
+                lambda: _run_du(
                     "du",
                     _DuRequest(
                         summarize=summarize,
@@ -565,7 +594,7 @@ class App:
                         operand=mapped,
                     ),
                     self._sources,
-                )
+                ),
             )
 
         @self.typer_app.command()
@@ -582,9 +611,9 @@ class App:
         ) -> None:
             """Find files recursively."""
             mapped = _parse_mapped_operand("find", operand, self._sources)
-            _ensure_no_active_event_loop("find")
-            asyncio.run(
-                _run_find(
+            _run_async_command(
+                "find",
+                lambda: _run_find(
                     "find",
                     _FindRequest(
                         maxdepth=maxdepth,
@@ -592,7 +621,7 @@ class App:
                         operand=mapped,
                     ),
                     self._sources,
-                )
+                ),
             )
 
         @self.typer_app.command()
@@ -605,13 +634,13 @@ class App:
         ) -> None:
             """Display a recursive directory tree."""
             mapped = _parse_mapped_operand("tree", operand, self._sources)
-            _ensure_no_active_event_loop("tree")
-            asyncio.run(
-                _run_tree(
+            _run_async_command(
+                "tree",
+                lambda: _run_tree(
                     "tree",
                     _TreeRequest(maxdepth=maxdepth, operand=mapped),
                     self._sources,
-                )
+                ),
             )
 
         @self.typer_app.command()
@@ -633,5 +662,7 @@ class App:
                 for operand in operands
             )
             plan = _plan_mv("mv", mapped)
-            _ensure_no_active_event_loop("mv")
-            asyncio.run(_run_mv("mv", plan, self._sources))
+            _run_async_command(
+                "mv",
+                lambda: _run_mv("mv", plan, self._sources),
+            )

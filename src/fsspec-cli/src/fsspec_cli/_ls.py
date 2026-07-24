@@ -10,15 +10,16 @@ from typing import TYPE_CHECKING, Generic, TypeAlias, TypeVar, cast
 import typer
 
 from ._command import (
+    _CommandFailureError,
     _drain_current_operation,
     _Failure,
     _MappedOperand,
     _render_failure,
     _render_output_failure,
+    _run_mapped_command,
 )
 from ._listing import ListingRow, render_listing, to_listing
 from ._path import _strip_trailing_slashes
-from ._sources import _SourceInvocation
 
 if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
@@ -62,33 +63,36 @@ async def _run_ls(
     request: _LsRequest,
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
-    invocation = _SourceInvocation(command, sources)
-    succeeded = False
-    failures: tuple[_Failure, ...] = ()
-    output_error: Exception | None = None
-    try:
-        names = dict.fromkeys(operand.name for operand in request.operands)
-        filesystems = await invocation.acquire(names)
-        if filesystems is not None:
-            if request.long_listing:
-                long_successes, failures = await _trace_long_operands(
-                    request,
-                    filesystems,
-                )
-                output = _format_long_successes(
-                    long_successes,
-                    human_readable=request.human_readable,
-                    multiple_operands=len(request.operands) > 1,
-                )
-            else:
-                plain_successes, failures = await _trace_plain_operands(
-                    request,
-                    filesystems,
-                )
-                output = _format_plain_successes(
-                    plain_successes,
-                    multiple_operands=len(request.operands) > 1,
-                )
+    async def execute(filesystems: Mapping[str, AsyncFileSystem]) -> None:
+        if request.long_listing:
+            long_successes, failures = await _trace_long_operands(
+                request,
+                filesystems,
+            )
+            output = _format_long_successes(
+                long_successes,
+                human_readable=request.human_readable,
+                multiple_operands=len(request.operands) > 1,
+            )
+        else:
+            plain_successes, failures = await _trace_plain_operands(
+                request,
+                filesystems,
+            )
+            output = _format_plain_successes(
+                plain_successes,
+                multiple_operands=len(request.operands) > 1,
+            )
+        backend_error = next(
+            (
+                failure.backend_error
+                for failure in failures
+                if failure.backend_error is not None
+            ),
+            None,
+        )
+        output_error = None
+        try:
             for failure in failures:
                 _render_failure(command, failure)
             if output:
@@ -99,20 +103,28 @@ async def _run_ls(
                 except Exception as error:  # noqa: BLE001 - output boundary.
                     output_error = error
                     _render_output_failure(command, error)
-            succeeded = not failures and output_error is None
-    finally:
-        backend_error = next(
-            (
-                failure.backend_error
-                for failure in failures
-                if failure.backend_error is not None
-            ),
-            None,
-        )
-        command_error = backend_error if backend_error is not None else output_error
-        cleanup_failed = await invocation.close_with_command_error(command_error)
-    if not succeeded or cleanup_failed:
-        raise typer.Exit(1)
+        except Exception as error:  # Preserve backend/output cause through cleanup.
+            command_error = backend_error if backend_error is not None else output_error
+            if command_error is None:
+                command_error = error
+            raise _CommandFailureError(
+                error=command_error,
+                render=False,
+                propagate=error,
+            ) from error
+        if failures or output_error is not None:
+            raise _CommandFailureError(
+                error=backend_error if backend_error is not None else output_error,
+                render=False,
+            )
+
+    await _run_mapped_command(
+        command,
+        request.operands,
+        sources,
+        execute,
+        broken_pipe_exit_code=1,
+    )
 
 
 async def _trace_plain_operands(

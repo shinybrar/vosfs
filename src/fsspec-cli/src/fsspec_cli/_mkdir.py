@@ -57,7 +57,7 @@ async def _run_mkdir(
         try:
             for failure in failures:
                 _render_failure(command, failure)
-        except BaseException as error:
+        except Exception as error:
             raise _CommandFailureError(
                 error=backend_error,
                 render=False,

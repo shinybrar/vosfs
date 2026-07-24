@@ -88,7 +88,7 @@ async def _run_unlink(
             return
         try:
             _render_failure(command, failure)
-        except BaseException as error:
+        except Exception as error:
             raise _CommandFailureError(
                 error=failure.backend_error,
                 render=False,

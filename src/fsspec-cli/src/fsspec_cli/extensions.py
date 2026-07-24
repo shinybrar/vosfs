@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
 
-from ._app import CommandContext, _ensure_no_active_event_loop
+from ._app import CommandContext, _run_async_command
 from ._command import (
     _Failure,
     _MappedOperand,
@@ -58,8 +57,10 @@ def sign(
     """Create a backend-signed URL."""
     sources = cast("CommandContext", ctx.find_object(CommandContext)).sources
     mapped = _parse_mapped_operand("sign", operand, sources)
-    _ensure_no_active_event_loop("sign")
-    asyncio.run(_run_sign("sign", mapped, sources))
+    _run_async_command(
+        "sign",
+        lambda: _run_sign("sign", mapped, sources),
+    )
 
 
 __all__ = ["sign"]

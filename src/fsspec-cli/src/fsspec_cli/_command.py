@@ -83,7 +83,7 @@ class _CommandFailureError(Exception):
         error: Exception | None = None,
         *,
         render: bool = True,
-        propagate: BaseException | None = None,
+        propagate: Exception | None = None,
     ) -> None:
         self.operand = operand
         self.error = error
@@ -223,31 +223,27 @@ async def _run_single_operand_text(
     operation: Callable[[AsyncFileSystem], Awaitable[str | _Failure]],
 ) -> None:
     """Run one mapped async operation with buffered text output and cleanup."""
-    invocation = _SourceInvocation(command, sources)
-    succeeded = False
-    failure: _Failure | None = None
-    output_error: Exception | None = None
-    try:
-        filesystems = await invocation.acquire((operand.name,))
-        if filesystems is not None:
-            result = await operation(filesystems[operand.name])
-            if isinstance(result, _Failure):
-                failure = result
-                _render_failure(command, failure)
-            elif result:
-                try:
-                    typer.echo(result, nl=False, color=True)
-                except BrokenPipeError as error:
-                    output_error = error
-                except Exception as error:  # noqa: BLE001 - output boundary.
-                    output_error = error
-                    _render_output_failure(command, error)
-            succeeded = failure is None and output_error is None
-    finally:
-        command_error = failure.backend_error if failure is not None else output_error
-        cleanup_failed = await invocation.close_with_command_error(command_error)
-    if not succeeded or cleanup_failed:
-        raise typer.Exit(1)
+
+    async def execute(filesystems: Mapping[str, AsyncFileSystem]) -> None:
+        result = await operation(filesystems[operand.name])
+        if isinstance(result, _Failure):
+            raise _CommandFailureError(operand, result.backend_error)
+        if not result:
+            return
+        try:
+            typer.echo(result, nl=False, color=True)
+        except BrokenPipeError as error:
+            raise _CommandFailureError(error=error, render=False) from error
+        except Exception as error:
+            raise _CommandFailureError(error=error) from error
+
+    await _run_mapped_command(
+        command,
+        (operand,),
+        sources,
+        execute,
+        broken_pipe_exit_code=1,
+    )
 
 
 def _sorted_known(known_names: Collection[str]) -> list[str]:

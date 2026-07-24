@@ -409,6 +409,33 @@ def test_mkdir_preserves_backend_error_when_its_diagnostic_write_fails(
     assert traceback is not None
 
 
+def test_mkdir_keeps_diagnostic_control_flow_active_during_cleanup(
+    monkeypatch,
+) -> None:
+    backend_error = PermissionError("denied")
+    control = _ControlFlow("stderr stopped")
+    source = _RecordingSource([], mkdir_error=backend_error)
+
+    def fail_diagnostic(
+        _message: object = None,
+        *args: object,
+        **kwargs: object,
+    ) -> NoReturn:
+        del args, kwargs
+        raise control
+
+    monkeypatch.setattr(typer, "echo", fail_diagnostic)
+
+    with pytest.raises(_ControlFlow) as caught:
+        _invoke_mkdir(["memory:/docs/new"], sources={"memory": source})
+
+    assert caught.value is control
+    exception_type, exception, traceback = source.exit_calls[0]
+    assert exception_type is _ControlFlow
+    assert exception is control
+    assert traceback is not None
+
+
 def test_mkdir_stops_acquisition_after_a_source_factory_failure() -> None:
     events: list[tuple[object, ...]] = []
     factory_error = ValueError("factory")
