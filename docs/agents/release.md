@@ -21,7 +21,9 @@ propose a `vosfs` release. The component package is scoped to
 Never hand-edit versioned changelog entries or couple an `fsspec-cli` cut to a
 `vosfs` version.
 
-Both packages use ordinary SemVer bumping and tagged draft GitHub Releases.
+`vosfs` uses ordinary SemVer bumping. Before 1.0, `fsspec-cli` treats a
+breaking change as a minor bump, so a breaking change from 0.4.x produces
+0.5.0 instead of 1.0.0. Both packages use tagged draft GitHub Releases.
 `force-tag-creation` ensures the exact tag exists for publication and previous
 release discovery. The component package also uses a Release Please extra-file
 update to keep its package metadata and the shared `uv.lock` entry at the same
