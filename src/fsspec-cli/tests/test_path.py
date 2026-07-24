@@ -5,10 +5,13 @@ from fsspec_cli._path import (
     _has_dot_segment,
     _has_final_dot_segment,
     _is_root,
+    _is_same_or_descendant,
     _lexical_basename,
     _lexical_join,
     _lexical_parent,
+    _lexical_relative,
     _lexical_root,
+    _same_lexical_path,
     _strip_trailing_slashes,
 )
 
@@ -97,3 +100,12 @@ def test_lexical_join_preserves_the_locked_path_contract(
     expected: str,
 ) -> None:
     assert _lexical_join(parent, child) == expected
+
+
+def test_lexical_relationships_ignore_only_repeated_and_trailing_slashes() -> None:
+    assert _same_lexical_path("/docs//", "/docs")
+    assert _is_same_or_descendant("/docs//", "/docs/nested/file")
+    assert _lexical_relative("/docs//", "/docs/nested/file") == "nested/file"
+    assert not _same_lexical_path("/docs/.", "/docs")
+    assert not _is_same_or_descendant("/docs", "/documentation")
+    assert _lexical_relative("/docs", "/documentation") is None

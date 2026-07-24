@@ -52,21 +52,25 @@ strings, define same-source behavior.
 
 ### 2.1 Option and operand preflight
 
+The capability-selected annotated callback exposes one variadic
+`SOURCE... DESTINATION` argument. Typer owns option parsing, `--`, help, and
+framework usage errors. With recursive copy enabled it also exposes the `-R`
+and `-r` aliases; with recursion disabled neither option exists.
+
 Before any source factory call, context entry, backend call, temporary
-creation, or stdout byte, the command MUST validate:
+creation, or stdout byte:
 
-1. option syntax;
-2. the presence of at least two operands;
-3. every operand's grammar;
-4. every mapped filesystem name.
+1. Typer rejects a missing variadic argument or an option absent from the
+   selected callback with status `2`;
+2. command validation requires at least two operands;
+3. command validation parses every mapped operand; and
+4. command validation checks every mapped filesystem name.
 
-`--` ends option parsing. Typer's framework-owned `--help` short circuit is
-explicitly exempt. Every other command option is unsupported.
-
-| Condition | Diagnostic |
+| Condition | Diagnostic owner |
 | --- | --- |
-| Fewer than two operands | `cp: missing mapped filesystem operand` |
-| Unsupported option token | `cp: <option token>: unsupported option` |
+| No operand | Typer `Missing argument` usage error for `SOURCE... DESTINATION` |
+| One operand | `cp: missing mapped filesystem operand` |
+| Option absent from the selected callback | Typer `No such option` usage error |
 | Malformed operand | `cp: <operand>: invalid mapped filesystem operand` |
 | Unknown mapped name | `cp: <operand>: unknown filesystem (known: <name>, ...)` |
 

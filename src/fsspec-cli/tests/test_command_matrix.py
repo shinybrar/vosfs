@@ -1045,17 +1045,14 @@ def test_cp_unprofiled_option_rejection_is_source_free() -> None:
         source_calls += 1
         raise AssertionError
 
-    result = _invoke(
-        App({"memory": source_must_not_run}),
-        "cp",
-        ["-L", "memory:/docs/notes.txt", "memory:/docs/copy.txt"],
+    result = CliRunner().invoke(
+        App({"memory": source_must_not_run}).typer_app,
+        ["cp", "-L", "memory:/docs/notes.txt", "memory:/docs/copy.txt"],
+        env={"FORCE_COLOR": "1"},
     )
 
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        2,
-        "",
-        "cp: -L: unsupported option\n",
-    )
+    assert (result.exit_code, result.stdout_bytes) == (2, b"")
+    assert "No such option: -L" in strip_ansi(result.stderr)
     assert source_calls == 0
 
 

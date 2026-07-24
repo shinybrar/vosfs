@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from functools import partial
 from types import MappingProxyType
 from typing import Annotated, Any, Literal, TypeAlias, TypedDict
 
@@ -20,10 +19,9 @@ from ._command import (
     _MappedOperand,
     _parse_mapped_operand,
     _raw_arguments,
-    _RawCommand,
     _usage_error,
 )
-from ._cp import _run_cp
+from ._cp import _cp_plan, _run_cp
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._dirname import _run_dirname
 from ._du import _DuRequest, _run_du
@@ -118,9 +116,7 @@ def _snapshot_capabilities(capabilities: AppCapabilities | None) -> _Capabilitie
 
 
 # Commands that acquire mapped sources and run on the invocation event loop.
-_ASYNC_COMMANDS: tuple[_AsyncCommand, ...] = (
-    ("cp", "Copy files or one directory with -R or -r", _run_cp, _RawCommand),
-)
+_ASYNC_COMMANDS: tuple[_AsyncCommand, ...] = ()
 
 
 def _validate_source_name(name: object) -> None:
@@ -240,6 +236,37 @@ class App:
             )
             _ensure_no_active_event_loop("cat")
             asyncio.run(_run_cat("cat", parsed, self._sources))
+
+        def run_cp(operands: list[str], *, recursive: bool) -> None:
+            plan = _cp_plan("cp", tuple(operands), self._sources, recursive=recursive)
+            _ensure_no_active_event_loop("cp")
+            asyncio.run(_run_cp("cp", plan, self._sources))
+
+        if self._capabilities.recursive_copy:
+
+            @self.typer_app.command()
+            def cp(
+                operands: Annotated[
+                    list[str],
+                    typer.Argument(metavar="SOURCE... DESTINATION"),
+                ],
+                *,
+                recursive: Annotated[bool, typer.Option("-R", "-r")] = False,
+            ) -> None:
+                """Copy files or one directory."""
+                run_cp(operands, recursive=recursive)
+
+        else:
+
+            @self.typer_app.command()
+            def cp(
+                operands: Annotated[
+                    list[str],
+                    typer.Argument(metavar="SOURCE... DESTINATION"),
+                ],
+            ) -> None:
+                """Copy one or more files."""
+                run_cp(operands, recursive=False)
 
         @self.typer_app.command()
         def mkdir(
@@ -647,24 +674,8 @@ class App:
             asyncio.run(_run_mv("mv", plan, self._sources))
 
         for registered_command in _ASYNC_COMMANDS:
-            command = registered_command
-            if registered_command[0] == "cp":
-                help_text = (
-                    "Copy files or one directory with -R or -r"
-                    if self._capabilities.recursive_copy
-                    else "Copy a file (no recursion)"
-                )
-                command = (
-                    registered_command[0],
-                    help_text,
-                    partial(
-                        _run_cp,
-                        recursive_enabled=self._capabilities.recursive_copy,
-                    ),
-                    registered_command[3],
-                )
             _register_async_command(
                 self.typer_app,
                 self._sources,
-                command,
+                registered_command,
             )

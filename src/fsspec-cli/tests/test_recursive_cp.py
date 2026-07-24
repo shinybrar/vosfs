@@ -376,10 +376,11 @@ def test_recursive_cp_rejects_existing_resolved_root_file_or_link(
 def test_recursive_cp_merges_existing_tree_and_replaces_files() -> None:
     entries: dict[str, bytes | None] = {
         "/": None,
-        "/docs": None,
+        "/docs/": None,
         "/docs/empty": None,
         "/docs/notes.txt": b"new",
         "/target": None,
+        "/target//": None,
         "/target/docs": None,
         "/target/docs/extra.txt": b"keep",
         "/target/docs/notes.txt": b"old",
@@ -395,6 +396,9 @@ def test_recursive_cp_merges_existing_tree_and_replaces_files() -> None:
     assert entries["/target/docs/notes.txt"] == b"new"
     assert entries["/target/docs/extra.txt"] == b"keep"
     assert entries["/target/docs/empty"] is None
+    assert ("info", "/docs/") in calls
+    assert ("info", "/target//") in calls
+    assert ("walk", "/docs/", True, "raise") in calls
 
 
 @pytest.mark.parametrize(
@@ -408,10 +412,6 @@ def test_recursive_cp_merges_existing_tree_and_replaces_files() -> None:
         (
             ["-R", "memory:/docs", "memory:/out/./copy"],
             "cp: memory:/out/./copy: dot segment unsupported\n",
-        ),
-        (
-            ["-R", "-r", "memory:/docs", "memory:/out"],
-            "cp: -r: unsupported option\n",
         ),
     ],
 )

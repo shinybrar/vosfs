@@ -14,21 +14,26 @@ from typing import TYPE_CHECKING, cast
 
 import typer
 
-from ._command import _MappedOperand, _usage_error
+from ._command import (
+    _CommandFailureError,
+    _drain_current_operation,
+    _MappedOperand,
+    _usage_error,
+)
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 from ._path import (
     _has_dot_segment,
+    _is_root,
+    _is_same_or_descendant,
     _lexical_basename,
     _lexical_join,
     _lexical_parent,
-    _strip_trailing_slashes,
+    _lexical_relative,
+    _same_lexical_path,
 )
-from ._sources import _await_current, _SourceInvocation
 
 if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
-
-    from ._app import AsyncFilesystemSource
 
 _MAX_ENTRIES = 10_000
 _WALK_ROW_LENGTH = 3
@@ -98,15 +103,13 @@ def _canonical_operand(
     *,
     source: bool,
 ) -> _MappedOperand:
-    parts = operand.path.split("/")
-    if any(part in {".", ".."} for part in parts):
+    if _has_dot_segment(operand.path):
         rendered = _render_diagnostic_value(operand.spelling)
         _usage_error(command, f"{rendered}: dot segment unsupported")
-    path = "/" + "/".join(part for part in parts if part)
-    if source and path == "/":
+    if source and _is_root(operand.path):
         rendered = _render_diagnostic_value(operand.spelling)
         _usage_error(command, f"{rendered}: source root unsupported")
-    return replace(operand, path=path)
+    return operand
 
 
 async def _drain_task(task: asyncio.Task[object]) -> None:
@@ -159,7 +162,7 @@ async def _call(
     result = method(*args, **kwargs)
     if not inspect.isawaitable(result):
         raise NotImplementedError
-    return await _await_current(result)
+    return await _drain_current_operation(result)
 
 
 def _tokens(info: Mapping[object, object]) -> tuple[tuple[str, str | bytes], ...]:
@@ -183,7 +186,10 @@ def _entry(
     *,
     expected_kind: str | None = None,
 ) -> _ManifestEntry:
-    if not isinstance(info, Mapping) or info.get("name") != path:
+    if not isinstance(info, Mapping):
+        raise _IncompatibleResultError
+    name = info.get("name")
+    if type(name) is not str or not _same_lexical_path(name, path):
         raise _IncompatibleResultError
     typed_info = cast("Mapping[object, object]", info)
     islink = typed_info.get("islink", False)
@@ -216,8 +222,6 @@ def _walk_row(
     if (
         type(root) is not str
         or not root.startswith("/")
-        or _strip_trailing_slashes(root) != root
-        or "//" in root
         or "\0" in root
         or "\n" in root
         or "\r" in root
@@ -342,7 +346,7 @@ async def _close_async_iterator(iterator: AsyncIterator[object]) -> None:
         return
     result = close()
     if inspect.isawaitable(result):
-        await _await_current(result)
+        await _drain_current_operation(result)
 
 
 async def _async_rows(
@@ -357,7 +361,7 @@ async def _async_rows(
     try:
         while True:
             try:
-                value = await _await_current(anext(iterator))
+                value = await _drain_current_operation(anext(iterator))
             except StopAsyncIteration:
                 break
             row = _walk_row(
@@ -383,21 +387,25 @@ async def _async_rows(
 
 async def _walk_rows(
     filesystem: AsyncFileSystem,
-    path: str,
+    requested_path: str,
+    source_path: str,
 ) -> tuple[_WalkRow, ...]:
     method = getattr(filesystem, "_walk", None)
     if not callable(method):
         raise NotImplementedError
-    result = method(path, detail=True, on_error="raise")
+    result = method(requested_path, detail=True, on_error="raise")
     if isinstance(result, AsyncIterator):
-        return await _async_rows(result, path)
+        return await _async_rows(result, source_path)
     if not inspect.isawaitable(result):
         raise _IncompatibleResultError
-    return await _sync_rows(await _resolve_sync_iterator(result), path)
+    return await _sync_rows(await _resolve_sync_iterator(result), source_path)
 
 
 def _relative_path(root: str, path: str) -> str:
-    return path[len(root) + 1 :] if root != "/" else path[1:]
+    relative = _lexical_relative(root, path)
+    if relative is None:
+        raise _IncompatibleResultError
+    return relative
 
 
 def _manifest_from_rows(
@@ -428,8 +436,16 @@ async def _manifest(
     path: str,
     source_info: object,
 ) -> _Manifest:
-    root_entry = _entry("", path, source_info, expected_kind="directory")
-    return _manifest_from_rows(root_entry, await _walk_rows(filesystem, path))
+    if not isinstance(source_info, Mapping):
+        raise _IncompatibleResultError
+    reported_path = source_info.get("name")
+    if type(reported_path) is not str or not _same_lexical_path(reported_path, path):
+        raise _IncompatibleResultError
+    root_entry = _entry("", reported_path, source_info, expected_kind="directory")
+    return _manifest_from_rows(
+        root_entry,
+        await _walk_rows(filesystem, path, reported_path),
+    )
 
 
 def _render_operand(command: str, operand: _MappedOperand, category: str) -> None:
@@ -652,8 +668,9 @@ class _RecursiveCopy:
                     "destination type conflict",
                 )
 
-        if self.source.name == self.destination.name and (
-            resolved == self.source.path or resolved.startswith(f"{self.source.path}/")
+        if self.source.name == self.destination.name and _is_same_or_descendant(
+            self.source.path,
+            resolved,
         ):
             return resolved, _Failure(
                 self.destination,
@@ -917,29 +934,15 @@ async def _run_recursive_cp(
     command: str,
     source_operand: _MappedOperand,
     destination_operand: _MappedOperand,
-    sources: Mapping[str, AsyncFilesystemSource],
+    filesystems: Mapping[str, AsyncFileSystem],
 ) -> None:
-    source = _canonical_operand(command, source_operand, source=True)
-    destination = _canonical_operand(command, destination_operand, source=False)
-    invocation = _SourceInvocation(command, sources)
-    succeeded = False
-    failure = None
-    try:
-        names = tuple(dict.fromkeys((source.name, destination.name)))
-        filesystems = await invocation.acquire(names)
-        if filesystems is not None:
-            failure = await _RecursiveCopy(
-                command,
-                source,
-                destination,
-                filesystems[source.name],
-                filesystems[destination.name],
-            ).run()
-            if failure is not None:
-                _render_failure(command, failure)
-            succeeded = failure is None
-    finally:
-        command_error = failure.error if failure is not None else None
-        cleanup_failed = await invocation.close_with_command_error(command_error)
-    if not succeeded or cleanup_failed:
-        raise typer.Exit(1)
+    failure = await _RecursiveCopy(
+        command,
+        source_operand,
+        destination_operand,
+        filesystems[source_operand.name],
+        filesystems[destination_operand.name],
+    ).run()
+    if failure is not None:
+        _render_failure(command, failure)
+        raise _CommandFailureError(error=failure.error, render=False)
