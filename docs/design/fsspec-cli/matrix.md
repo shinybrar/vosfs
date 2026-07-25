@@ -18,8 +18,8 @@ recorded once instead of duplicated across backends that were never entered.
 | Status | Meaning |
 | --- | --- |
 | `pass` | The positive contract passed every required gate for this exact build, dependency set, source form, and platform. |
-| `fail` | A qualifying test **reached** the behaviour and contradicted the contract. Kept as `fail` — see [`lessons.md` §14](lessons.md#14-keep-fail-when-a-gate-reaches-a-real-contradiction). |
-| `unsupported` | The contract deliberately excludes the behaviour and a negative test proves its complete rejection. |
+| `fail` | A qualifying test **reached** the behavior and contradicted the contract. Kept as `fail` — see [`lessons.md` §14](lessons.md#14-keep-fail-when-a-gate-reaches-a-real-contradiction). |
+| `unsupported` | The contract deliberately excludes the behavior and a negative test proves its complete rejection. |
 
 An infrastructure or test-setup failure that prevents observation is
 inconclusive: `unverified`, not `fail`.

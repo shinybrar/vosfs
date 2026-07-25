@@ -33,9 +33,12 @@ and certificates — it never acquires or refreshes them.
     export VOSFS_TOKEN_FILE=/run/secrets/vos-token
     ```
 
-    Prefer `VOSFS_TOKEN_FILE` over `VOSFS_TOKEN`: the file is reread before
-    every request, and a literal token is included in pickle and JSON
-    serialization.
+    Both variables are reread from the environment before every request, and
+    neither value is captured into the filesystem's storage options, so
+    neither is serialized. The equivalent *constructor* option `token=` is
+    different: a literal token passed there **is** included in fsspec pickle
+    and JSON output, so prefer `tokenfile=` or an environment source when the
+    filesystem may be serialized.
 
 Set **exactly one** credential source. Any explicit constructor option
 (`token`, `tokenfile`, `certfile`) makes `vosfs` ignore *all* credential
@@ -90,17 +93,28 @@ certfile = str(Path("~/.ssl/cadcproxy.pem").expanduser())
 
 ## `NotImplementedError`
 
-The operation is outside the OpenCADC profile. The common ones:
+The operation is outside the OpenCADC profile and fails fast, before any remote
+mutation:
 
 | You tried | Why it fails | Instead |
 | --- | --- | --- |
-| Reading a byte range | Cavern serves whole objects only | Read the whole object; it is staged to a temp file |
-| `blockcache::` / `cached::` | Need server-side ranges | Use `simplecache::` or `filecache::` |
 | Appending, or `"a"` / `"r+"` mode | One whole `PUT` per file | Read, modify, write the whole object |
 | `touch(truncate=False)` | Needs a partial update | Use `touch()` (truncating) |
 | `rm(..., maxdepth=...)` | Bounded-depth deletion is not modeled | `rm(recursive=True)`, or delete explicitly |
 | Moving a `LinkNode` | Not in the profile | Recreate the link at the target |
-| FUSE mounting | Not supported | Use the fsspec API or `fsspec-cli` |
+| Reading an external `LinkNode`'s bytes | Target is outside the service | Fetch the target yourself |
+
+## Things that are absent rather than raising
+
+These do not raise `NotImplementedError` — there is simply nothing to call, or
+the behavior silently differs from what you may expect:
+
+| Expectation | Reality |
+| --- | --- |
+| A ranged read transfers only those bytes | `cat_file(path, start, end)` **works**, but reads the whole object and slices locally. Correct results, no bandwidth saving. |
+| `blockcache::` / `cached::` wrappers | Need server-side ranges; use `simplecache::` or `filecache::` instead. |
+| FUSE mounting | Not provided. Use the fsspec API or [`fsspec-cli`](cli/index.md). |
+| `created` timestamps, `open_async` | Not part of the profile. |
 
 ## `TimeoutError` or `ConnectionError`
 

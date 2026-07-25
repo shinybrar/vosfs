@@ -73,5 +73,7 @@ def test_ll_still_accepts_its_own_options() -> None:
     )
 
     assert result.exit_code == 0
-    assert "-A" in result.stdout
-    assert "-h" in result.stdout
+    # Assert on the help *text*, not the flag: `--help`'s own row contains the
+    # substring "-h", so `"-h" in stdout` would pass even if `-h` were removed.
+    assert "Include entries whose name begins with a dot." in result.stdout
+    assert "Print sizes in human-readable units." in result.stdout

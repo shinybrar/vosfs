@@ -82,7 +82,7 @@ class _WalkRow:
 class _RecursiveCpFailure:
     operand: _MappedOperand
     category: str | None = None
-    error: Exception | None = None
+    backend_error: Exception | None = None
     residue: bool = False
     rendered: bool = False
 
@@ -445,7 +445,7 @@ def _render_failure(command: str, failure: _RecursiveCpFailure) -> None:
 
 
 def _read_failure(operand: _MappedOperand, error: Exception) -> _RecursiveCpFailure:
-    return _RecursiveCpFailure(operand, _backend_category(error), error=error)
+    return _RecursiveCpFailure(operand, _backend_category(error), backend_error=error)
 
 
 def _staging_failure(source: _MappedOperand, error: Exception) -> _RecursiveCpFailure:
@@ -453,7 +453,7 @@ def _staging_failure(source: _MappedOperand, error: Exception) -> _RecursiveCpFa
     return _RecursiveCpFailure(
         source,
         f"staging failure ({rendered_class})",
-        error=error,
+        backend_error=error,
         residue=True,
     )
 
@@ -513,9 +513,11 @@ def _classify_existing(  # noqa: PLR0911 - stable metadata categories.
     try:
         entry = _entry("", path, info)
     except _UnsupportedEntryError as error:
-        return _RecursiveCpFailure(operand, "unsupported entry type", error=error)
+        return _RecursiveCpFailure(
+            operand, "unsupported entry type", backend_error=error
+        )
     except _IncompatibleResultError as error:
-        return _RecursiveCpFailure(operand, "incompatible result", error=error)
+        return _RecursiveCpFailure(operand, "incompatible result", backend_error=error)
     return entry
 
 
@@ -710,7 +712,7 @@ class _RecursiveCopy:
                     failure = _RecursiveCpFailure(
                         self.source,
                         "transfer failure",
-                        error=error,
+                        backend_error=error,
                         residue=True,
                     )
 
@@ -740,7 +742,7 @@ class _RecursiveCopy:
                     failure = _RecursiveCpFailure(
                         self.destination,
                         "mutation failure",
-                        error=error,
+                        backend_error=error,
                         residue=True,
                     )
         except BaseException:
@@ -761,7 +763,9 @@ class _RecursiveCopy:
         if failure is not None:
             return replace(failure, rendered=True)
         if cleanup_error is not None:
-            return _RecursiveCpFailure(self.source, error=cleanup_error, rendered=True)
+            return _RecursiveCpFailure(
+                self.source, backend_error=cleanup_error, rendered=True
+            )
         return None
 
     async def _mutate(
@@ -785,7 +789,7 @@ class _RecursiveCopy:
                 return _RecursiveCpFailure(
                     self.destination,
                     "mutation failure",
-                    error=error,
+                    backend_error=error,
                     residue=True,
                 )
 
@@ -816,7 +820,7 @@ class _RecursiveCopy:
             return _RecursiveCpFailure(
                 self.source,
                 "source revalidation failure",
-                error=error,
+                backend_error=error,
                 residue=True,
             )
         if current != frozen:
@@ -854,7 +858,7 @@ class _RecursiveCopy:
             return _RecursiveCpFailure(
                 self.destination,
                 "verification failure",
-                error=error,
+                backend_error=error,
                 residue=True,
             )
         return None
@@ -884,16 +888,18 @@ class _RecursiveCopy:
             )
         except _UnsupportedEntryError as error:
             return _RecursiveCpFailure(
-                self.source, "unsupported entry type", error=error
+                self.source, "unsupported entry type", backend_error=error
             )
         except _EntryLimitError as error:
             return _RecursiveCpFailure(
                 self.source,
                 f"source tree exceeds {_MAX_ENTRIES} entries",
-                error=error,
+                backend_error=error,
             )
         except _IncompatibleResultError as error:
-            return _RecursiveCpFailure(self.source, "incompatible result", error=error)
+            return _RecursiveCpFailure(
+                self.source, "incompatible result", backend_error=error
+            )
         except Exception as error:  # noqa: BLE001 - classify walk boundary.
             return _read_failure(self.source, error)
 
@@ -927,8 +933,8 @@ async def _run_recursive_cp(
             _render_failure(command, failure)
         except Exception as error:
             raise _CommandFailureError(
-                error=failure.error,
+                error=failure.backend_error,
                 render=False,
                 propagate=error,
             ) from error
-        raise _CommandFailureError(error=failure.error, render=False)
+        raise _CommandFailureError(error=failure.backend_error, render=False)

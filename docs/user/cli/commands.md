@@ -4,10 +4,12 @@ Every command takes operands spelled `name:/path`. `name` is a key from the
 source mapping you passed to `App`; `/path` is handed to that backend
 literally.
 
-`--` ends option parsing, so a path that begins with `-` is still reachable:
+`--` ends option parsing. A mapped operand always begins with `name:`, and a
+source name may not start with `-`, so `--` matters mainly for the source-free
+commands, whose operand is a bare string:
 
 ```bash
-myapp fs ls -- data:/-weird-name
+myapp fs basename -- -weird-name
 ```
 
 ## At a glance
@@ -110,7 +112,14 @@ fi
 ```
 
 `-e` exists, `-d` is a directory, `-f` is a regular file. Exactly one is
-required. No output — the answer is the exit status.
+required. No output — the answer is the exit status: **`0` for true, `1` for
+false**.
+
+!!! warning "A false predicate exits `1`, the same code as a real failure"
+
+    `test` cannot distinguish "the file is not there" from "the backend
+    errored" by status alone. A genuine failure also writes a diagnostic to
+    stderr, so check stderr if you need to tell them apart.
 
 ### `info`
 
@@ -135,8 +144,9 @@ A reduced BSD/macOS-shaped line:
 ```
 
 Deliberately narrower than `info`: it needs the full local-rich field set
-(`mode`, `nlink`, `uid`, `gid`, `size`, `mtime`). A backend that does not report
-them reports `incompatible result`. Use `info` for remote backends.
+(`type`, a string `name`, `mode`, `nlink`, `uid`, `gid`, `size`, `mtime`), and
+rejects symlinks. A backend that does not report all of them reports
+`incompatible result`. Use `info` for remote backends.
 
 ## Reading bytes
 
@@ -251,7 +261,9 @@ myapp fs rm -d data:/emptydir             # also remove empty directories
 myapp fs rm -R data:/project              # recursive, if enabled
 ```
 
-`-d` cannot be combined with other options; `-f` cannot be combined with `-v`.
+`-d` cannot be combined with other options. `-f` cannot be combined with `-v`
+unless `-R`/`-r` is also given. `-v` may be supplied only once; repeated `-f`
+is idempotent, and `-f` with no operands succeeds silently.
 
 !!! danger "`rm -R` is off unless the host enabled it"
 
@@ -289,4 +301,6 @@ confirmed — it may have applied. Check the actual state before retrying.
 
 Exit statuses are documented in
 [Integration](integration.md#exit-statuses). The short version: `2` means
-nothing was touched, `1` means something went wrong, `141` means a pipe closed.
+nothing was touched, `1` means something went wrong, and `141` means a pipe
+closed on one of the streaming commands (`cat`, `head`, `tail`, `rm -v`) — the
+buffered commands report a broken pipe as `1`.

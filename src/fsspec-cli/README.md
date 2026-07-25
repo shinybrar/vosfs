@@ -46,6 +46,11 @@ python app.py fs ls data:/
 python app.py fs cp local:/results.csv archive:/2026/results.csv
 ```
 
+`memory` keeps the example runnable with no setup; a real host maps the
+filesystems it serves. See the
+[Overview](https://shinybrar.github.io/vosfs/cli/) for the same app wired to
+local disk plus a remote VOSpace archive.
+
 ## Commands
 
 `ls` · `ll` · `du` · `find` · `tree` · `size` · `test` · `info` · `stat` ·

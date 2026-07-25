@@ -116,7 +116,7 @@ Likewise one `_walk` for `tree`, or one `_find`, may perform one listing
 request per reached directory. `du -s` changes the output, not the traversal
 cost.
 
-Document the *request the CLI makes*, never the network behaviour it cannot
+Document the *request the CLI makes*, never the network behavior it cannot
 control.
 
 ## 10. Bound the work before starting it
@@ -173,7 +173,7 @@ The distinction that makes the matrix worth keeping:
 
 - test setup or CI infrastructure prevented observation → `unverified`;
 - the command ran and violated its contract → `fail`;
-- an explicitly excluded behaviour proved its rejection → `unsupported`.
+- an explicitly excluded behavior proved its rejection → `unsupported`.
 
 `unverified` is neutral and never means `unsupported`. A missing row is
 `unverified` by definition — which is why the matrix lists only rows with

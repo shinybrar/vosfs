@@ -136,11 +136,14 @@ unambiguous:
 
 ### `test`
 
-Exactly one of `-e`, `-d`, `-f` is required:
+Exactly one *distinct* predicate is required:
 
 ```text
 test: exactly one predicate selector is required
 ```
+
+Repeating the **same** selector (`test -e -e`) is idempotent and still selects
+one predicate; two **different** selectors, or none, is a usage error.
 
 Awaits `_exists`, `_isdir`, or `_isfile` respectively. The result MUST be an
 exact `bool`. No stdout; the answer is the exit status.
@@ -212,10 +215,44 @@ diagnostics.
 
 Metadata-verified file copy. Same-source copies await `_cp_file`; cross-source
 copies stage through one host-local temporary and await `_get_file` then
-`_put_file`. Multiple sources require an existing destination directory.
+`_put_file(..., mode="overwrite")`. Multiple sources require an existing
+destination directory.
 
-Every copy verifies destination metadata after the mutation. A verification
-failure after a dispatched write is reported as uncertain, not as success.
+If both configured names resolve to the same filesystem object *and* the same
+path, the command rejects `same path` **before** staging or upload.
+
+#### The metadata verification proof
+
+Expected size and recognized source tokens are frozen into an immutable proof
+immediately after source validation, before destination resolution or mutation.
+After the transfer, the shared verifier requires:
+
+1. the staged source size matches the pre-transfer source `_info`;
+2. the destination is a file of that exact size; and
+3. every **shared** recognized metadata token matches exactly, under the
+   normalized names `ETag` / `etag`, `md5`, `content-md5` / `content_md5`, and
+   `checksum`. Tokens must be exact `str` or `bytes`.
+
+With no shared recognized token, exact type and size are the truthful proof.
+**No cryptographic strength is claimed** — this is an agreement check on
+whatever both ends happen to report, not a content hash.
+
+The source temporary is the transfer bridge, **not** a verification download.
+There is no destination download, FIFO, pipe, worker thread, synchronous open,
+or second temporary. Any future byte comparison would require a separately
+profiled explicit opt-in and a blocking comparison through
+`asyncio.to_thread`.
+
+Staging cleanup runs after success, ordinary failure, and escaping control
+flow. An ordinary cleanup failure is reported only when no transfer or
+verification failure already exists, and never masks escaping control flow.
+Staging errors disclose only the error class — never local temporary paths or
+source content.
+
+Status `0` proves source retention, destination type and byte count, and
+agreement of every shared recognized token. A failed upload or later
+verification reports that **destination residue may remain**. The command never
+deletes the destination to simulate rollback and never claims atomicity.
 
 ### `cp -R` / `cp -r`
 
@@ -286,6 +323,11 @@ rm: -d: cannot combine with other options
 rm: -f: cannot combine with -v
 rm: missing mapped filesystem operand
 ```
+
+Repeated and grouped `-f` flags are idempotent (`rm -f -f` is `rm -f`), and
+`-f` with zero operands succeeds without entering a source or writing output.
+`-v` may be supplied only once. Typer accepts a registered option before or
+after operands.
 
 `rm -R` / `-r` requires `capabilities.recursion.remove` (default **off**). It
 builds a bounded complete manifest through `_info` and `_ls(detail=True)`,

@@ -60,6 +60,57 @@ different filesystems at once:
 python app.py fs cp local:/results.csv archive:/2026/results.csv
 ```
 
+## With a real backend
+
+The example above uses `memory` so it runs with no setup. A real host wires up
+the filesystems it actually serves — here local disk plus a VOSpace archive:
+
+```python
+from contextlib import asynccontextmanager
+
+import fsspec
+import typer
+from fsspec.implementations.asyn_wrapper import AsyncFileSystemWrapper
+from fsspec_cli import App
+from vosfs import VOSpaceFileSystem
+
+
+@asynccontextmanager
+async def local_source():
+    yield AsyncFileSystemWrapper(fsspec.filesystem("file"))
+
+
+@asynccontextmanager
+async def archive_source():
+    fs = VOSpaceFileSystem(
+        endpoint_url="https://staging.canfar.net/arc",
+        asynchronous=True,
+        skip_instance_cache=True,
+    )
+    try:
+        yield fs
+    finally:
+        await fs.aclose()
+
+
+app = typer.Typer()
+app.add_typer(
+    App({"local": local_source, "archive": archive_source}).typer_app,
+    name="fs",
+)
+```
+
+```bash
+python app.py fs ls -lh archive:/project
+python app.py fs cp local:/reduced.fits archive:/project/reduced.fits
+python app.py fs du -sh archive:/project
+```
+
+Credentials come from the backend, not from `fsspec-cli` — `vosfs` picks up
+`VOSFS_CERT_FILE` or `VOSFS_TOKEN_FILE` as usual. See
+[Integration](integration.md#sources) for why each source is a *fresh*
+filesystem per invocation.
+
 ## Where to go next
 
 <div class="grid cards" markdown>

@@ -9,7 +9,7 @@ host embeds in its own CLI.
 | Document | Holds | Read it when |
 | --- | --- | --- |
 | [`contract.md`](contract.md) | Invariants every command inherits: operand syntax, the Typer/command ownership split, diagnostics, result validation, exit status, source lifecycle, metadata normalization, capabilities, extensions. | You are implementing or changing **any** command. |
-| [`commands.md`](commands.md) | One section per command: its form, the backend hooks it awaits, its output, and its delta from the contract. | You need the exact behaviour of one command. |
+| [`commands.md`](commands.md) | One section per command: its form, the backend hooks it awaits, its output, and its delta from the contract. | You need the exact behavior of one command. |
 | [`lessons.md`](lessons.md) | The findings that cost real investigation, stated independently of any one command. | Before changing a rule that looks arbitrary — it probably isn't. |
 | [`matrix.md`](matrix.md) | Which command and source-form combinations have qualifying evidence. | You are making a compatibility claim or cutting a release. |
 
@@ -32,7 +32,7 @@ wins and the prose is the bug. Per-command tests live in
 
 ## History
 
-This directory replaces 43 separate design documents (≈391 KB), which had
+This directory replaces 41 separate design documents (350,168 bytes), which had
 accumulated the same invariants restated in 15–25 files each — the RFC 2119
 preamble in 18, the client baseline in 25, the source-lifecycle paragraph in
 19. Six of those documents had already declared themselves superseded or

@@ -152,14 +152,33 @@ Anything shelling out to your CLI needs these:
 | `2` | Usage or operand preflight failed; **no filesystem work ran**. |
 | `141` | `128 + SIGPIPE` — a broken pipe was the only failure. |
 
-Status `141` lets a pipeline consumer tell a closed reader from a real failure:
-
-```bash
-myapp fs cat data:/huge.log | head -5   # 141, not an error
-```
-
 Status `2` is a useful guarantee for destructive commands: if you get `2`,
 nothing was touched.
+
+!!! warning "`test` uses `1` as an answer, not an error"
+
+    A false `test -e|-d|-f` predicate exits `1` with empty output. That is the
+    normal negative answer, not a failure. A real failure also writes a
+    diagnostic to stderr — check stderr, not just the status.
+
+### Which commands can exit `141`
+
+Only the streaming commands, where a closed reader is worth distinguishing from
+a real failure:
+
+```bash
+myapp fs cat data:/huge.log | head -5   # 141
+```
+
+| Broken pipe gives | Commands |
+| --- | --- |
+| `141` | `cat`, `head`, `tail`, `rm -v` |
+| `1` | `ls`, `ll`, `du`, `find`, `tree`, `info`, `size`, `stat`, `sign` |
+
+The second group formats and buffers its whole output before a single write, so
+a broken pipe there is an ordinary output failure with nothing partially
+emitted. If you are checking for `141`, check for `1` as well unless you know
+which command ran.
 
 ## Diagnostics
 

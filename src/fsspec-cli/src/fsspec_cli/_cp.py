@@ -8,13 +8,14 @@ from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 import typer
 
 from ._command import (
     _CommandFailureError,
     _drain_current_operation,
+    _Failure,
     _MappedOperand,
     _parse_mapped_operand,
     _render_backend_failure,
@@ -55,12 +56,15 @@ class _CpPlan:
 
 
 @dataclass(frozen=True)
-class _CpFailure:
-    operand: _MappedOperand
-    backend_error: Exception | None = None
-    incompatible: Literal["directory", "result", "same_path"] | None = None
+class _CpFailure(_Failure):
+    """A copy failure: the shared shape plus this command's transfer state.
+
+    ``category`` carries a copy-specific diagnostic that has no equivalent in
+    the shared vocabulary; ``residue`` marks a failure that may have left a
+    partial or unverified destination behind.
+    """
+
     category: str | None = None
-    uncertain: bool = False
     residue: bool = False
 
 
