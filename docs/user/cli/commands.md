@@ -162,8 +162,8 @@ Byte counts only — there is no `-n` line mode.
 !!! note "Bounded request, not necessarily a bounded transfer"
 
     `-c N` bounds what the CLI *asks for*. Whether the backend transfers only
-    those bytes is up to the backend. `vosfs` reads the whole object and slices
-    locally, because OpenCADC Cavern serves no HTTP Range.
+    those bytes is up to the backend: `vosfs` may keep a validated `206`, or
+    fall back to a whole-object body when the endpoint answers `200`.
 
 ### `cat`
 

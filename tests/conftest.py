@@ -113,11 +113,20 @@ def data_node_response(
     return httpx.Response(200, content=document)
 
 
-def mock_transfers(router: respx.Router, files: dict[str, bytes]) -> None:
+def mock_transfers(
+    router: respx.Router,
+    files: dict[str, bytes],
+    *,
+    honour_range: bool = False,
+) -> None:
     """Wire path-aware synchronous negotiation and byte endpoints.
 
     Each key in ``files`` is an internal path served at a per-path byte
     endpoint; the negotiation POST and transfer-details GET route to it.
+
+    When ``honour_range`` is true, a ``Range: bytes=...`` GET returns ``206``
+    with a matching ``Content-Range`` (minoc-like). Otherwise ``Range`` is
+    ignored and the whole object is returned as ``200`` (Cavern-like).
     """
     mock_capabilities(router)
 
@@ -153,10 +162,49 @@ def mock_transfers(router: respx.Router, files: dict[str, bytes]) -> None:
         content = files[path]
         if content == b"":
             return httpx.Response(204)
+        if honour_range:
+            ranged = _ranged_response(request, content)
+            if ranged is not None:
+                return ranged
         # An async-generator body makes the mock response genuinely streamable.
         return httpx.Response(200, content=_stream(content))
 
     router.route(url__regex=rf"^{re.escape(BASE_URL)}/files").mock(side_effect=byte_op)
+
+
+def _ranged_response(request: httpx.Request, content: bytes) -> httpx.Response | None:
+    """Return a 206 for a simple ``bytes=`` Range, or None to fall through."""
+    raw = request.headers.get("range")
+    if raw is None or not raw.startswith("bytes="):
+        return None
+    spec = raw.removeprefix("bytes=")
+    size = len(content)
+    if spec.startswith("-"):
+        length = int(spec[1:])
+        start = max(0, size - length)
+        end = size - 1
+    elif spec.endswith("-"):
+        start = int(spec[:-1])
+        end = size - 1
+    else:
+        start_s, end_s = spec.split("-", 1)
+        start = int(start_s)
+        end = int(end_s)
+    if start < 0 or end < start or start >= size:
+        return httpx.Response(416)
+
+    async def _stream(data: bytes) -> AsyncIterator[bytes]:
+        yield data
+
+    body = content[start : end + 1]
+    return httpx.Response(
+        206,
+        content=_stream(body),
+        headers={
+            "Content-Range": f"bytes {start}-{end}/{size}",
+            "Content-Length": str(len(body)),
+        },
+    )
 
 
 @pytest.fixture

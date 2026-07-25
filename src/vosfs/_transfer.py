@@ -15,21 +15,24 @@ adapter in :mod:`vosfs.filesystem`.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
 import httpx
 
-from vosfs import _integrity, capabilities, errors, negotiate, nodes, transport
+from vosfs import _integrity, capabilities, errors, negotiate, nodes, staging, transport
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from vosfs.filesystem import VOSpaceFileSystem
     from vosfs.negotiate import NegotiatedEndpoint
     from vosfs.nodes import Node
 
 DEFAULT_CONTENT_TYPE = "application/octet-stream"
+_CONTENT_RANGE = re.compile(r"bytes\s+(\d+)-(\d+)/(\d+|\*)\s*$", re.IGNORECASE)
 
 
 async def negotiate_endpoint(
@@ -232,10 +235,223 @@ async def read_whole(filesystem: VOSpaceFileSystem, path: str) -> bytes:
     """
     response = await open_read_stream(filesystem, path)
     try:
-        if response.status_code == transport.HTTP_NO_CONTENT:
-            return b""
-        chunks = response.aiter_raw(_integrity.READ_CHUNK)
-        return b"".join([chunk async for chunk in chunks])
+        return await _raw_body(response)
+    finally:
+        await response.aclose()
+
+
+def http_range_header(start: int | None, end: int | None) -> str | None:
+    """Map Python half-open bounds to an HTTP ``Range`` value, or ``None``.
+
+    ``None`` means the caller should issue a whole GET (no partial request, or
+    bounds that need the object size before they can be expressed).
+    """
+    if start is None and end is None:
+        return None
+    if start is not None and start < 0:
+        return f"bytes={start}" if end is None else None
+    if end is not None and end < 0:
+        return None
+    first = 0 if start is None else start
+    if end is None:
+        return f"bytes={first}-"
+    if end <= first:
+        return None
+    return f"bytes={first}-{end - 1}"
+
+
+async def read_slice(
+    filesystem: VOSpaceFileSystem,
+    path: str,
+    start: int | None = None,
+    end: int | None = None,
+) -> bytes:
+    """Return one object slice, using ``Range`` when the byte endpoint agrees."""
+    range_header = http_range_header(start, end)
+    if range_header is None:
+        return (await read_whole(filesystem, path))[start:end]
+    body, whole = await _byte_get(
+        filesystem, path, range_header=range_header, target_validated=False
+    )
+    return body[start:end] if whole else body
+
+
+async def read_grouped_ranges(
+    filesystem: VOSpaceFileSystem,
+    path: str,
+    ranges: Sequence[tuple[int, int | None, int | None]],
+) -> list[tuple[int, bytes]]:
+    """Return indexed slices for one object, ranging while responses are ``206``."""
+    await preflight_read_target(filesystem, path)
+    if not ranges:
+        return []
+
+    async def download(temp_path: str) -> None:
+        await _download_to_path(filesystem, path, temp_path, target_validated=True)
+
+    first_range = http_range_header(ranges[0][1], ranges[0][2])
+    if first_range is None:
+        return await staging.read_ranges(download, ranges)
+
+    endpoint = await negotiate_endpoint(
+        filesystem,
+        path,
+        direction=negotiate.DIRECTION_PULL,
+        protocol_uri=negotiate.PROTOCOL_HTTPS_GET,
+    )
+    values: list[tuple[int, bytes]] = []
+    for index, start, end in ranges:
+        range_header = http_range_header(start, end)
+        if range_header is None:
+            return await staging.read_ranges(download, ranges)
+        headers = {**transport.IDENTITY_ENCODING, "Range": range_header}
+        response = await byte_send(
+            filesystem, endpoint, "GET", headers=headers, stream=True
+        )
+        try:
+            status = response.status_code
+            if status == transport.HTTP_PARTIAL_CONTENT:
+                body = await _raw_body(response)
+                _validate_partial(
+                    body, response.headers.get("content-range"), range_header
+                )
+                values.append((index, body))
+                continue
+            if status in (transport.HTTP_OK, transport.HTTP_NO_CONTENT):
+                # Whole-object fallback wins for every range on this object.
+                return await _slice_streamed_object(response, ranges)
+            body = errors.bounded_text(await response.aread())
+            retry_after = errors.parse_retry_after(response.headers.get("retry-after"))
+            raise errors.http_exception(
+                status,
+                body=body,
+                fault=errors.extract_fault(body),
+                path=path,
+                retry_after=retry_after,
+            )
+        finally:
+            await response.aclose()
+    return values
+
+
+async def _byte_get(
+    filesystem: VOSpaceFileSystem,
+    path: str,
+    *,
+    range_header: str,
+    target_validated: bool,
+) -> tuple[bytes, bool]:
+    """GET bytes with ``Range``; ``True`` means the body is the whole object."""
+    (await filesystem._get_bindings()).require_sync()
+    if not target_validated:
+        await validate_read_target(filesystem, path)
+    endpoint = await negotiate_endpoint(
+        filesystem,
+        path,
+        direction=negotiate.DIRECTION_PULL,
+        protocol_uri=negotiate.PROTOCOL_HTTPS_GET,
+    )
+    headers = {**transport.IDENTITY_ENCODING, "Range": range_header}
+    response = await byte_send(
+        filesystem, endpoint, "GET", headers=headers, stream=True
+    )
+    try:
+        status = response.status_code
+        if status == transport.HTTP_PARTIAL_CONTENT:
+            body = await _raw_body(response)
+            _validate_partial(body, response.headers.get("content-range"), range_header)
+            return body, False
+        if status in (transport.HTTP_OK, transport.HTTP_NO_CONTENT):
+            return await _raw_body(response), True
+        body = errors.bounded_text(await response.aread())
+        retry_after = errors.parse_retry_after(response.headers.get("retry-after"))
+        raise errors.http_exception(
+            status,
+            body=body,
+            fault=errors.extract_fault(body),
+            path=path,
+            retry_after=retry_after,
+        )
+    finally:
+        await response.aclose()
+
+
+async def _raw_body(response: httpx.Response) -> bytes:
+    if response.status_code == transport.HTTP_NO_CONTENT:
+        return b""
+    chunks = response.aiter_raw(_integrity.READ_CHUNK)
+    return b"".join([chunk async for chunk in chunks])
+
+
+def _validate_partial(
+    body: bytes, content_range: str | None, range_header: str
+) -> None:
+    if content_range is None:
+        msg = "206 Partial Content without Content-Range"
+        raise errors.VOSpaceError(msg, status=transport.HTTP_PARTIAL_CONTENT)
+    match = _CONTENT_RANGE.fullmatch(content_range.strip())
+    if match is None:
+        msg = f"malformed Content-Range: {content_range!r}"
+        raise errors.VOSpaceError(msg, status=transport.HTTP_PARTIAL_CONTENT)
+    first, last = int(match.group(1)), int(match.group(2))
+    if last < first or len(body) != last - first + 1:
+        msg = "206 body does not match Content-Range"
+        raise errors.VOSpaceError(msg, status=transport.HTTP_PARTIAL_CONTENT)
+    spec = range_header.removeprefix("bytes=")
+    if spec.startswith("-"):
+        return
+    if spec.endswith("-"):
+        if first != int(spec[:-1]):
+            msg = "206 Content-Range start does not match request"
+            raise errors.VOSpaceError(msg, status=transport.HTTP_PARTIAL_CONTENT)
+        return
+    want_first, want_last = spec.split("-", 1)
+    if first != int(want_first) or last != int(want_last):
+        msg = "206 Content-Range does not match request"
+        raise errors.VOSpaceError(msg, status=transport.HTTP_PARTIAL_CONTENT)
+
+
+async def _slice_streamed_object(
+    response: httpx.Response,
+    ranges: Sequence[tuple[int, int | None, int | None]],
+) -> list[tuple[int, bytes]]:
+    """Stage one whole-object response to disk and return local slices."""
+    temp_path = staging.new_temp_path()
+    try:
+        with Path(temp_path).open("wb") as local:  # noqa: ASYNC230 - disk-backed staging
+            if response.status_code != transport.HTTP_NO_CONTENT:
+                async for chunk in response.aiter_raw(_integrity.READ_CHUNK):
+                    local.write(chunk)
+        with Path(temp_path).open("rb") as local:  # noqa: ASYNC230 - disk-backed staging
+            size = local.seek(0, 2)
+            local.seek(0)
+            values: list[tuple[int, bytes]] = []
+            for index, start, end in ranges:
+                first, stop, _step = slice(start, end).indices(size)
+                local.seek(first)
+                values.append((index, local.read(max(0, stop - first))))
+            return values
+    finally:
+        staging.unlink_temp_path(temp_path)
+
+
+async def _download_to_path(
+    filesystem: VOSpaceFileSystem,
+    path: str,
+    temp_path: str,
+    *,
+    target_validated: bool,
+) -> None:
+    """Stream one whole-object GET into ``temp_path``."""
+    response = await open_read_stream(
+        filesystem, path, target_validated=target_validated
+    )
+    try:
+        with Path(temp_path).open("wb") as local:  # noqa: ASYNC230 - disk-backed staging
+            if response.status_code == transport.HTTP_NO_CONTENT:
+                return
+            async for chunk in response.aiter_raw(_integrity.READ_CHUNK):
+                local.write(chunk)
     finally:
         await response.aclose()
 

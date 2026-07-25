@@ -315,32 +315,47 @@ not origin alone:
 
 ## 8. Read contract
 
-OpenCADC Cavern does not implement HTTP byte ranges. `vosfs` **MUST NOT** send
-a `Range` header or advertise network-efficient random access.
+Some OpenCADC byte backends honour HTTP byte ranges (for example minoc behind
+`vault`); others ignore `Range` and answer `200` with the whole object
+(Cavern). `vosfs` **MUST** decide from the byte response, not from
+`Accept-Ranges` alone.
 
 - `_get_file` **MUST** stream one negotiated whole-object GET to the local
   destination with bounded memory and byte-level callback updates.
-- `_cat_file(path, start, end)` **MUST** perform one whole GET, apply Python
-  half-open slice semantics locally, and support `None`, zero, negative
-  bounds, empty slices, and EOF clipping.
-- `_cat_ranges` **MUST** be overridden to group ranges by object and perform at
-  most one whole GET per object per call. The inherited per-range coordinator
-  is insufficient. Its `max_gap` argument is accepted for fsspec call
-  compatibility but cannot alter the one-whole-GET-per-object behavior.
+- `_cat_file(path, start, end)` **MUST** support `None`, zero, negative
+  bounds, empty slices, and EOF clipping with Python half-open semantics. When
+  `start`/`end` select a partial read that can be expressed as one HTTP
+  `Range`, the byte GET **MUST** include that header. A `206` with a matching
+  `Content-Range` and body length **MUST** return those bytes. A `200` or
+  `204` **MUST** be treated as a whole-object body and sliced locally. Bounds
+  that cannot be expressed as one HTTP `Range` (for example mixed negative
+  indices) **MUST** use one whole GET and local slicing.
+- `_cat_ranges` **MUST** be overridden to group ranges by object. Per object it
+  **MUST** negotiate once, then issue ranged GETs while responses are `206`.
+  The first `200`/`204` for that object **MUST** fall back to one whole-object
+  staging download (or the already-received whole body) and local slicing for
+  every range of that object. `max_gap` is accepted for fsspec call
+  compatibility but **MUST NOT** force coalescing that would change these
+  rules.
 - `open("rb")` **MUST** download once into a disk-backed temporary file and
   then provide local `read`, `readinto`, `readline`, iteration, `tell`, and
-  `seek(0/1/2)` semantics.
+  `seek(0/1/2)` semantics. Staged `open` remains whole-object; it does not
+  claim network-efficient random access.
 - `open("r")` **MUST** use fsspec text wrapping over that staged binary file.
 - Empty files returned as HTTP 204 **MUST** read as `b""`.
 
 Byte requests **MUST** use `Accept-Encoding: identity` and consume raw response
 bytes so HTTP content decoding cannot alter filesystem content.
 
-`block_size`, `cache_type`, and `cache_options` are accepted for call
-compatibility but do not change the one-whole-download network behavior.
+Python half-open `[start, end)` **MUST** map to inclusive HTTP
+`bytes=start-(end-1)` (and to standard open/suffix forms when one bound is
+absent).
 
-`open_async`, remote Range/206 behavior, memory mapping, and partial network
-downloads are unsupported.
+`block_size`, `cache_type`, and `cache_options` are accepted for call
+compatibility. They do not turn staged `open` into a ranged transport, and
+`vosfs` **MUST NOT** advertise `blockcache::` / `cached::` support.
+
+`open_async` and memory mapping are unsupported.
 
 ## 9. Write contract
 
@@ -429,14 +444,14 @@ the directory cache.
 | Question-mark glob paths | Unsupported | `?` is the existing path grammar's query delimiter, so these patterns cannot be expressed without a new grammar. |
 | `du`, `disk_usage`, `tree` | Client-derived | Unpaged client traversal; potentially expensive. |
 | `checksum`, `ukey` | Client-derived | fsspec metadata token; no separate public content-checksum API. |
-| `cat_file` | Client-derived | Whole-object GET followed by local slicing. |
-| `cat_ranges` | Client-derived | Custom grouping with at most one GET per object per call. |
-| `cat`, `head`, `tail`, `read_block` | Client-derived | Built from whole-object reads and staged seek. |
+| `cat_file` | Client-derived | Ranged GET when bounds allow; `206` returns the partial body, `200`/`204` whole-object slice locally. |
+| `cat_ranges` | Client-derived | Per-object negotiation; ranged GETs while `206`, else one whole-object stage and local slices. |
+| `cat`, `head`, `tail`, `read_block` | Client-derived | Built from `cat_file` / staged seek; network cost follows the byte backend. |
 | `get_file` | Native | Bounded negotiated GET to one local target. |
 | `get`, `download` | Client-derived | fsspec expansion and coordinator over `_get_file`. |
 | `open("rb"/"r")` | Client-derived | Disk-staged, seekable whole-object read. |
 | `open_async` | Unsupported | Raise `NotImplementedError`; async consumers use coroutine hooks. |
-| Remote Range/206 | Unsupported | No `Range` request is sent. |
+| Remote Range/206 | Client-derived | Sent for partial `cat_file` / `cat_ranges` reads; accepted only on validated `206`. |
 | `pipe_file(mode="overwrite")`, `write_bytes` | Native | Negotiated whole PUT with create-or-truncate behavior. |
 | `pipe_file(mode="create")` | Client-derived | `_info` preflight followed by negotiated PUT; explicitly non-atomic. |
 | `pipe` | Client-derived | Bounded fsspec coordinator over `_pipe_file`; creates required remote parents top-down once per operation. |
@@ -619,9 +634,9 @@ The following are not v0.3.0 capabilities:
 - asynchronous UWS, native move, recursive-delete jobs, or bulk property jobs;
 - direct construction of `/files` URLs;
 - cross-service or cross-filesystem orchestration;
-- remote byte ranges, block caching, append/update modes, transactions,
-  conditional writes, atomic replacement, resumable upload, or multipart
-  upload;
+- block caching (`blockcache::` / `cached::`), append/update modes,
+  transactions, conditional writes, atomic replacement, resumable upload, or
+  multipart upload;
 - server-side copy, search, sort, pagination, general views, package download,
   and persistent Structured/Unstructured subtype semantics;
 - public property, permission, or link-creation APIs; and

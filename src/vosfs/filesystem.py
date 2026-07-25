@@ -551,9 +551,8 @@ class VOSpaceFileSystem(AsyncFileSystem):
         end: int | None = None,
         **_kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> bytes:
-        """Return one whole-object read sliced with Python half-open semantics."""
-        data = await _transfer.read_whole(self, self._strip_protocol(path))
-        return data[start:end]
+        """Return a byte slice, using HTTP Range when the endpoint returns 206."""
+        return await _transfer.read_slice(self, self._strip_protocol(path), start, end)
 
     async def _cat_ranges(  # noqa: PLR0913 - fsspec hook signature
         self,
@@ -565,10 +564,11 @@ class VOSpaceFileSystem(AsyncFileSystem):
         on_error: str = "return",
         **_kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[bytes | BaseException]:
-        """Return each range with at most one whole GET per object per call.
+        """Return each range, ranging per object while responses are 206.
 
         A scalar ``starts``/``ends`` is broadcast to every path, matching
-        fsspec's ``cat_ranges`` contract.
+        fsspec's ``cat_ranges`` contract. A ``200``/``204`` falls back to one
+        whole-object stage for that object.
         """
         count = len(paths)
         start_list = _broadcast(starts, count)
@@ -624,13 +624,8 @@ class VOSpaceFileSystem(AsyncFileSystem):
         path: str,
         ranges: Sequence[tuple[int, int | None, int | None]],
     ) -> list[tuple[int, bytes]]:
-        """Read grouped byte ranges through one staged whole-object download."""
-        await _transfer.preflight_read_target(self, path)
-
-        async def download(temp_path: str) -> None:
-            await self._download_file(path, temp_path, target_validated=True)
-
-        return await staging.read_ranges(download, ranges)
+        """Read grouped byte ranges with response-validated HTTP Range."""
+        return await _transfer.read_grouped_ranges(self, path, ranges)
 
     def open(
         self,

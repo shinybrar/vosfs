@@ -184,6 +184,28 @@ async def test_cat_file_slicing(
     await fs.aclose()
 
 
+async def test_cat_file_uses_206_partial_body(router: respx.Router) -> None:
+    mock_transfers(router, {"/f": b"abcdefghij"}, honour_range=True)
+    fs = make_fs(router, asynchronous=True)
+    assert await fs._cat_file("/f", 2, 6) == b"cdef"
+    byte_calls = [c for c in router.calls if "/files" in str(c.request.url)]
+    assert len(byte_calls) == 1
+    assert byte_calls[0].request.headers["range"] == "bytes=2-5"
+    await fs.aclose()
+
+
+async def test_cat_file_200_ignores_range_and_slices(
+    router: respx.Router,
+) -> None:
+    mock_transfers(router, {"/f": b"abcdefghij"}, honour_range=False)
+    fs = make_fs(router, asynchronous=True)
+    assert await fs._cat_file("/f", 2, 6) == b"cdef"
+    byte_calls = [c for c in router.calls if "/files" in str(c.request.url)]
+    assert len(byte_calls) == 1
+    assert byte_calls[0].request.headers["range"] == "bytes=2-5"
+    await fs.aclose()
+
+
 async def test_cat_ranges_one_get_per_object(router: respx.Router) -> None:
     mock_transfers(router, {"/f": b"abcdefghij"})
     fs = make_fs(router, asynchronous=True)
@@ -192,6 +214,23 @@ async def test_cat_ranges_one_get_per_object(router: respx.Router) -> None:
     # Only one byte GET for the single object, despite three ranges.
     byte_calls = [c for c in router.calls if "/files" in str(c.request.url)]
     assert len(byte_calls) == 1
+    await fs.aclose()
+
+
+async def test_cat_ranges_issues_one_get_per_range_when_206(
+    router: respx.Router,
+) -> None:
+    mock_transfers(router, {"/f": b"abcdefghij"}, honour_range=True)
+    fs = make_fs(router, asynchronous=True)
+    result = await fs._cat_ranges(["/f", "/f", "/f"], [0, 2, 5], [2, 4, 8])
+    assert result == [b"ab", b"cd", b"fgh"]
+    byte_calls = [c for c in router.calls if "/files" in str(c.request.url)]
+    assert len(byte_calls) == 3
+    assert [c.request.headers["range"] for c in byte_calls] == [
+        "bytes=0-1",
+        "bytes=2-3",
+        "bytes=5-7",
+    ]
     await fs.aclose()
 
 
