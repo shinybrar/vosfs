@@ -22,9 +22,13 @@ configuration changes, and documentation changes therefore do not propose a
 already ignores everything outside that directory. Never hand-edit versioned
 changelog entries or couple an `fsspec-cli` cut to a `vosfs` version.
 
-`vosfs` uses ordinary SemVer bumping. Before 1.0, `fsspec-cli` treats a
-breaking change as a minor bump, so the Typer-owned command break from 0.5.x
-produces 0.6.0 instead of 1.0.0. Both packages use tagged draft GitHub Releases.
+Both packages are pre-1.0 and both treat a breaking change as a **minor** bump
+(`bump-minor-pre-major`), so a `BREAKING CHANGE:` footer moves `vosfs` 0.6.x to
+0.7.0 and `fsspec-cli` 0.5.x to 0.6.0 — never to 1.0.0. Reaching 1.0 is a
+deliberate stability declaration, not something a commit footer should trigger.
+A feature remains a minor bump for both (`bump-patch-for-minor-pre-major` is
+false). `test_release_workflow_contract.py` locks this for every configured
+package. Both packages use tagged draft GitHub Releases.
 `force-tag-creation` ensures the exact tag exists for publication and previous
 release discovery. The component package also uses a Release Please extra-file
 update to keep its package metadata and the shared `uv.lock` entry at the same
