@@ -932,9 +932,10 @@ temporary file on open, so ordinary <code>fits.open</code> works:</p>
 </span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>        <span class="n">data</span> <span class="o">=</span> <span class="n">hdul</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">data</span>
 </span></code></pre></div>
 <div class="admonition note">
-<p class="admonition-title">The whole file is downloaded</p>
-<p>Cavern serves no byte ranges, so there is no "read just the header"
-optimization. Budget for the full object size.</p>
+<p class="admonition-title">Staged <code>open</code> downloads the whole file</p>
+<p><code>fits.open</code> over <code>fsspec.open</code> uses staged <code>open</code>, which is still a
+whole-object download. For header-only access on range-capable backends,
+prefer <code>cat_file</code> / <code>cat_ranges</code> with explicit bounds.</p>
 </div>
 <h2 id="process-many-files-without-loading-them-all">Process many files without loading them all<a class="headerlink" href="#process-many-files-without-loading-them-all" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">fs</span> <span class="o">=</span> <span class="n">fsspec</span><span class="o">.</span><span class="n">filesystem</span><span class="p">(</span><span class="s2">&quot;vos&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">STORAGE</span><span class="p">)</span>
@@ -977,7 +978,7 @@ than you would use on local disk.</p>
 <h2 id="read-a-big-table-with-dask">Read a big table with Dask<a class="headerlink" href="#read-a-big-table-with-dask" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">dask.dataframe</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dd</span>
 </span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="c1"># blocksize=None: Cavern has no byte ranges, so each file is one partition.</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="c1"># blocksize=None: staged open is whole-object, so each file is one partition.</span>
 </span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">lazy</span> <span class="o">=</span> <span class="n">dd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span>
 </span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="s2">&quot;vos://project/night-*/phot.csv&quot;</span><span class="p">,</span>
 </span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="n">storage_options</span><span class="o">=</span><span class="n">STORAGE</span><span class="p">,</span>
@@ -1001,8 +1002,8 @@ locally:</p>
 </span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="p">)</span> <span class="k">as</span> <span class="n">handle</span><span class="p">:</span>
 </span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    <span class="n">process</span><span class="p">(</span><span class="n">handle</span><span class="p">)</span>
 </span></code></pre></div>
-<p><code>simplecache::</code> and <code>filecache::</code> both work. <code>blockcache::</code> and <code>cached::</code> do
-<strong>not</strong> — they need server-side byte ranges.</p>
+<p><code>simplecache::</code> and <code>filecache::</code> both work. <code>blockcache::</code> and <code>cached::</code> are
+<strong>not</strong> claimed even when the byte endpoint honours <code>Range</code>.</p>
 <h2 id="check-before-you-write">Check before you write<a class="headerlink" href="#check-before-you-write" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">fs</span> <span class="o">=</span> <span class="n">fsspec</span><span class="o">.</span><span class="n">filesystem</span><span class="p">(</span><span class="s2">&quot;vos&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">STORAGE</span><span class="p">)</span>
 </span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="k">try</span><span class="p">:</span>

@@ -938,9 +938,11 @@ variable before constructing the filesystem:</p>
 environment variables. Paths beginning with <code>~</code> are not expanded; use an
 absolute path.</p>
 <h2 id="reading-and-writing">Reading and writing<a class="headerlink" href="#reading-and-writing" title="Permanent link">&para;</a></h2>
-<p>OpenCADC Cavern does not implement HTTP byte ranges, so <code>vosfs</code> transfers whole
-objects. Reads stream a whole object (to a local file or a disk-backed
-temporary file for <code>open</code>), and writes issue one whole <code>PUT</code>.</p>
+<p>Partial <code>cat_file</code> / <code>cat_ranges</code> reads send HTTP <code>Range</code> when the bounds allow.
+If the negotiated byte endpoint returns a validated <code>206</code>, only those bytes are
+kept. If it returns <code>200</code>/<code>204</code> (Cavern ignores <code>Range</code>), <code>vosfs</code> treats the
+body as a whole object and slices locally. Staged <code>open</code> still downloads the
+whole object into a disk-backed temporary file. Writes issue one whole <code>PUT</code>.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">with</span> <span class="n">fs</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;/project/data.csv&quot;</span><span class="p">,</span> <span class="s2">&quot;rb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">handle</span><span class="p">:</span>
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">header</span> <span class="o">=</span> <span class="n">handle</span><span class="o">.</span><span class="n">readline</span><span class="p">()</span>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
@@ -1024,7 +1026,7 @@ that accepts a file object works the same way.</p>
 </span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
 </span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">storage_options</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;endpoint_url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://staging.canfar.net/arc&quot;</span><span class="p">}</span>
 </span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="c1"># blocksize=None: Cavern has no byte ranges, so each file is one partition.</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="c1"># blocksize=None: staged open is whole-object, so each file is one partition.</span>
 </span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="n">lazy</span> <span class="o">=</span> <span class="n">dd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span><span class="s2">&quot;vos://project/d.csv&quot;</span><span class="p">,</span> <span class="n">storage_options</span><span class="o">=</span><span class="n">storage_options</span><span class="p">,</span> <span class="n">blocksize</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
 </span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="n">result</span> <span class="o">=</span> <span class="n">lazy</span><span class="o">.</span><span class="n">compute</span><span class="p">()</span>
 </span></code></pre></div>
@@ -1071,12 +1073,11 @@ filesystem for the store (requires Python 3.11+).</p>
 </div>
 </div>
 <div class="admonition note">
-<p class="admonition-title">Whole-object transfer</p>
-<p>Cavern serves no byte ranges, so every consumer reads whole objects. Formats
-that rely on random access still work — <code>vosfs</code> stages each object (or Zarr
-chunk) to a local temporary file — but there is no server-side range
-optimization. For Dask, pass <code>blocksize=None</code> so each file is a single
-partition.</p>
+<p class="admonition-title">Whole-object staged <code>open</code></p>
+<p>Staged <code>open</code> still downloads whole objects. Formats that rely on random
+access work by staging locally. Partial <code>cat_file</code> / <code>cat_ranges</code> may
+use HTTP <code>Range</code> when the byte endpoint returns <code>206</code>. For Dask over
+staged files, pass <code>blocksize=None</code> so each file is a single partition.</p>
 </div>
 <h2 id="capability-summary">Capability summary<a class="headerlink" href="#capability-summary" title="Permanent link">&para;</a></h2>
 <p>Every public behavior carries exactly one classification.</p>
@@ -1174,12 +1175,8 @@ where the two differ, the contract wins.</p>
 </thead>
 <tbody>
 <tr>
-<td>Remote byte ranges, <code>Range</code> requests</td>
-<td>Cavern serves whole objects only</td>
-</tr>
-<tr>
 <td><code>blockcache::</code> / <code>cached::</code> wrappers</td>
-<td>Require server-side byte ranges</td>
+<td>Not claimed; use <code>simplecache::</code> / <code>filecache::</code></td>
 </tr>
 <tr>
 <td>Append, <code>+</code> mode, offset / atomic / resumable / multipart writes</td>

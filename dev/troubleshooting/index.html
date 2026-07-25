@@ -1052,11 +1052,11 @@ the behavior silently differs from what you may expect:</p>
 <tbody>
 <tr>
 <td>A ranged read transfers only those bytes</td>
-<td><code>cat_file(path, start, end)</code> <strong>works</strong>, but reads the whole object and slices locally. Correct results, no bandwidth saving.</td>
+<td>On backends that answer <code>206</code> (for example minoc/<code>vault</code>), yes. On Cavern, <code>Range</code> is ignored and <code>vosfs</code> falls back to a whole-object read then local slice.</td>
 </tr>
 <tr>
 <td><code>blockcache::</code> / <code>cached::</code> wrappers</td>
-<td>Need server-side ranges; use <code>simplecache::</code> or <code>filecache::</code> instead.</td>
+<td>Not supported; use <code>simplecache::</code> or <code>filecache::</code> instead.</td>
 </tr>
 <tr>
 <td>FUSE mounting</td>

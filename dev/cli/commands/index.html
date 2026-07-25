@@ -1443,8 +1443,8 @@ rejects symlinks. A backend that does not report all of them reports
 <div class="admonition note">
 <p class="admonition-title">Bounded request, not necessarily a bounded transfer</p>
 <p><code>-c N</code> bounds what the CLI <em>asks for</em>. Whether the backend transfers only
-those bytes is up to the backend. <code>vosfs</code> reads the whole object and slices
-locally, because OpenCADC Cavern serves no HTTP Range.</p>
+those bytes is up to the backend: <code>vosfs</code> may keep a validated <code>206</code>, or
+fall back to a whole-object body when the endpoint answers <code>200</code>.</p>
 </div>
 <h3 id="cat"><code>cat</code><a class="headerlink" href="#cat" title="Permanent link">&para;</a></h3>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cat<span class="w"> </span>data:/a.txt<span class="w"> </span>data:/b.txt<span class="w"> </span>&gt;<span class="w"> </span>combined.txt
