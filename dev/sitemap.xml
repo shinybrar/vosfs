@@ -7,6 +7,24 @@
         <loc>https://shinybrar.github.io/vosfs/dev/guide/</loc>
       </url>
       <url>
+        <loc>https://shinybrar.github.io/vosfs/dev/recipes/</loc>
+      </url>
+      <url>
+        <loc>https://shinybrar.github.io/vosfs/dev/troubleshooting/</loc>
+      </url>
+      <url>
         <loc>https://shinybrar.github.io/vosfs/dev/api-reference/</loc>
+      </url>
+      <url>
+        <loc>https://shinybrar.github.io/vosfs/dev/cli/</loc>
+      </url>
+      <url>
+        <loc>https://shinybrar.github.io/vosfs/dev/cli/integration/</loc>
+      </url>
+      <url>
+        <loc>https://shinybrar.github.io/vosfs/dev/cli/commands/</loc>
+      </url>
+      <url>
+        <loc>https://shinybrar.github.io/vosfs/dev/cli/api-reference/</loc>
       </url>
 </urlset>
