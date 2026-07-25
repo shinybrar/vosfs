@@ -19,6 +19,24 @@ def test_root_release_excludes_shared_fsspec_cli_paths() -> None:
     assert {"src/fsspec-cli", "docs", ".release"} <= excluded
 
 
+def test_pre_1_0_breaking_changes_bump_minor_for_every_package() -> None:
+    """Below 1.0, a breaking change is a minor bump, never a jump to 1.0.0.
+
+    Reaching 1.0 is a deliberate stability declaration. Neither package has
+    made it, so a `BREAKING CHANGE:` footer must not force one.
+    """
+    config = json.loads(_CONFIG.read_text())
+    manifest = json.loads(_MANIFEST.read_text())
+
+    for name, package in config["packages"].items():
+        assert manifest[name].startswith("0."), (
+            f"{name} has reached 1.0; revisit this policy deliberately"
+        )
+        assert package["bump-minor-pre-major"] is True, name
+        # A feature must still be a minor bump, not a patch.
+        assert package["bump-patch-for-minor-pre-major"] is False, name
+
+
 def test_every_exclude_path_is_a_directory_that_exists() -> None:
     """Release Please can only exclude directories, never individual files.
 
