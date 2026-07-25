@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import locale
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, TypeAlias, TypeVar, cast
@@ -10,6 +9,7 @@ from typing import TYPE_CHECKING, Generic, TypeAlias, TypeVar, cast
 import typer
 
 from ._command import (
+    _collate,
     _CommandFailureError,
     _drain_current_operation,
     _Failure,
@@ -173,9 +173,7 @@ async def _classify_operand(
 ) -> Mapping[str, object] | _Failure:
     # fsspec's native async API intentionally exposes underscore coroutines.
     try:
-        info = await _drain_current_operation(
-            filesystem._info(operand.path)  # noqa: SLF001
-        )
+        info = await _drain_current_operation(filesystem._info(operand.path))
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _Failure(operand, backend_error=error)
 
@@ -252,7 +250,7 @@ async def _list_directory(
 ) -> object | _Failure:
     try:
         return await _drain_current_operation(
-            filesystem._ls(  # noqa: SLF001
+            filesystem._ls(
                 operand.path,
                 detail=detail,
             )
@@ -264,8 +262,7 @@ async def _list_directory(
 def _sort_key(
     result: _FileResult[_PayloadT] | _DirectoryResult[_PayloadT],
 ) -> tuple[str, str]:
-    spelling = result.operand.spelling
-    return locale.strxfrm(spelling), spelling
+    return _collate(result.operand.spelling)
 
 
 def _format_plain_successes(
@@ -398,7 +395,7 @@ def _directory_lines(
         selected = (name for name in basenames if name not in {".", ".."})
     else:
         selected = (name for name in basenames if not name.startswith("."))
-    return tuple(sorted(selected, key=lambda name: (locale.strxfrm(name), name)))
+    return tuple(sorted(selected, key=_collate))
 
 
 def _directory_rows(
@@ -424,10 +421,7 @@ def _directory_rows(
         selected = (entry for entry in entries if entry[0] not in {".", ".."})
     else:
         selected = (entry for entry in entries if not entry[0].startswith("."))
-    sorted_entries = sorted(
-        selected,
-        key=lambda entry: (locale.strxfrm(entry[0]), entry[0]),
-    )
+    sorted_entries = sorted(selected, key=lambda entry: _collate(entry[0]))
     rows = []
     for _basename, info in sorted_entries:
         row = _listing_row(info)

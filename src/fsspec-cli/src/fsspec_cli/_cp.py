@@ -8,13 +8,14 @@ from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 import typer
 
 from ._command import (
     _CommandFailureError,
     _drain_current_operation,
+    _Failure,
     _MappedOperand,
     _parse_mapped_operand,
     _render_backend_failure,
@@ -55,12 +56,15 @@ class _CpPlan:
 
 
 @dataclass(frozen=True)
-class _CpFailure:
-    operand: _MappedOperand
-    backend_error: Exception | None = None
-    incompatible: Literal["directory", "result", "same_path"] | None = None
+class _CpFailure(_Failure):
+    """A copy failure: the shared shape plus this command's transfer state.
+
+    ``category`` carries a copy-specific diagnostic that has no equivalent in
+    the shared vocabulary; ``residue`` marks a failure that may have left a
+    partial or unverified destination behind.
+    """
+
     category: str | None = None
-    uncertain: bool = False
     residue: bool = False
 
 
@@ -105,9 +109,7 @@ async def _require_directory(
     filesystem: AsyncFileSystem,
 ) -> _CpFailure | None:
     try:
-        info = await _drain_current_operation(
-            filesystem._info(destination.path)  # noqa: SLF001
-        )
+        info = await _drain_current_operation(filesystem._info(destination.path))
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _CpFailure(destination, backend_error=error)
     if not isinstance(info, Mapping) or not isinstance(info.get("type"), str):
@@ -157,9 +159,7 @@ async def _resolve_destination(  # noqa: C901, PLR0911, PLR0912 - explicit targe
 ) -> tuple[str, _CpFailure | None]:
     known_directory: str | None = None
     try:
-        dest_info = await _drain_current_operation(
-            filesystem._info(destination.path)  # noqa: SLF001
-        )
+        dest_info = await _drain_current_operation(filesystem._info(destination.path))
     except FileNotFoundError:
         resolved = destination.path
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
@@ -183,9 +183,7 @@ async def _resolve_destination(  # noqa: C901, PLR0911, PLR0912 - explicit targe
 
     if resolved != destination.path:
         try:
-            collision = await _drain_current_operation(
-                filesystem._info(resolved)  # noqa: SLF001
-            )
+            collision = await _drain_current_operation(filesystem._info(resolved))
         except FileNotFoundError:
             collision = None
         except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
@@ -204,9 +202,7 @@ async def _resolve_destination(  # noqa: C901, PLR0911, PLR0912 - explicit targe
     if parent == known_directory:
         return resolved, None
     try:
-        parent_info = await _drain_current_operation(
-            filesystem._info(parent)  # noqa: SLF001
-        )
+        parent_info = await _drain_current_operation(filesystem._info(parent))
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return resolved, _CpFailure(destination, backend_error=error)
 
@@ -244,9 +240,7 @@ async def _stage_remote(
         raise
 
     try:
-        await _drain_current_operation(
-            filesystem._get_file(remote, temporary)  # noqa: SLF001
-        )
+        await _drain_current_operation(filesystem._get_file(remote, temporary))
     except Exception as error:  # noqa: BLE001 - staging download boundary.
         _remove_temporary(temporary)
         return None, error
@@ -318,7 +312,7 @@ async def _verify_transfer(  # noqa: PLR0913 - one explicit transfer-proof bound
 ) -> _CpFailure | None:
     try:
         destination_info = await _drain_current_operation(
-            destination_filesystem._info(destination_path)  # noqa: SLF001
+            destination_filesystem._info(destination_path)
         )
     except Exception as error:  # noqa: BLE001 - post-copy verify is residue-bearing.
         return _CpFailure(
@@ -342,9 +336,7 @@ async def _verify_transfer(  # noqa: PLR0913 - one explicit transfer-proof bound
 
     if require_source_absent:
         try:
-            await _drain_current_operation(
-                source_filesystem._info(source_path)  # noqa: SLF001
-            )
+            await _drain_current_operation(source_filesystem._info(source_path))
         except FileNotFoundError:
             return None
         except Exception as error:  # noqa: BLE001 - post-move absence proof.
@@ -369,7 +361,7 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - exp
 ) -> _CpFailure | None:
     try:
         source_info = await _drain_current_operation(
-            source_filesystem._info(request.source.path)  # noqa: SLF001
+            source_filesystem._info(request.source.path)
         )
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _CpFailure(request.source, backend_error=error)
@@ -428,7 +420,7 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - exp
             mutated = True
             try:
                 await _drain_current_operation(
-                    destination_filesystem._put_file(  # noqa: SLF001
+                    destination_filesystem._put_file(
                         temporary,
                         resolved,
                         mode="overwrite",
@@ -475,7 +467,7 @@ async def _confirmed_cp_file(  # noqa: PLR0911 - explicit copy outcomes.
 ) -> _CpFailure | None:
     try:
         source_info = await _drain_current_operation(
-            filesystem._info(request.source.path)  # noqa: SLF001
+            filesystem._info(request.source.path)
         )
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _CpFailure(request.source, backend_error=error)
@@ -502,7 +494,7 @@ async def _confirmed_cp_file(  # noqa: PLR0911 - explicit copy outcomes.
 
     try:
         await _drain_current_operation(
-            filesystem._cp_file(  # noqa: SLF001
+            filesystem._cp_file(
                 request.source.path,
                 resolved,
             )

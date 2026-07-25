@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-import inspect
 import os
 import tempfile
-from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -15,12 +13,22 @@ from typing import TYPE_CHECKING, cast
 from ._command import (
     _backend_category,
     _CommandFailureError,
-    _drain_current_operation,
     _MappedOperand,
     _render_operand_diagnostic,
     _usage_error,
 )
 from ._diagnostics import _render_diagnostic_value
+from ._manifest import (
+    _MAX_ENTRIES,
+    _call,
+    _entry,
+    _EntryLimitError,
+    _IncompatibleResultError,
+    _Manifest,
+    _manifest,
+    _ManifestEntry,
+    _UnsupportedEntryError,
+)
 from ._path import (
     _has_dot_segment,
     _is_root,
@@ -28,73 +36,19 @@ from ._path import (
     _lexical_basename,
     _lexical_join,
     _lexical_parent,
-    _lexical_relative,
-    _same_lexical_path,
 )
 
 if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
 
-_MAX_ENTRIES = 10_000
-_WALK_ROW_LENGTH = 3
-_TOKEN_ALIASES = (
-    ("etag", ("ETag", "etag")),
-    ("md5", ("md5",)),
-    ("content-md5", ("content-md5", "content_md5")),
-    ("checksum", ("checksum",)),
-)
-
-
-class _IncompatibleResultError(Exception):
-    pass
-
-
-class _UnsupportedEntryError(Exception):
-    pass
-
-
-class _EntryLimitError(Exception):
-    pass
-
 
 @dataclass(frozen=True)
-class _ManifestEntry:
-    relative: str
-    path: str
-    kind: str
-    size: int | None
-    tokens: tuple[tuple[str, str | bytes], ...]
-
-
-@dataclass(frozen=True)
-class _Manifest:
-    entries: tuple[_ManifestEntry, ...]
-
-
-@dataclass(frozen=True)
-class _WalkRow:
-    root: str
-    entries: tuple[_ManifestEntry, ...]
-    directory_paths: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class _Failure:
+class _RecursiveCpFailure:
     operand: _MappedOperand
     category: str | None = None
-    error: Exception | None = None
+    backend_error: Exception | None = None
     residue: bool = False
     rendered: bool = False
-
-
-@dataclass(frozen=True)
-class _Rows:
-    values: tuple[_WalkRow, ...]
-
-
-@dataclass(frozen=True)
-class _WorkerError:
-    error: BaseException
 
 
 def _canonical_operand(
@@ -112,328 +66,7 @@ def _canonical_operand(
     return operand
 
 
-def _close_sync_iterator(iterator: Iterator[object]) -> None:
-    close = getattr(iterator, "close", None)
-    if callable(close):
-        close()
-
-
-async def _resolve_sync_iterator(
-    awaitable: Awaitable[object],
-) -> Iterator[object]:
-    resolved: object | None = None
-
-    async def resolve() -> object:
-        nonlocal resolved
-        resolved = await awaitable
-        return resolved
-
-    try:
-        resolved = await _drain_current_operation(resolve())
-    except BaseException:
-        if isinstance(resolved, Iterator):
-            with suppress(BaseException):
-                await _drain_current_operation(
-                    asyncio.to_thread(_close_sync_iterator, resolved)
-                )
-        raise
-    if not isinstance(resolved, Iterator):
-        raise _IncompatibleResultError
-    return resolved
-
-
-async def _call(
-    filesystem: AsyncFileSystem,
-    operation: str,
-    *args: object,
-    **kwargs: object,
-) -> object:
-    method = getattr(filesystem, operation, None)
-    if not callable(method):
-        raise NotImplementedError
-    result = method(*args, **kwargs)
-    if not inspect.isawaitable(result):
-        raise NotImplementedError
-    return await _drain_current_operation(result)
-
-
-def _tokens(info: Mapping[object, object]) -> tuple[tuple[str, str | bytes], ...]:
-    tokens: list[tuple[str, str | bytes]] = []
-    for normalized, aliases in _TOKEN_ALIASES:
-        present = [alias for alias in aliases if alias in info]
-        if len(present) > 1:
-            raise _IncompatibleResultError
-        if present:
-            value = info[present[0]]
-            if type(value) is not str and type(value) is not bytes:
-                raise _IncompatibleResultError
-            tokens.append((normalized, value))
-    return tuple(tokens)
-
-
-def _entry(
-    relative: str,
-    path: str,
-    info: object,
-    *,
-    expected_kind: str | None = None,
-) -> _ManifestEntry:
-    if not isinstance(info, Mapping):
-        raise _IncompatibleResultError
-    name = info.get("name")
-    if type(name) is not str or not _same_lexical_path(name, path):
-        raise _IncompatibleResultError
-    typed_info = cast("Mapping[object, object]", info)
-    islink = typed_info.get("islink", False)
-    if type(islink) is not bool:
-        raise _IncompatibleResultError
-    kind = typed_info.get("type")
-    if type(kind) is not str:
-        raise _IncompatibleResultError
-    if islink or kind not in {"directory", "file"}:
-        raise _UnsupportedEntryError
-    if expected_kind is not None and kind != expected_kind:
-        raise _IncompatibleResultError
-    size = None
-    if kind == "file":
-        size = typed_info.get("size")
-        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
-            raise _IncompatibleResultError
-    return _ManifestEntry(relative, path, kind, size, _tokens(typed_info))
-
-
-def _walk_row(
-    source_path: str,
-    value: object,
-    *,
-    entry_capacity: int,
-) -> _WalkRow:
-    if type(value) is not tuple or len(value) != _WALK_ROW_LENGTH:
-        raise _IncompatibleResultError
-    root, directories, files = value
-    if (
-        type(root) is not str
-        or not root.startswith("/")
-        or "\0" in root
-        or "\n" in root
-        or "\r" in root
-        or _has_dot_segment(root)
-        or not isinstance(directories, Mapping)
-        or not isinstance(files, Mapping)
-    ):
-        raise _IncompatibleResultError
-
-    entries: list[_ManifestEntry] = []
-    directory_paths: list[str] = []
-    child_names: set[str] = set()
-    for collection, kind in ((directories, "directory"), (files, "file")):
-        for name, info in collection.items():
-            if (
-                type(name) is not str
-                or not name
-                or name in {".", ".."}
-                or "/" in name
-                or "\0" in name
-                or "\n" in name
-                or "\r" in name
-                or name in child_names
-            ):
-                raise _IncompatibleResultError
-            child_names.add(name)
-            path = _lexical_join(root, name)
-            entry = _entry(
-                _relative_path(source_path, path),
-                path,
-                info,
-                expected_kind=kind,
-            )
-            entries.append(entry)
-            if len(entries) > entry_capacity:
-                raise _EntryLimitError
-            if kind == "directory":
-                directory_paths.append(path)
-    return _WalkRow(root, tuple(entries), tuple(directory_paths))
-
-
-def _accept_walk_row(
-    row: _WalkRow,
-    *,
-    rows: list[_WalkRow],
-    seen_roots: set[str],
-    expected_roots: set[str],
-    seen_relatives: set[str],
-) -> None:
-    relatives = {entry.relative for entry in row.entries}
-    if (
-        row.root in seen_roots
-        or row.root not in expected_roots
-        or seen_relatives.intersection(relatives)
-    ):
-        raise _IncompatibleResultError
-    seen_roots.add(row.root)
-    expected_roots.update(row.directory_paths)
-    seen_relatives.update(relatives)
-    rows.append(row)
-
-
-def _materialize_sync(
-    iterator: Iterator[object],
-    source_path: str,
-) -> _Rows | _WorkerError:
-    values: list[_WalkRow] = []
-    count = 1
-    seen_roots: set[str] = set()
-    expected_roots = {source_path}
-    seen_relatives = {""}
-    error: BaseException | None = None
-    try:
-        for value in iterator:
-            row = _walk_row(
-                source_path,
-                value,
-                entry_capacity=_MAX_ENTRIES - count,
-            )
-            _accept_walk_row(
-                row,
-                rows=values,
-                seen_roots=seen_roots,
-                expected_roots=expected_roots,
-                seen_relatives=seen_relatives,
-            )
-            count += len(row.entries)
-    except BaseException as caught:  # noqa: BLE001 - return across task as data.
-        error = caught
-    close = getattr(iterator, "close", None)
-    if callable(close):
-        try:
-            close()
-        except BaseException as caught:  # noqa: BLE001 - return across task as data.
-            if error is None:
-                error = caught
-    return _WorkerError(error) if error is not None else _Rows(tuple(values))
-
-
-async def _sync_rows(
-    iterator: Iterator[object],
-    source_path: str,
-) -> tuple[_WalkRow, ...]:
-    outcome = await _drain_current_operation(
-        asyncio.to_thread(_materialize_sync, iterator, source_path)
-    )
-    if isinstance(outcome, _WorkerError):
-        raise outcome.error
-    return outcome.values
-
-
-async def _close_async_iterator(iterator: AsyncIterator[object]) -> None:
-    close = getattr(iterator, "aclose", None)
-    if not callable(close):
-        return
-    result = close()
-    if inspect.isawaitable(result):
-        await _drain_current_operation(result)
-
-
-async def _async_rows(
-    iterator: AsyncIterator[object],
-    source_path: str,
-) -> tuple[_WalkRow, ...]:
-    values: list[_WalkRow] = []
-    count = 1
-    seen_roots: set[str] = set()
-    expected_roots = {source_path}
-    seen_relatives = {""}
-    try:
-        while True:
-            try:
-                value = await _drain_current_operation(anext(iterator))
-            except StopAsyncIteration:
-                break
-            row = _walk_row(
-                source_path,
-                value,
-                entry_capacity=_MAX_ENTRIES - count,
-            )
-            _accept_walk_row(
-                row,
-                rows=values,
-                seen_roots=seen_roots,
-                expected_roots=expected_roots,
-                seen_relatives=seen_relatives,
-            )
-            count += len(row.entries)
-    except BaseException:
-        with suppress(BaseException):
-            await _close_async_iterator(iterator)
-        raise
-    await _close_async_iterator(iterator)
-    return tuple(values)
-
-
-async def _walk_rows(
-    filesystem: AsyncFileSystem,
-    requested_path: str,
-    source_path: str,
-) -> tuple[_WalkRow, ...]:
-    method = getattr(filesystem, "_walk", None)
-    if not callable(method):
-        raise NotImplementedError
-    result = method(requested_path, detail=True, on_error="raise")
-    if isinstance(result, AsyncIterator):
-        return await _async_rows(result, source_path)
-    if not inspect.isawaitable(result):
-        raise _IncompatibleResultError
-    return await _sync_rows(await _resolve_sync_iterator(result), source_path)
-
-
-def _relative_path(root: str, path: str) -> str:
-    relative = _lexical_relative(root, path)
-    if relative is None:
-        raise _IncompatibleResultError
-    return relative
-
-
-def _manifest_from_rows(
-    root_entry: _ManifestEntry,
-    values: tuple[_WalkRow, ...],
-) -> _Manifest:
-    entries = {"": root_entry}
-    rows: dict[str, _WalkRow] = {}
-    for row in values:
-        if row.root in rows:
-            raise _IncompatibleResultError
-        rows[row.root] = row
-
-    expected_roots = {root_entry.path}
-    for row in rows.values():
-        for entry in row.entries:
-            if entry.relative in entries:
-                raise _IncompatibleResultError
-            entries[entry.relative] = entry
-        expected_roots.update(row.directory_paths)
-    if set(rows) != expected_roots:
-        raise _IncompatibleResultError
-    return _Manifest(tuple(sorted(entries.values(), key=lambda item: item.relative)))
-
-
-async def _manifest(
-    filesystem: AsyncFileSystem,
-    path: str,
-    source_info: object,
-) -> _Manifest:
-    if not isinstance(source_info, Mapping):
-        raise _IncompatibleResultError
-    reported_path = source_info.get("name")
-    if type(reported_path) is not str or not _same_lexical_path(reported_path, path):
-        raise _IncompatibleResultError
-    root_entry = _entry("", reported_path, source_info, expected_kind="directory")
-    return _manifest_from_rows(
-        root_entry,
-        await _walk_rows(filesystem, path, reported_path),
-    )
-
-
-def _render_failure(command: str, failure: _Failure) -> None:
+def _render_failure(command: str, failure: _RecursiveCpFailure) -> None:
     if failure.rendered:
         return
     suffix = "; destination residue may remain" if failure.residue else ""
@@ -444,16 +77,16 @@ def _render_failure(command: str, failure: _Failure) -> None:
     )
 
 
-def _read_failure(operand: _MappedOperand, error: Exception) -> _Failure:
-    return _Failure(operand, _backend_category(error), error=error)
+def _read_failure(operand: _MappedOperand, error: Exception) -> _RecursiveCpFailure:
+    return _RecursiveCpFailure(operand, _backend_category(error), backend_error=error)
 
 
-def _staging_failure(source: _MappedOperand, error: Exception) -> _Failure:
+def _staging_failure(source: _MappedOperand, error: Exception) -> _RecursiveCpFailure:
     rendered_class = _render_diagnostic_value(type(error).__name__)
-    return _Failure(
+    return _RecursiveCpFailure(
         source,
         f"staging failure ({rendered_class})",
-        error=error,
+        backend_error=error,
         residue=True,
     )
 
@@ -473,20 +106,20 @@ async def _optional_info(
 def _classify_source_info(
     operand: _MappedOperand,
     info: object,
-) -> _Failure | None:
+) -> _RecursiveCpFailure | None:
     if not isinstance(info, Mapping):
-        return _Failure(operand, "incompatible result")
+        return _RecursiveCpFailure(operand, "incompatible result")
     typed_info = cast("Mapping[object, object]", info)
     kind = typed_info.get("type")
     if type(kind) is not str:
-        return _Failure(operand, "incompatible result")
+        return _RecursiveCpFailure(operand, "incompatible result")
     islink = typed_info.get("islink", False)
     if type(islink) is not bool:
-        return _Failure(operand, "incompatible result")
+        return _RecursiveCpFailure(operand, "incompatible result")
     if islink or kind not in {"directory", "file"}:
-        return _Failure(operand, "unsupported entry type")
+        return _RecursiveCpFailure(operand, "unsupported entry type")
     if kind == "file":
-        return _Failure(operand, "not a directory")
+        return _RecursiveCpFailure(operand, "not a directory")
     return None
 
 
@@ -496,26 +129,28 @@ def _classify_existing(  # noqa: PLR0911 - stable metadata categories.
     info: object,
     *,
     require_name: bool = True,
-) -> _ManifestEntry | _Failure:
+) -> _ManifestEntry | _RecursiveCpFailure:
     if not require_name:
         if not isinstance(info, Mapping):
-            return _Failure(operand, "incompatible result")
+            return _RecursiveCpFailure(operand, "incompatible result")
         typed_info = cast("Mapping[object, object]", info)
         kind = typed_info.get("type")
         if type(kind) is not str:
-            return _Failure(operand, "incompatible result")
+            return _RecursiveCpFailure(operand, "incompatible result")
         islink = typed_info.get("islink", False)
         if type(islink) is not bool:
-            return _Failure(operand, "incompatible result")
+            return _RecursiveCpFailure(operand, "incompatible result")
         if islink or kind not in {"directory", "file"}:
-            return _Failure(operand, "unsupported entry type")
+            return _RecursiveCpFailure(operand, "unsupported entry type")
         return _ManifestEntry("", path, kind, None, ())
     try:
         entry = _entry("", path, info)
     except _UnsupportedEntryError as error:
-        return _Failure(operand, "unsupported entry type", error=error)
+        return _RecursiveCpFailure(
+            operand, "unsupported entry type", backend_error=error
+        )
     except _IncompatibleResultError as error:
-        return _Failure(operand, "incompatible result", error=error)
+        return _RecursiveCpFailure(operand, "incompatible result", backend_error=error)
     return entry
 
 
@@ -570,7 +205,7 @@ class _RecursiveCopy:
 
     async def _resolve_target(  # noqa: C901, PLR0911, PLR0912
         self,
-    ) -> tuple[str, _Failure | None]:
+    ) -> tuple[str, _RecursiveCpFailure | None]:
         destination_info, error = await _optional_info(
             self.destination_filesystem,
             self.destination.path,
@@ -588,7 +223,7 @@ class _RecursiveCopy:
                 destination_info,
                 require_name=False,
             )
-            if isinstance(entry, _Failure):
+            if isinstance(entry, _RecursiveCpFailure):
                 return resolved, entry
             if entry.kind == "directory":
                 known_parent = self.destination.path
@@ -612,19 +247,23 @@ class _RecursiveCopy:
             if error is not None:
                 return resolved, _read_failure(self.destination, error)
             if parent_info is None:
-                return resolved, _Failure(self.destination, "not found")
+                return resolved, _RecursiveCpFailure(self.destination, "not found")
             parent_entry = _classify_existing(
                 self.destination,
                 parent,
                 parent_info,
                 require_name=False,
             )
-            if isinstance(parent_entry, _Failure):
+            if isinstance(parent_entry, _RecursiveCpFailure):
                 if parent_entry.category == "unsupported entry type":
-                    return resolved, _Failure(self.destination, "not a directory")
+                    return resolved, _RecursiveCpFailure(
+                        self.destination, "not a directory"
+                    )
                 return resolved, parent_entry
             if parent_entry.kind != "directory":
-                return resolved, _Failure(self.destination, "not a directory")
+                return resolved, _RecursiveCpFailure(
+                    self.destination, "not a directory"
+                )
 
         if resolved_info is not None:
             root_entry = _classify_existing(
@@ -633,10 +272,10 @@ class _RecursiveCopy:
                 resolved_info,
                 require_name=False,
             )
-            if isinstance(root_entry, _Failure):
+            if isinstance(root_entry, _RecursiveCpFailure):
                 return resolved, root_entry
             if root_entry.kind == "file":
-                return resolved, _Failure(
+                return resolved, _RecursiveCpFailure(
                     self.destination,
                     "destination type conflict",
                 )
@@ -645,7 +284,7 @@ class _RecursiveCopy:
             self.source.path,
             resolved,
         ):
-            return resolved, _Failure(
+            return resolved, _RecursiveCpFailure(
                 self.destination,
                 "destination is inside source",
             )
@@ -655,7 +294,7 @@ class _RecursiveCopy:
         self,
         root: str,
         manifest: _Manifest,
-    ) -> tuple[tuple[_ManifestEntry, ...], _Failure | None]:
+    ) -> tuple[tuple[_ManifestEntry, ...], _RecursiveCpFailure | None]:
         missing: list[_ManifestEntry] = []
         for entry in manifest.entries:
             path = _destination_path(root, entry.relative)
@@ -667,10 +306,10 @@ class _RecursiveCopy:
                     missing.append(entry)
                 continue
             existing = _classify_existing(self.destination, path, info)
-            if isinstance(existing, _Failure):
+            if isinstance(existing, _RecursiveCpFailure):
                 return (), existing
             if existing.kind != entry.kind:
-                return (), _Failure(
+                return (), _RecursiveCpFailure(
                     self.destination,
                     "destination type conflict",
                 )
@@ -680,7 +319,7 @@ class _RecursiveCopy:
         self,
         source_entry: _ManifestEntry,
         destination_path: str,
-    ) -> _Failure | None:
+    ) -> _RecursiveCpFailure | None:
         temporary = None
         try:
             descriptor, temporary = tempfile.mkstemp(prefix="fsspec-cli-cp-recursive-")
@@ -703,10 +342,10 @@ class _RecursiveCopy:
                         temporary,
                     )
                 except Exception as error:  # noqa: BLE001 - stable transfer category.
-                    failure = _Failure(
+                    failure = _RecursiveCpFailure(
                         self.source,
                         "transfer failure",
-                        error=error,
+                        backend_error=error,
                         residue=True,
                     )
 
@@ -717,7 +356,7 @@ class _RecursiveCopy:
                     failure = _staging_failure(self.source, error)
                 else:
                     if staged_size != source_entry.size:
-                        failure = _Failure(
+                        failure = _RecursiveCpFailure(
                             self.source,
                             "source changed",
                             residue=True,
@@ -733,10 +372,10 @@ class _RecursiveCopy:
                         mode="overwrite",
                     )
                 except Exception as error:  # noqa: BLE001 - stable mutation category.
-                    failure = _Failure(
+                    failure = _RecursiveCpFailure(
                         self.destination,
                         "mutation failure",
-                        error=error,
+                        backend_error=error,
                         residue=True,
                     )
         except BaseException:
@@ -757,7 +396,9 @@ class _RecursiveCopy:
         if failure is not None:
             return replace(failure, rendered=True)
         if cleanup_error is not None:
-            return _Failure(self.source, error=cleanup_error, rendered=True)
+            return _RecursiveCpFailure(
+                self.source, backend_error=cleanup_error, rendered=True
+            )
         return None
 
     async def _mutate(
@@ -765,7 +406,7 @@ class _RecursiveCopy:
         root: str,
         manifest: _Manifest,
         missing_directories: tuple[_ManifestEntry, ...],
-    ) -> _Failure | None:
+    ) -> _RecursiveCpFailure | None:
         for entry in sorted(
             missing_directories,
             key=lambda item: (item.relative.count("/"), item.relative),
@@ -778,10 +419,10 @@ class _RecursiveCopy:
                     create_parents=False,
                 )
             except Exception as error:  # noqa: BLE001, PERF203 - stable mutation category.
-                return _Failure(
+                return _RecursiveCpFailure(
                     self.destination,
                     "mutation failure",
-                    error=error,
+                    backend_error=error,
                     residue=True,
                 )
 
@@ -796,7 +437,7 @@ class _RecursiveCopy:
                 return failure
         return None
 
-    async def _revalidate_source(self, frozen: _Manifest) -> _Failure | None:
+    async def _revalidate_source(self, frozen: _Manifest) -> _RecursiveCpFailure | None:
         try:
             current_info = await _call(
                 self.source_filesystem,
@@ -809,21 +450,21 @@ class _RecursiveCopy:
                 current_info,
             )
         except Exception as error:  # noqa: BLE001 - stable revalidation category.
-            return _Failure(
+            return _RecursiveCpFailure(
                 self.source,
                 "source revalidation failure",
-                error=error,
+                backend_error=error,
                 residue=True,
             )
         if current != frozen:
-            return _Failure(self.source, "source changed", residue=True)
+            return _RecursiveCpFailure(self.source, "source changed", residue=True)
         return None
 
     async def _verify_destination(
         self,
         root: str,
         manifest: _Manifest,
-    ) -> _Failure | None:
+    ) -> _RecursiveCpFailure | None:
         try:
             for source_entry in manifest.entries:
                 path = _destination_path(root, source_entry.relative)
@@ -841,21 +482,21 @@ class _RecursiveCopy:
                         destination_entry.tokens,
                     )
                 ):
-                    return _Failure(
+                    return _RecursiveCpFailure(
                         self.destination,
                         "verification failure",
                         residue=True,
                     )
         except Exception as error:  # noqa: BLE001 - stable verification category.
-            return _Failure(
+            return _RecursiveCpFailure(
                 self.destination,
                 "verification failure",
-                error=error,
+                backend_error=error,
                 residue=True,
             )
         return None
 
-    async def run(self) -> _Failure | None:  # noqa: C901, PLR0911
+    async def run(self) -> _RecursiveCpFailure | None:  # noqa: C901, PLR0911
         try:
             source_info = await _call(
                 self.source_filesystem,
@@ -879,15 +520,19 @@ class _RecursiveCopy:
                 source_info,
             )
         except _UnsupportedEntryError as error:
-            return _Failure(self.source, "unsupported entry type", error=error)
+            return _RecursiveCpFailure(
+                self.source, "unsupported entry type", backend_error=error
+            )
         except _EntryLimitError as error:
-            return _Failure(
+            return _RecursiveCpFailure(
                 self.source,
                 f"source tree exceeds {_MAX_ENTRIES} entries",
-                error=error,
+                backend_error=error,
             )
         except _IncompatibleResultError as error:
-            return _Failure(self.source, "incompatible result", error=error)
+            return _RecursiveCpFailure(
+                self.source, "incompatible result", backend_error=error
+            )
         except Exception as error:  # noqa: BLE001 - classify walk boundary.
             return _read_failure(self.source, error)
 
@@ -921,8 +566,8 @@ async def _run_recursive_cp(
             _render_failure(command, failure)
         except Exception as error:
             raise _CommandFailureError(
-                error=failure.error,
+                error=failure.backend_error,
                 render=False,
                 propagate=error,
             ) from error
-        raise _CommandFailureError(error=failure.error, render=False)
+        raise _CommandFailureError(error=failure.backend_error, render=False)

@@ -9,7 +9,15 @@ repo_url = "https://github.com/shinybrar/vosfs"
 nav = [
     { "Home" = "index.md" },
     { "User Guide" = "guide.md" },
+    { "Recipes" = "recipes.md" },
+    { "Troubleshooting" = "troubleshooting.md" },
     { "API Reference" = "api-reference.md" },
+    { "fsspec-cli" = [
+        { "Overview" = "cli/index.md" },
+        { "Integration" = "cli/integration.md" },
+        { "Command Reference" = "cli/commands.md" },
+        { "API Reference" = "cli/api-reference.md" },
+    ] },
     { "Releases" = "https://github.com/shinybrar/vosfs/releases" },
     { "Contributing" = "https://github.com/shinybrar/vosfs/blob/main/CONTRIBUTING.md" },
 ]
@@ -22,7 +30,7 @@ language = "en"
 provider = "mike"
 
 [project.plugins.mkdocstrings.handlers.python]
-paths = ["src"]
+paths = ["src", "src/fsspec-cli/src"]
 
 [project.plugins.mkdocstrings.handlers.python.options]
 docstring_style = "google"

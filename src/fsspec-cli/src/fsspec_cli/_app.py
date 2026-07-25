@@ -72,6 +72,109 @@ class _Capabilities:
     recursive_remove: bool = False
 
 
+# Shared parameter annotations. Typer reads the metavar, option spellings, and
+# help text from these aliases, so every command that takes the same operand or
+# option shape stays spelled and documented identically.
+_Operand: TypeAlias = Annotated[str, typer.Argument(metavar="name:/path")]
+_Operands: TypeAlias = Annotated[list[str], typer.Argument(metavar="name:/path")]
+_OptionalOperands: TypeAlias = Annotated[
+    list[str] | None,
+    typer.Argument(metavar="name:/path"),
+]
+_CatOperands: TypeAlias = Annotated[
+    list[str] | None,
+    typer.Argument(metavar="name:/path|-"),
+]
+_CpOperands: TypeAlias = Annotated[
+    list[str],
+    typer.Argument(metavar="SOURCE... DESTINATION"),
+]
+_MvOperands: TypeAlias = Annotated[
+    list[str],
+    typer.Argument(
+        metavar="name:/path",
+        help="One or more source files followed by one destination.",
+    ),
+]
+_LexicalOperand: TypeAlias = Annotated[str, typer.Argument(metavar="OPERAND")]
+_LexicalSuffix: TypeAlias = Annotated[
+    str | None,
+    typer.Argument(metavar="SUFFIX"),
+]
+
+_ByteCount: TypeAlias = Annotated[
+    int,
+    typer.Option("-c", metavar="N", min=0, help="Number of bytes to display."),
+]
+_MaxDepth: TypeAlias = Annotated[
+    int | None,
+    typer.Option(
+        "--maxdepth",
+        metavar="N",
+        min=0,
+        help="Descend at most N levels below the operand.",
+    ),
+]
+_FindType: TypeAlias = Annotated[
+    Literal["f", "d"],
+    typer.Option("--type", metavar="f|d", help="Report files (f) or directories (d)."),
+]
+_AlmostAll: TypeAlias = Annotated[
+    bool,
+    typer.Option("-A", help="Include entries whose name begins with a dot."),
+]
+_LongListing: TypeAlias = Annotated[
+    bool,
+    typer.Option("-l", help="Use the long listing format."),
+]
+_HumanSizes: TypeAlias = Annotated[
+    bool,
+    typer.Option("-h", help="Print sizes in human-readable units."),
+]
+_Summarize: TypeAlias = Annotated[
+    bool,
+    typer.Option("-s", help="Print only the total for the operand."),
+]
+_CreateParents: TypeAlias = Annotated[
+    bool,
+    typer.Option("-p", help="Create missing parent directories."),
+]
+_CopyRecursive: TypeAlias = Annotated[
+    bool,
+    typer.Option("-R", "-r", help="Copy one directory and its descendants."),
+]
+_TestExists: TypeAlias = Annotated[
+    bool,
+    typer.Option("-e", help="Succeed when the operand exists."),
+]
+_TestDirectory: TypeAlias = Annotated[
+    bool,
+    typer.Option("-d", help="Succeed when the operand is a directory."),
+]
+_TestFile: TypeAlias = Annotated[
+    bool,
+    typer.Option("-f", help="Succeed when the operand is a regular file."),
+]
+# The `rm` help text is compatibility surface: with recursion disabled the
+# rendered help must contain no `-R` or `-r` spelling at all.
+_RmDirectory: TypeAlias = Annotated[
+    bool,
+    typer.Option("-d", help="Remove empty directories."),
+]
+_RmForce: TypeAlias = Annotated[
+    bool,
+    typer.Option("-f", help="Ignore missing operands."),
+]
+_RmVerbose: TypeAlias = Annotated[
+    int,
+    typer.Option("-v", count=True, help="Print removed operands."),
+]
+_RmRecursive: TypeAlias = Annotated[
+    bool,
+    typer.Option("-R", "-r", help="Remove directory trees with guarded traversal."),
+]
+
+
 def _snapshot_capabilities(capabilities: AppCapabilities | None) -> _Capabilities:
     if capabilities is None:
         return _Capabilities()
@@ -165,315 +268,98 @@ class App:
         for extension in extensions:
             self.typer_app.command()(extension)
 
-    def _register_commands(  # noqa: C901, PLR0915 - central command surface.
+    # Operand preflight shared by the command callbacks.
+
+    def _mapped(self, command: str, spelling: str) -> _MappedOperand:
+        """Parse one ``name:/path`` operand against the configured sources."""
+        return _parse_mapped_operand(command, spelling, self._sources)
+
+    def _mapped_all(
         self,
-    ) -> None:
+        command: str,
+        spellings: Sequence[str],
+    ) -> tuple[_MappedOperand, ...]:
+        """Parse every ``name:/path`` operand in invocation order."""
+        return tuple(self._mapped(command, spelling) for spelling in spellings)
+
+    def _destructive_operand(self, command: str, spelling: str) -> _MappedOperand:
+        """Parse one operand and reject roots and final dot segments."""
+        operand = self._mapped(command, spelling)
+        if _is_root(operand.path) or _has_final_dot_segment(operand.path):
+            rendered = _render_diagnostic_value(spelling)
+            _usage_error(command, f"{rendered}: rejected path")
+        return operand
+
+    # Command registration.
+
+    def _register_commands(self) -> None:
         @self.typer_app.callback()
         def root(ctx: typer.Context) -> None:
             ctx.obj = CommandContext(self._sources)
 
-        @self.typer_app.command()
-        def head(
-            operand: Annotated[str, typer.Argument(metavar="name:/path")],
-            count: Annotated[int, typer.Option("-c", metavar="N", min=0)],
-        ) -> None:
-            """Display leading bytes."""
-            mapped = _parse_mapped_operand("head", operand, self._sources)
-            _run_async_command(
-                "head",
-                lambda: _run_head("head", count, mapped, self._sources),
-            )
+        self._register_lexical_commands()
+        self._register_query_commands()
+        self._register_listing_commands()
+        self._register_read_commands()
+        self._register_transfer_commands()
+        self._register_mutation_commands()
 
-        @self.typer_app.command()
-        def tail(
-            operand: Annotated[str, typer.Argument(metavar="name:/path")],
-            count: Annotated[int, typer.Option("-c", metavar="N", min=0)],
-        ) -> None:
-            """Display trailing bytes."""
-            mapped = _parse_mapped_operand("tail", operand, self._sources)
-            _run_async_command(
-                "tail",
-                lambda: _run_tail("tail", count, mapped, self._sources),
-            )
-
-        @self.typer_app.command()
-        def cat(
-            operands: Annotated[
-                list[str] | None,
-                typer.Argument(metavar="name:/path|-"),
-            ] = None,
-        ) -> None:
-            """Concatenate files to standard output."""
-            parsed = tuple(
-                _StdinOperand()
-                if operand == "-"
-                else _parse_mapped_operand("cat", operand, self._sources)
-                for operand in operands or ("-",)
-            )
-            _run_async_command(
-                "cat",
-                lambda: _run_cat("cat", parsed, self._sources),
-            )
-
-        def run_cp(operands: list[str], *, recursive: bool) -> None:
-            plan = _cp_plan("cp", tuple(operands), self._sources, recursive=recursive)
-            _run_async_command(
-                "cp",
-                lambda: _run_cp("cp", plan, self._sources),
-            )
-
-        if self._capabilities.recursive_copy:
-
-            @self.typer_app.command()
-            def cp(
-                operands: Annotated[
-                    list[str],
-                    typer.Argument(metavar="SOURCE... DESTINATION"),
-                ],
-                *,
-                recursive: Annotated[bool, typer.Option("-R", "-r")] = False,
-            ) -> None:
-                """Copy files or one directory."""
-                run_cp(operands, recursive=recursive)
-
-        else:
-
-            @self.typer_app.command()
-            def cp(
-                operands: Annotated[
-                    list[str],
-                    typer.Argument(metavar="SOURCE... DESTINATION"),
-                ],
-            ) -> None:
-                """Copy one or more files."""
-                run_cp(operands, recursive=False)
-
-        @self.typer_app.command()
-        def mkdir(
-            operands: Annotated[
-                list[str],
-                typer.Argument(metavar="name:/path"),
-            ],
-            *,
-            parents: Annotated[bool, typer.Option("-p")] = False,
-        ) -> None:
-            """Create directories."""
-            mapped = tuple(
-                _parse_mapped_operand("mkdir", operand, self._sources)
-                for operand in operands
-            )
-            _run_async_command(
-                "mkdir",
-                lambda: _run_mkdir(
-                    "mkdir",
-                    _MkdirRequest(create_parents=parents, operands=mapped),
-                    self._sources,
-                ),
-            )
-
-        def destructive_operand(command: str, spelling: str) -> _MappedOperand:
-            operand = _parse_mapped_operand(command, spelling, self._sources)
-            if _is_root(operand.path) or _has_final_dot_segment(operand.path):
-                rendered = _render_diagnostic_value(spelling)
-                _usage_error(command, f"{rendered}: rejected path")
-            return operand
-
-        @self.typer_app.command()
-        def rmdir(
-            operands: Annotated[
-                list[str],
-                typer.Argument(metavar="name:/path"),
-            ],
-        ) -> None:
-            """Remove empty directories."""
-            mapped = tuple(
-                destructive_operand("rmdir", operand) for operand in operands
-            )
-            _run_async_command(
-                "rmdir",
-                lambda: _run_rmdir("rmdir", mapped, self._sources),
-            )
-
-        @self.typer_app.command()
-        def unlink(
-            operand: Annotated[str, typer.Argument(metavar="name:/path")],
-        ) -> None:
-            """Remove a single file."""
-            mapped = destructive_operand("unlink", operand)
-            _run_async_command(
-                "unlink",
-                lambda: _run_unlink("unlink", mapped, self._sources),
-            )
-
-        def run_rm(
-            operands: list[str] | None,
-            *,
-            directory: bool,
-            force: bool,
-            verbose: int,
-            recursive: bool = False,
-        ) -> None:
-            if verbose > 1:
-                _usage_error("rm", "-v: may be supplied once")
-            if directory and (force or verbose or recursive):
-                _usage_error("rm", "-d: cannot combine with other options")
-            if not recursive and force and verbose:
-                _usage_error("rm", "-f: cannot combine with -v")
-            spellings = operands or []
-            if not spellings and not force:
-                _usage_error("rm", "missing mapped filesystem operand")
-            mapped = tuple(
-                _parse_mapped_operand("rm", spelling, self._sources)
-                for spelling in spellings
-            )
-            for spelling, operand in zip(spellings, mapped, strict=True):
-                rejected = _is_root(operand.path) or (
-                    _has_dot_segment(operand.path)
-                    if recursive
-                    else _has_final_dot_segment(operand.path)
-                )
-                if rejected:
-                    rendered = _render_diagnostic_value(spelling)
-                    _usage_error("rm", f"{rendered}: rejected path")
-            _run_async_command(
-                "rm",
-                lambda: _run_rm(
-                    "rm",
-                    _RmRequest(
-                        force=force,
-                        directory=directory,
-                        recursive=recursive,
-                        verbose=bool(verbose),
-                        operands=mapped,
-                    ),
-                    self._sources,
-                ),
-            )
-
-        if self._capabilities.recursive_remove:
-
-            @self.typer_app.command(name="rm")
-            def recursive_rm(
-                operands: Annotated[
-                    list[str] | None,
-                    typer.Argument(metavar="name:/path"),
-                ] = None,
-                *,
-                directory: Annotated[
-                    bool,
-                    typer.Option("-d", help="Remove empty directories."),
-                ] = False,
-                force: Annotated[
-                    bool,
-                    typer.Option("-f", help="Ignore missing operands."),
-                ] = False,
-                verbose: Annotated[
-                    int,
-                    typer.Option("-v", count=True, help="Print removed operands."),
-                ] = 0,
-                recursive: Annotated[
-                    bool,
-                    typer.Option(
-                        "-R",
-                        "-r",
-                        help="Remove directory trees with guarded traversal.",
-                    ),
-                ] = False,
-            ) -> None:
-                """Remove files or directories with guarded -R or -r."""
-                run_rm(
-                    operands,
-                    directory=directory,
-                    force=force,
-                    verbose=verbose,
-                    recursive=recursive,
-                )
-
-        else:
-
-            @self.typer_app.command(name="rm")
-            def rm(
-                operands: Annotated[
-                    list[str] | None,
-                    typer.Argument(metavar="name:/path"),
-                ] = None,
-                *,
-                directory: Annotated[
-                    bool,
-                    typer.Option("-d", help="Remove empty directories."),
-                ] = False,
-                force: Annotated[
-                    bool,
-                    typer.Option("-f", help="Ignore missing operands."),
-                ] = False,
-                verbose: Annotated[
-                    int,
-                    typer.Option("-v", count=True, help="Print removed operands."),
-                ] = 0,
-            ) -> None:
-                """Remove files; -d removes empty directories."""
-                run_rm(
-                    operands,
-                    directory=directory,
-                    force=force,
-                    verbose=verbose,
-                )
+    def _register_lexical_commands(self) -> None:
+        """Register the source-free path-string commands."""
 
         @self.typer_app.command()
         def basename(
-            operand: Annotated[str, typer.Argument(metavar="OPERAND")],
-            suffix: Annotated[
-                str | None,
-                typer.Argument(metavar="SUFFIX"),
-            ] = None,
+            operand: _LexicalOperand,
+            suffix: _LexicalSuffix = None,
         ) -> None:
             """Strip directory and suffix from a path."""
             _run_basename("basename", operand, suffix)
 
         @self.typer_app.command()
-        def dirname(
-            operand: Annotated[str, typer.Argument(metavar="OPERAND")],
-        ) -> None:
+        def dirname(operand: _LexicalOperand) -> None:
             """Strip the last component from a path."""
             _run_dirname("dirname", operand)
 
+    def _register_query_commands(self) -> None:
+        """Register the metadata and predicate commands."""
+
         @self.typer_app.command()
-        def info(
-            operand: Annotated[str, typer.Argument(metavar="name:/path")],
-        ) -> None:
+        def info(operand: _Operand) -> None:
             """Display normalized file information."""
-            mapped = _parse_mapped_operand("info", operand, self._sources)
+            mapped = self._mapped("info", operand)
             _run_async_command(
                 "info",
                 lambda: _run_info("info", mapped, self._sources),
             )
 
         @self.typer_app.command()
-        def size(
-            operands: Annotated[
-                list[str],
-                typer.Argument(metavar="name:/path"),
-            ],
-        ) -> None:
+        def size(operands: _Operands) -> None:
             """Display exact file sizes."""
-            mapped = tuple(
-                _parse_mapped_operand("size", operand, self._sources)
-                for operand in operands
-            )
+            mapped = self._mapped_all("size", operands)
             _run_async_command(
                 "size",
                 lambda: _run_size("size", mapped, self._sources),
             )
 
         @self.typer_app.command()
+        def stat(operands: _Operands) -> None:
+            """Display file status."""
+            mapped = self._mapped_all("stat", operands)
+            _run_async_command(
+                "stat",
+                lambda: _run_stat("stat", mapped, self._sources),
+            )
+
+        @self.typer_app.command()
         def test(
-            operand: Annotated[str, typer.Argument(metavar="name:/path")],
-            exists: Annotated[bool, typer.Option("-e")] = False,  # noqa: FBT002
-            directory: Annotated[bool, typer.Option("-d")] = False,  # noqa: FBT002
-            file: Annotated[bool, typer.Option("-f")] = False,  # noqa: FBT002
+            operand: _Operand,
+            *,
+            exists: _TestExists = False,
+            directory: _TestDirectory = False,
+            file: _TestFile = False,
         ) -> None:
             """Evaluate a file predicate."""
-            mapped = _parse_mapped_operand("test", operand, self._sources)
+            mapped = self._mapped("test", operand)
             selected: list[Literal["e", "d", "f"]] = [
                 predicate
                 for predicate, enabled in (
@@ -490,64 +376,19 @@ class App:
                 lambda: _run_test("test", selected[0], mapped, self._sources),
             )
 
-        @self.typer_app.command()
-        def stat(
-            operands: Annotated[
-                list[str],
-                typer.Argument(metavar="name:/path"),
-            ],
-        ) -> None:
-            """Display file status."""
-            mapped = tuple(
-                _parse_mapped_operand("stat", operand, self._sources)
-                for operand in operands
-            )
-            _run_async_command(
-                "stat",
-                lambda: _run_stat("stat", mapped, self._sources),
-            )
-
-        def run_listing(
-            command: Literal["ls", "ll"],
-            operands: list[str],
-            *,
-            include_almost_all: bool,
-            long_listing: bool,
-            human_readable: bool,
-        ) -> None:
-            mapped = tuple(
-                _parse_mapped_operand(command, operand, self._sources)
-                for operand in operands
-            )
-            if human_readable and not long_listing:
-                _usage_error(command, "-h: requires long listing")
-            _run_async_command(
-                command,
-                lambda: _run_ls(
-                    command,
-                    _LsRequest(
-                        include_almost_all=include_almost_all,
-                        long_listing=long_listing,
-                        human_readable=human_readable,
-                        operands=mapped,
-                    ),
-                    self._sources,
-                ),
-            )
+    def _register_listing_commands(self) -> None:
+        """Register the directory listing and traversal commands."""
 
         @self.typer_app.command()
         def ls(
-            operands: Annotated[
-                list[str],
-                typer.Argument(metavar="name:/path"),
-            ],
+            operands: _Operands,
             *,
-            include_almost_all: Annotated[bool, typer.Option("-A")] = False,
-            long_listing: Annotated[bool, typer.Option("-l")] = False,
-            human_readable: Annotated[bool, typer.Option("-h")] = False,
+            include_almost_all: _AlmostAll = False,
+            long_listing: _LongListing = False,
+            human_readable: _HumanSizes = False,
         ) -> None:
             """List directory contents."""
-            run_listing(
+            self._listing(
                 "ls",
                 operands,
                 include_almost_all=include_almost_all,
@@ -557,17 +398,13 @@ class App:
 
         @self.typer_app.command()
         def ll(
-            operands: Annotated[
-                list[str],
-                typer.Argument(metavar="name:/path"),
-            ],
+            operands: _Operands,
             *,
-            include_almost_all: Annotated[bool, typer.Option("-A")] = False,
-            _long_listing: Annotated[bool, typer.Option("-l")] = False,
-            human_readable: Annotated[bool, typer.Option("-h")] = False,
+            include_almost_all: _AlmostAll = False,
+            human_readable: _HumanSizes = False,
         ) -> None:
             """List directory contents in long form."""
-            run_listing(
+            self._listing(
                 "ll",
                 operands,
                 include_almost_all=include_almost_all,
@@ -577,13 +414,13 @@ class App:
 
         @self.typer_app.command()
         def du(
-            operand: Annotated[str, typer.Argument(metavar="name:/path")],
+            operand: _Operand,
             *,
-            summarize: Annotated[bool, typer.Option("-s")] = False,
-            human_readable: Annotated[bool, typer.Option("-h")] = False,
+            summarize: _Summarize = False,
+            human_readable: _HumanSizes = False,
         ) -> None:
             """Estimate file space usage."""
-            mapped = _parse_mapped_operand("du", operand, self._sources)
+            mapped = self._mapped("du", operand)
             _run_async_command(
                 "du",
                 lambda: _run_du(
@@ -599,41 +436,25 @@ class App:
 
         @self.typer_app.command()
         def find(
-            operand: Annotated[str, typer.Argument(metavar="name:/path")],
-            maxdepth: Annotated[
-                int | None,
-                typer.Option("--maxdepth", metavar="N", min=0),
-            ] = None,
-            kind: Annotated[
-                Literal["f", "d"],
-                typer.Option("--type", metavar="f|d"),
-            ] = "f",
+            operand: _Operand,
+            maxdepth: _MaxDepth = None,
+            kind: _FindType = "f",
         ) -> None:
             """Find files recursively."""
-            mapped = _parse_mapped_operand("find", operand, self._sources)
+            mapped = self._mapped("find", operand)
             _run_async_command(
                 "find",
                 lambda: _run_find(
                     "find",
-                    _FindRequest(
-                        maxdepth=maxdepth,
-                        kind=kind,
-                        operand=mapped,
-                    ),
+                    _FindRequest(maxdepth=maxdepth, kind=kind, operand=mapped),
                     self._sources,
                 ),
             )
 
         @self.typer_app.command()
-        def tree(
-            operand: Annotated[str, typer.Argument(metavar="name:/path")],
-            maxdepth: Annotated[
-                int | None,
-                typer.Option("--maxdepth", metavar="N", min=0),
-            ] = None,
-        ) -> None:
+        def tree(operand: _Operand, maxdepth: _MaxDepth = None) -> None:
             """Display a recursive directory tree."""
-            mapped = _parse_mapped_operand("tree", operand, self._sources)
+            mapped = self._mapped("tree", operand)
             _run_async_command(
                 "tree",
                 lambda: _run_tree(
@@ -643,26 +464,215 @@ class App:
                 ),
             )
 
-        @self.typer_app.command()
-        def mv(
-            operands: Annotated[
-                list[str],
-                typer.Argument(
-                    metavar="name:/path",
-                    help="One or more source files followed by one destination.",
+    def _listing(
+        self,
+        command: Literal["ls", "ll"],
+        operands: Sequence[str],
+        *,
+        include_almost_all: bool,
+        long_listing: bool,
+        human_readable: bool,
+    ) -> None:
+        """Preflight and run one shared ``ls``/``ll`` invocation."""
+        mapped = self._mapped_all(command, operands)
+        if human_readable and not long_listing:
+            _usage_error(command, "-h: requires long listing")
+        _run_async_command(
+            command,
+            lambda: _run_ls(
+                command,
+                _LsRequest(
+                    include_almost_all=include_almost_all,
+                    long_listing=long_listing,
+                    human_readable=human_readable,
+                    operands=mapped,
                 ),
-            ],
-        ) -> None:
+                self._sources,
+            ),
+        )
+
+    def _register_read_commands(self) -> None:
+        """Register the byte-reading commands."""
+
+        @self.typer_app.command()
+        def head(operand: _Operand, count: _ByteCount) -> None:
+            """Display leading bytes."""
+            mapped = self._mapped("head", operand)
+            _run_async_command(
+                "head",
+                lambda: _run_head("head", count, mapped, self._sources),
+            )
+
+        @self.typer_app.command()
+        def tail(operand: _Operand, count: _ByteCount) -> None:
+            """Display trailing bytes."""
+            mapped = self._mapped("tail", operand)
+            _run_async_command(
+                "tail",
+                lambda: _run_tail("tail", count, mapped, self._sources),
+            )
+
+        @self.typer_app.command()
+        def cat(operands: _CatOperands = None) -> None:
+            """Concatenate files to standard output."""
+            parsed = tuple(
+                _StdinOperand()
+                if operand == "-"
+                else _parse_mapped_operand("cat", operand, self._sources)
+                for operand in operands or ("-",)
+            )
+            _run_async_command(
+                "cat",
+                lambda: _run_cat("cat", parsed, self._sources),
+            )
+
+    def _register_transfer_commands(self) -> None:
+        """Register ``cp`` in its capability-selected form, plus ``mv``."""
+        if self._capabilities.recursive_copy:
+
+            @self.typer_app.command()
+            def cp(operands: _CpOperands, *, recursive: _CopyRecursive = False) -> None:
+                """Copy files or one directory."""
+                self._copy(operands, recursive=recursive)
+
+        else:
+
+            @self.typer_app.command()
+            def cp(operands: _CpOperands) -> None:
+                """Copy one or more files."""
+                self._copy(operands, recursive=False)
+
+        @self.typer_app.command()
+        def mv(operands: _MvOperands) -> None:
             """Move or rename files on one mapped filesystem."""
             if len(operands) < 2:  # noqa: PLR2004 - command arity.
                 message = "requires at least one source and one destination"
                 raise typer.BadParameter(message, param_hint="name:/path")
-            mapped = tuple(
-                _parse_mapped_operand("mv", operand, self._sources)
-                for operand in operands
-            )
-            plan = _plan_mv("mv", mapped)
+            plan = _plan_mv("mv", self._mapped_all("mv", operands))
             _run_async_command(
                 "mv",
                 lambda: _run_mv("mv", plan, self._sources),
             )
+
+    def _copy(self, operands: Sequence[str], *, recursive: bool) -> None:
+        """Preflight and run one shared ``cp`` invocation."""
+        plan = _cp_plan("cp", tuple(operands), self._sources, recursive=recursive)
+        _run_async_command("cp", lambda: _run_cp("cp", plan, self._sources))
+
+    def _register_mutation_commands(self) -> None:
+        """Register the namespace creation and removal commands."""
+
+        @self.typer_app.command()
+        def mkdir(operands: _Operands, *, parents: _CreateParents = False) -> None:
+            """Create directories."""
+            mapped = self._mapped_all("mkdir", operands)
+            _run_async_command(
+                "mkdir",
+                lambda: _run_mkdir(
+                    "mkdir",
+                    _MkdirRequest(create_parents=parents, operands=mapped),
+                    self._sources,
+                ),
+            )
+
+        @self.typer_app.command()
+        def rmdir(operands: _Operands) -> None:
+            """Remove empty directories."""
+            mapped = tuple(
+                self._destructive_operand("rmdir", operand) for operand in operands
+            )
+            _run_async_command(
+                "rmdir",
+                lambda: _run_rmdir("rmdir", mapped, self._sources),
+            )
+
+        @self.typer_app.command()
+        def unlink(operand: _Operand) -> None:
+            """Remove a single file."""
+            mapped = self._destructive_operand("unlink", operand)
+            _run_async_command(
+                "unlink",
+                lambda: _run_unlink("unlink", mapped, self._sources),
+            )
+
+        if self._capabilities.recursive_remove:
+
+            @self.typer_app.command(name="rm")
+            def recursive_rm(
+                operands: _OptionalOperands = None,
+                *,
+                directory: _RmDirectory = False,
+                force: _RmForce = False,
+                verbose: _RmVerbose = 0,
+                recursive: _RmRecursive = False,
+            ) -> None:
+                """Remove files or directories with guarded -R or -r."""
+                self._remove(
+                    operands,
+                    directory=directory,
+                    force=force,
+                    verbose=verbose,
+                    recursive=recursive,
+                )
+
+        else:
+
+            @self.typer_app.command(name="rm")
+            def rm(
+                operands: _OptionalOperands = None,
+                *,
+                directory: _RmDirectory = False,
+                force: _RmForce = False,
+                verbose: _RmVerbose = 0,
+            ) -> None:
+                """Remove files; -d removes empty directories."""
+                self._remove(
+                    operands,
+                    directory=directory,
+                    force=force,
+                    verbose=verbose,
+                )
+
+    def _remove(
+        self,
+        operands: Sequence[str] | None,
+        *,
+        directory: bool,
+        force: bool,
+        verbose: int,
+        recursive: bool = False,
+    ) -> None:
+        """Preflight option combinations and paths, then run one ``rm``."""
+        if verbose > 1:
+            _usage_error("rm", "-v: may be supplied once")
+        if directory and (force or verbose or recursive):
+            _usage_error("rm", "-d: cannot combine with other options")
+        if not recursive and force and verbose:
+            _usage_error("rm", "-f: cannot combine with -v")
+        spellings = list(operands or [])
+        if not spellings and not force:
+            _usage_error("rm", "missing mapped filesystem operand")
+        mapped = self._mapped_all("rm", spellings)
+        for spelling, operand in zip(spellings, mapped, strict=True):
+            rejected = _is_root(operand.path) or (
+                _has_dot_segment(operand.path)
+                if recursive
+                else _has_final_dot_segment(operand.path)
+            )
+            if rejected:
+                rendered = _render_diagnostic_value(spelling)
+                _usage_error("rm", f"{rendered}: rejected path")
+        _run_async_command(
+            "rm",
+            lambda: _run_rm(
+                "rm",
+                _RmRequest(
+                    force=force,
+                    directory=directory,
+                    recursive=recursive,
+                    verbose=bool(verbose),
+                    operands=mapped,
+                ),
+                self._sources,
+            ),
+        )

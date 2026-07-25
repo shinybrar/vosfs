@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import locale
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, TypeGuard
 
 from ._command import (
+    _collate,
     _drain_current_operation,
     _Failure,
     _MappedOperand,
@@ -35,7 +35,7 @@ def _render_result(request: _FindRequest, result: object) -> str | _Failure:
     if request.maxdepth == 0:
         root = _strip_trailing_slashes(request.operand.path)
         paths = [path for path in paths if _strip_trailing_slashes(path) == root]
-    paths.sort(key=lambda path: (locale.strxfrm(path), path))
+    paths.sort(key=_collate)
     return "".join(f"{path}\n" for path in paths)
 
 
@@ -78,7 +78,7 @@ async def _search(
 ) -> str | _Failure:
     try:
         result = await _drain_current_operation(
-            filesystem._find(  # noqa: SLF001
+            filesystem._find(
                 request.operand.path,
                 maxdepth=1 if request.maxdepth == 0 else request.maxdepth,
                 withdirs=request.kind == "d",

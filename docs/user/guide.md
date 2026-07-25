@@ -377,6 +377,11 @@ Native operations and the client-derived behaviors composed from them.
 Failures map to the closest standard Python exception. Anything without a
 precise match is raised as the single public `vosfs.VOSpaceError`.
 
+!!! tip "Looking up a failure you actually hit?"
+
+    [Troubleshooting](troubleshooting.md) is organized by symptom rather than by
+    exception class.
+
 | Exception | Raised when |
 | --- | --- |
 | `ValueError` | Invalid input — a malformed path, bad option, or oversized/ill-formed XML |

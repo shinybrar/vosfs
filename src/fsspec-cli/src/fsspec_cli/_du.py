@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import locale
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeGuard
+from typing import TYPE_CHECKING
 
 from ._command import (
+    _collate,
     _drain_current_operation,
     _Failure,
     _MappedOperand,
     _run_single_operand_text,
+    _valid_size,
 )
 from ._listing import format_size
 
@@ -26,10 +27,6 @@ class _DuRequest:
     summarize: bool
     human_readable: bool
     operand: _MappedOperand
-
-
-def _valid_size(value: object) -> TypeGuard[int]:
-    return type(value) is int and value >= 0
 
 
 def _render_result(request: _DuRequest, result: object) -> str | _Failure:
@@ -55,7 +52,7 @@ def _render_result(request: _DuRequest, result: object) -> str | _Failure:
                 return _Failure(operand)
             entries.append((path, size))
 
-        entries.sort(key=lambda entry: (locale.strxfrm(entry[0]), entry[0]))
+        entries.sort(key=lambda entry: _collate(entry[0]))
         return "".join(
             f"{format_size(size, human_readable=request.human_readable)}\t{path}\n"
             for path, size in entries
@@ -70,7 +67,7 @@ async def _measure(
 ) -> str | _Failure:
     try:
         result = await _drain_current_operation(
-            filesystem._du(  # noqa: SLF001
+            filesystem._du(
                 request.operand.path,
                 total=request.summarize,
             )

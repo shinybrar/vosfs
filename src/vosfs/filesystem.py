@@ -9,13 +9,10 @@ async filesystem contract.
 from __future__ import annotations
 
 import asyncio
-import base64
-import contextlib
 import datetime
 import errno
 import hashlib
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast, overload
 from urllib.parse import urlsplit
@@ -30,13 +27,17 @@ from vosfs import (
     _coordination as coordination,
 )
 from vosfs import (
+    _integrity,
+    _moving,
+    _removal,
+    _transfer,
     capabilities,
     config,
     errors,
-    negotiate,
     nodes,
     paths,
     staging,
+    transport,
 )
 from vosfs.transport import ClientPool, build_timeout
 
@@ -51,7 +52,6 @@ if TYPE_CHECKING:
     from fsspec.callbacks import Callback
 
     from vosfs.capabilities import ServiceBindings
-    from vosfs.negotiate import NegotiatedEndpoint
     from vosfs.nodes import Node
 
 _SECURITY_METHOD_BY_CREDENTIAL = {
@@ -59,44 +59,7 @@ _SECURITY_METHOD_BY_CREDENTIAL = {
     "token": capabilities.TOKEN_METHOD,
     "certificate": capabilities.CERTIFICATE_METHOD,
 }
-_HTTP_OK = 200
-_HTTP_CREATED = 201
-_HTTP_NO_CONTENT = 204
-_HTTP_SEE_OTHER = 303
-_HTTP_PRECONDITION_FAILED = 412
-_IDENTITY_ENCODING = {"Accept-Encoding": "identity"}
-_READ_CHUNK = 1 << 20
-_DEFAULT_CONTENT_TYPE = "application/octet-stream"
 _GET_CONTAINER_MARKER = "_vosfs_materialize_get_container"
-
-
-@dataclass(frozen=True)
-class _MoveEntry:
-    """One source, destination, and verification expectation."""
-
-    source: str
-    destination: str
-    kind: str
-    size: int
-
-
-@dataclass(frozen=True)
-class _MovePlan:
-    """A preflighted client-derived move with no unresolved policy."""
-
-    source: str
-    destination: str
-    entries: tuple[_MoveEntry, ...]
-    recursive: bool
-    maxdepth: int | None
-
-
-@dataclass(frozen=True)
-class _MoveResult:
-    """Destination verification outcome for one move plan."""
-
-    completed: tuple[str, ...]
-    failed: tuple[str, ...]
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -250,7 +213,9 @@ class VOSpaceFileSystem(AsyncFileSystem):
         response = await self._send_to_service(
             "GET", self.endpoint_url + "/capabilities"
         )
-        self._raise_for_status(response, path="/capabilities", allowed=(_HTTP_OK,))
+        self._raise_for_status(
+            response, path="/capabilities", allowed=(transport.HTTP_OK,)
+        )
         return capabilities.parse_bindings(
             response.content,
             security_method=self._security_method(),
@@ -277,7 +242,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         self._ensure_usable()
         request_headers = dict(headers or {})
         use_cert = False
-        if _same_origin(url, self.endpoint_url):
+        if transport.same_origin(url, self.endpoint_url):
             if self._credential.method == "token":
                 bearer = self._credential.read_bearer()
                 request_headers["Authorization"] = f"Bearer {bearer}"
@@ -316,7 +281,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         bindings = await self._get_bindings()
         url = bindings.require_nodes() + paths.encode_url_path(path)
         response = await self._send_to_service("GET", url, headers=nodes.XML_HEADERS)
-        self._raise_for_status(response, path=path, allowed=(_HTTP_OK,))
+        self._raise_for_status(response, path=path, allowed=(transport.HTTP_OK,))
         return response.content
 
     def _parse_and_note(self, data: bytes) -> Node:
@@ -429,204 +394,6 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = "unable to discover the VOSpace authority"
             raise errors.VOSpaceError(msg)
         return self._authority
-
-    async def _negotiate(
-        self, path: str, *, direction: str, protocol_uri: str
-    ) -> NegotiatedEndpoint:
-        """Negotiate a byte endpoint for one logical transfer of ``path``.
-
-        Builds a VOSpace 2.1 transfer document with one authority-qualified
-        target, POSTs it to the discovered sync binding with redirects disabled,
-        follows the approved 303 chain to the transfer-details document, and
-        chooses a protocol whose security method is compatible with the
-        configured credential. Redirect loops and more than five hops fail.
-        """
-        bindings = await self._get_bindings()
-        sync_url = bindings.require_sync()
-        authority = await self._require_authority()
-        target = f"vos://{authority}{path}"
-        document = nodes.build_transfer_document(
-            target, direction=direction, protocols=[protocol_uri]
-        )
-        post = await self._send_to_service(
-            "POST", sync_url, content=document, headers=nodes.XML_HEADERS
-        )
-        self._raise_for_status(post, path=path, allowed=(_HTTP_SEE_OTHER,))
-        location = negotiate.validate_redirect(
-            post.headers.get("location"),
-            base=sync_url,
-            sending_bearer=False,
-        )
-        seen: set[str] = set()
-        for _redirect_count in range(1, 6):
-            if location in seen:
-                msg = "synchronous-transfer redirect loop"
-                raise errors.VOSpaceError(msg)
-            seen.add(location)
-            if negotiate.is_direct_byte_endpoint(location):
-                return negotiate.NegotiatedEndpoint(
-                    location, capabilities.ANONYMOUS_METHOD
-                )
-            location = negotiate.validate_redirect(
-                location,
-                base=location,
-                sending_bearer=(
-                    self._credential.method == "token"
-                    and _same_origin(location, self.endpoint_url)
-                ),
-            )
-            details = await self._send_to_service(
-                "GET", location, headers=nodes.XML_HEADERS
-            )
-            self._raise_for_status(
-                details, path=path, allowed=(_HTTP_OK, _HTTP_SEE_OTHER)
-            )
-            if details.status_code == _HTTP_OK:
-                return negotiate.choose_protocol(
-                    negotiate.parse_transfer_details(details.content),
-                    self._security_method(),
-                )
-            location = negotiate.validate_redirect(
-                details.headers.get("location"),
-                base=location,
-                sending_bearer=False,
-            )
-        msg = "synchronous-transfer negotiation returned more than five redirects"
-        raise errors.VOSpaceError(msg)
-
-    def _byte_routing(
-        self, endpoint: NegotiatedEndpoint
-    ) -> tuple[dict[str, str], bool]:
-        """Return the headers and cert flag for a negotiated byte request.
-
-        Credentials are routed by the negotiated security method: a
-        pre-authorized or anonymous endpoint gets nothing; a token endpoint gets
-        a freshly resolved bearer header over https; a certificate endpoint uses
-        the X.509 client over https.
-
-        The negotiated endpoint URL is validated first: it must be an absolute
-        ``http``/``https`` URL without userinfo. A ``user:pass@host`` endpoint is
-        rejected before the request is built, because HTTPX would otherwise
-        derive a ``Basic`` ``Authorization`` header from the URL userinfo and
-        defeat the credential-routing guarantee.
-        """
-        method = endpoint.security_method
-        parts = urlsplit(endpoint.url)
-        if parts.scheme not in ("http", "https") or not parts.netloc:
-            msg = (
-                "negotiated byte endpoint is not an absolute http(s) URL: "
-                f"{endpoint.url!r}"
-            )
-            raise errors.VOSpaceError(msg)
-        if parts.username or parts.password:
-            msg = "negotiated byte endpoint must not contain userinfo"
-            raise errors.VOSpaceError(msg)
-        if method == capabilities.ANONYMOUS_METHOD:
-            return {}, False
-        scheme = parts.scheme
-        if method == capabilities.TOKEN_METHOD:
-            if scheme != "https":
-                msg = "a token byte endpoint must use https"
-                raise errors.VOSpaceError(msg)
-            return {"Authorization": f"Bearer {self._credential.read_bearer()}"}, False
-        if method == capabilities.CERTIFICATE_METHOD:
-            if scheme != "https":
-                msg = "a certificate byte endpoint must use https"
-                raise errors.VOSpaceError(msg)
-            return {}, True
-        msg = f"unsupported negotiated security method: {method!r}"  # pragma: no cover
-        raise errors.VOSpaceError(msg)  # pragma: no cover
-
-    async def _byte_send(
-        self,
-        endpoint: NegotiatedEndpoint,
-        method: str,
-        *,
-        content: bytes | None = None,
-        headers: Mapping[str, str] | None = None,
-        stream: bool = False,
-    ) -> httpx.Response:
-        """Perform the one byte GET/HEAD/PUT against a negotiated endpoint.
-
-        A redirect (3xx) response fails: only the approved synchronous-transfer
-        303 chain may redirect.
-        """
-        self._ensure_usable()
-        request_headers, use_cert = self._byte_routing(endpoint)
-        request_headers.update(headers or {})
-        request = httpx.Request(
-            method, endpoint.url, headers=request_headers, content=content
-        )
-        try:
-            response = await self._pool.send(request, use_cert=use_cert, stream=stream)
-        except httpx.HTTPError as exc:
-            raise errors.transport_exception(exc, path=endpoint.url) from exc
-        if response.is_redirect:
-            if stream:
-                await response.aclose()
-            msg = f"unexpected redirect from byte endpoint: {response.status_code}"
-            raise errors.VOSpaceError(msg, status=response.status_code)
-        return response
-
-    # -- reading bytes -------------------------------------------------------
-
-    async def _validate_read_target(self, path: str) -> Node:
-        """Reject external LinkNodes before synchronous transfer negotiation."""
-        authority = await self._require_authority()
-        node = self._parse_and_note(await self._get_node_document(path))
-        if node.node_type == "link":
-            target = urlsplit(cast("str", node.target))
-            if target.scheme != "vos" or target.netloc != authority:
-                msg = "external LinkNode byte reads are unsupported"
-                raise NotImplementedError(msg)
-        return node
-
-    async def _preflight_read_target(self, path: str) -> Node:
-        """Validate byte-read capability and LinkNode target before staging."""
-        (await self._get_bindings()).require_sync()
-        return await self._validate_read_target(path)
-
-    async def _open_read_stream(
-        self, path: str, *, target_validated: bool = False
-    ) -> httpx.Response:
-        """Negotiate a read and return the open, streaming byte response."""
-        (await self._get_bindings()).require_sync()
-        if not target_validated:
-            await self._validate_read_target(path)
-        endpoint = await self._negotiate(
-            path,
-            direction=negotiate.DIRECTION_PULL,
-            protocol_uri=negotiate.PROTOCOL_HTTPS_GET,
-        )
-        response = await self._byte_send(
-            endpoint, "GET", headers=_IDENTITY_ENCODING, stream=True
-        )
-        if response.status_code not in (_HTTP_OK, _HTTP_NO_CONTENT):
-            body = errors.bounded_text(await response.aread())
-            retry_after = errors.parse_retry_after(response.headers.get("retry-after"))
-            await response.aclose()
-            raise errors.http_exception(
-                response.status_code,
-                body=body,
-                fault=errors.extract_fault(body),
-                path=path,
-                retry_after=retry_after,
-            )
-        return response
-
-    async def _read_whole(self, path: str) -> bytes:
-        """Download one whole object into memory (an empty 204 reads as ``b''``).
-
-        Consumes the raw response bytes so HTTP content decoding can never alter
-        filesystem content, matching the streamed ``_get_file`` path.
-        """
-        response = await self._open_read_stream(path)
-        try:
-            if response.status_code == _HTTP_NO_CONTENT:
-                return b""
-            return b"".join([chunk async for chunk in response.aiter_raw(_READ_CHUNK)])
-        finally:
-            await response.aclose()
 
     async def _get(
         self,
@@ -760,7 +527,8 @@ class VOSpaceFileSystem(AsyncFileSystem):
         target_validated: bool = False,
     ) -> None:
         """Stream one read to disk, optionally reusing a safe preflight."""
-        response = await self._open_read_stream(
+        response = await _transfer.open_read_stream(
+            self,
             rpath,
             target_validated=target_validated,
         )
@@ -768,9 +536,9 @@ class VOSpaceFileSystem(AsyncFileSystem):
             size = response.headers.get("content-length")
             callback.set_size(int(size) if size is not None else None)
             with Path(lpath).open("wb") as local:  # noqa: ASYNC230 - staging to local disk
-                if response.status_code == _HTTP_NO_CONTENT:
+                if response.status_code == transport.HTTP_NO_CONTENT:
                     return
-                async for chunk in response.aiter_raw(_READ_CHUNK):
+                async for chunk in response.aiter_raw(_integrity.READ_CHUNK):
                     local.write(chunk)
                     callback.relative_update(len(chunk))
         finally:
@@ -784,7 +552,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **_kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> bytes:
         """Return one whole-object read sliced with Python half-open semantics."""
-        data = await self._read_whole(self._strip_protocol(path))
+        data = await _transfer.read_whole(self, self._strip_protocol(path))
         return data[start:end]
 
     async def _cat_ranges(  # noqa: PLR0913 - fsspec hook signature
@@ -857,7 +625,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         ranges: Sequence[tuple[int, int | None, int | None]],
     ) -> list[tuple[int, bytes]]:
         """Read grouped byte ranges through one staged whole-object download."""
-        await self._preflight_read_target(path)
+        await _transfer.preflight_read_target(self, path)
 
         async def download(temp_path: str) -> None:
             await self._download_file(path, temp_path, target_validated=True)
@@ -937,7 +705,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = "deferred commit (autocommit=False) is unsupported"
             raise NotImplementedError(msg)
         if "r" in mode:
-            sync(self.loop, self._preflight_read_target, path)
+            sync(self.loop, _transfer.preflight_read_target, self, path)
             temp_path = staging.new_temp_path()
             try:
                 sync(
@@ -1009,47 +777,6 @@ class VOSpaceFileSystem(AsyncFileSystem):
             **kwargs,
         )
 
-    async def _write(
-        self,
-        path: str,
-        body: Any,  # noqa: ANN401 - httpx accepts bytes or an async byte iterator
-        *,
-        size: int | None,
-        content_type: str | None,
-        expected_digest: bytes | None,
-    ) -> None:
-        """Perform one negotiated whole PUT, validating status and integrity."""
-        endpoint = await self._negotiate(
-            path,
-            direction=negotiate.DIRECTION_PUSH,
-            protocol_uri=negotiate.PROTOCOL_HTTPS_PUT,
-        )
-        headers = {"Content-Type": content_type or _DEFAULT_CONTENT_TYPE}
-        if size is not None:
-            headers["Content-Length"] = str(size)
-        try:
-            response = await self._byte_send(
-                endpoint,
-                "PUT",
-                content=body,
-                headers=headers,
-            )
-            if response.status_code == _HTTP_PRECONDITION_FAILED:
-                msg = f"integrity check failed for {path}"
-                raise errors.VOSpaceError(msg, status=_HTTP_PRECONDITION_FAILED)
-            if response.status_code != _HTTP_CREATED:
-                detail = errors.bounded_text(response.content)
-                msg = (
-                    f"uncertain write to {path}: HTTP {response.status_code}; the "
-                    f"target may have been truncated. {detail}"
-                )
-                raise errors.VOSpaceError(msg, status=response.status_code)
-            _verify_returned_digest(response, expected_digest, path)
-        finally:
-            # Once PUT dispatch begins, success, failure, and cancellation can all
-            # leave remote state changed. Never promise rollback; evict stale views.
-            self._invalidate(path)
-
     async def _pipe_file(
         self,
         path: str,
@@ -1064,7 +791,8 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = f"path already exists: {path}"
             raise FileExistsError(msg)
         await self._materialize_write_parent(path, state)
-        await self._write(
+        await _transfer.write_whole(
+            self,
             path,
             value,
             size=len(value),
@@ -1089,12 +817,13 @@ class VOSpaceFileSystem(AsyncFileSystem):
         await self._materialize_write_parent(rpath, state)
         size = Path(lpath).stat().st_size  # noqa: ASYNC240 - local-disk stat, not remote I/O
         callback.set_size(size)
-        await self._write(
+        await _transfer.write_whole(
+            self,
             rpath,
-            _file_body(lpath, callback),
+            _integrity.file_body(lpath, callback),
             size=size,
             content_type=kwargs.get("content_type"),
-            expected_digest=_md5_of_file(lpath),
+            expected_digest=_integrity.md5_of_file(lpath),
         )
 
     def touch(
@@ -1133,7 +862,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
             response = await self._send_to_service(
                 "POST", url, content=document, headers=nodes.XML_HEADERS
             )
-            self._raise_for_status(response, path=path, allowed=(_HTTP_OK,))
+            self._raise_for_status(response, path=path, allowed=(transport.HTTP_OK,))
         finally:
             self._invalidate(path)
 
@@ -1148,7 +877,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
                 "PUT", url, content=document, headers=nodes.XML_HEADERS
             )
             self._raise_for_status(
-                response, path=path, allowed=(_HTTP_OK, _HTTP_CREATED)
+                response, path=path, allowed=(transport.HTTP_OK, transport.HTTP_CREATED)
             )
         finally:
             self._invalidate(path)
@@ -1160,7 +889,9 @@ class VOSpaceFileSystem(AsyncFileSystem):
         try:
             response = await self._send_to_service("DELETE", url)
             self._raise_for_status(
-                response, path=path, allowed=(_HTTP_OK, _HTTP_NO_CONTENT)
+                response,
+                path=path,
+                allowed=(transport.HTTP_OK, transport.HTTP_NO_CONTENT),
             )
         finally:
             self._invalidate(path)
@@ -1277,36 +1008,9 @@ class VOSpaceFileSystem(AsyncFileSystem):
         if info["type"] != "directory":
             await self._delete_node(path)
         elif recursive:
-            await self._rm_tree(path)
+            await _removal.remove_tree(self, path)
         else:
             await self._rmdir(path)
-
-    async def _rm_tree(self, path: str) -> None:
-        """Delete a container and its descendants leaves-first, client-side."""
-        completed: list[str] = []
-        await self._rm_subtree(path, completed)
-
-    async def _rm_subtree(self, path: str, completed: list[str]) -> None:
-        """Delete one validated subtree and retain confirmed partial progress."""
-        try:
-            children = await self._ls(path, detail=True)
-        except Exception as exc:
-            raise _recursive_removal_error(path, completed, exc) from exc
-        for child in children:
-            child_path = child["name"]
-            if child["type"] == "directory":
-                await self._rm_subtree(child_path, completed)
-            else:
-                await self._rm_delete(child_path, completed)
-        await self._rm_delete(path, completed)
-
-    async def _rm_delete(self, path: str, completed: list[str]) -> None:
-        """Delete one recursive-removal node and record only confirmed success."""
-        try:
-            await self._delete_node(path)
-        except Exception as exc:
-            raise _recursive_removal_error(path, completed, exc) from exc
-        completed.append(path)
 
     async def _cp_file(self, path1: str, path2: str, **_kwargs: Any) -> None:  # noqa: ANN401
         """Copy one object with a bounded read-to-write relay (bytes only).
@@ -1321,7 +1025,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         # Resolve the source first so a missing source fails before any
         # destination container is created (no orphaned parent on error).
         source_is_dir = (
-            await self._validate_read_target(path1)
+            await _transfer.validate_read_target(self, path1)
         ).node_type == "container"
         # Then materialize the destination's parent, for both a directory and a
         # file target, so copying into a not-yet-created subtree (for example a
@@ -1428,183 +1132,17 @@ class VOSpaceFileSystem(AsyncFileSystem):
         *,
         file_only: bool = False,
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
-    ) -> _MoveResult:
+    ) -> _moving.MoveResult:
         """Plan and execute one client-derived move."""
-        plan = await self._plan_move(
+        plan = await _moving.plan(
+            self,
             path1,
             path2,
             recursive=recursive,
             maxdepth=maxdepth,
             file_only=file_only,
         )
-        return await self._execute_move(plan, **kwargs)
-
-    async def _plan_move(
-        self,
-        path1: str,
-        path2: str,
-        *,
-        recursive: bool,
-        maxdepth: int | None,
-        file_only: bool,
-    ) -> _MovePlan:
-        """Resolve all move policy before any destination mutation."""
-        source = self._strip_protocol(path1)
-        destination = self._strip_protocol(path2)
-        source_info = await self._info(source)
-        if source_info.get("islink"):
-            msg = "moving a LinkNode is unsupported"
-            raise NotImplementedError(msg)
-        if file_only and source_info["type"] == "directory":
-            raise IsADirectoryError(errno.EISDIR, "move source is a container", source)
-        if source == destination:
-            if source_info["type"] == "directory":
-                msg = f"move destination already exists: {destination}"
-                raise FileExistsError(msg)
-            return _MovePlan(
-                source=source,
-                destination=destination,
-                entries=(),
-                recursive=False,
-                maxdepth=maxdepth,
-            )
-        if not file_only and (source == "/" or destination.startswith(f"{source}/")):
-            msg = f"move destination is within the source: {destination}"
-            raise ValueError(msg)
-        recursive = recursive or source_info["type"] == "directory"
-        source_paths = await self._expand_path(
-            source,
-            recursive=recursive,
-            maxdepth=maxdepth,
-        )
-        source_manifest = [
-            (path, source_info if path == source else await self._info(path))
-            for path in source_paths
-        ]
-        if any(info.get("islink") for _path, info in source_manifest):
-            msg = "moving a LinkNode is unsupported"
-            raise NotImplementedError(msg)
-        if await self._exists(destination):
-            msg = f"move destination already exists: {destination}"
-            raise FileExistsError(msg)
-        destination_paths = self._coordinator.remap(source_paths, destination)
-        entries = tuple(
-            _MoveEntry(
-                source=path,
-                destination=copied_path,
-                kind=info["type"],
-                size=int(info["size"]),
-            )
-            for (path, info), copied_path in zip(
-                source_manifest,
-                destination_paths,
-                strict=True,
-            )
-        )
-        return _MovePlan(source, destination, entries, recursive, maxdepth)
-
-    async def _execute_move(
-        self,
-        plan: _MovePlan,
-        **kwargs: Any,  # noqa: ANN401 - fsspec forwards copy options
-    ) -> _MoveResult:
-        """Copy, verify, and only then delete one preflighted move plan."""
-        if not plan.entries:
-            return _MoveResult((), ())
-        kwargs.pop("on_error", None)
-        try:
-            await self._copy(
-                [entry.source for entry in plan.entries],
-                [entry.destination for entry in plan.entries],
-                recursive=plan.recursive,
-                maxdepth=plan.maxdepth,
-                on_error="raise",
-                **kwargs,
-            )
-        except Exception as exc:
-            result = await self._verify_move_destinations(plan)
-            self._invalidate(plan.destination)
-            msg = (
-                f"move copy failed ({len(result.completed)} completed, "
-                f"{len(result.failed)} failed)"
-            )
-            raise errors.VOSpaceError(
-                msg,
-                completed=list(result.completed),
-                failed=list(result.failed),
-            ) from exc
-        result = await self._verify_move_destinations(plan)
-        if result.failed:
-            self._invalidate(plan.destination)
-            msg = (
-                f"move copy is incomplete ({len(result.completed)} completed, "
-                f"{len(result.failed)} failed); source is kept"
-            )
-            raise errors.VOSpaceError(
-                msg,
-                completed=list(result.completed),
-                failed=list(result.failed),
-            )
-        await self._remove_moved_sources(
-            plan.entries,
-            allow_nonempty=plan.maxdepth is not None,
-        )
-        self._invalidate(plan.source)
-        self._invalidate(plan.destination)
-        return result
-
-    async def _verify_move_destinations(
-        self,
-        plan: _MovePlan,
-    ) -> _MoveResult:
-        """Return destination paths whose type and file size did or did not verify."""
-        completed: list[str] = []
-        failed: list[str] = []
-        for entry in plan.entries:
-            try:
-                copied = await self._info(entry.destination)
-            except OSError:
-                copied = None
-            type_matches = copied is not None and copied["type"] == entry.kind
-            size_matches = type_matches and (
-                entry.kind == "directory" or copied["size"] == entry.size
-            )
-            if size_matches:
-                completed.append(entry.destination)
-            else:
-                failed.append(entry.destination)
-        return _MoveResult(tuple(completed), tuple(failed))
-
-    async def _remove_moved_sources(
-        self,
-        entries: tuple[_MoveEntry, ...],
-        *,
-        allow_nonempty: bool,
-    ) -> None:
-        """Remove verified moved entries leaves-first, retaining bounded descendants."""
-        completed: list[str] = []
-        for entry in sorted(
-            entries,
-            key=lambda item: item.source.count("/"),
-            reverse=True,
-        ):
-            path = entry.source
-            try:
-                await self._rm_one(path, recursive=False)
-            except OSError as exc:
-                if allow_nonempty and exc.errno == errno.ENOTEMPTY:
-                    continue
-                self._invalidate(path)
-                msg = (
-                    "move source deletion failed "
-                    f"({len(completed)} completed, 1 failed)"
-                )
-                raise errors.VOSpaceError(
-                    msg,
-                    completed=completed,
-                    failed=[path],
-                ) from exc
-            completed.append(path)
+        return await _moving.execute(self, plan, **kwargs)
 
     def _invalidate(self, path: str) -> None:
         """Invalidate the directory cache for ``path``, its subtree, and parent.
@@ -1666,18 +1204,6 @@ def _broadcast(
     return list(value)
 
 
-def _origin(url: str) -> tuple[str, str | None, int | None]:
-    """Return the (scheme, host, port) origin of a URL with default ports."""
-    parts = urlsplit(url)
-    port = parts.port or (443 if parts.scheme == "https" else 80)
-    return (parts.scheme, parts.hostname, port)
-
-
-def _same_origin(a: str, b: str) -> bool:
-    """Whether two URLs share the same scheme, host, and (defaulted) port."""
-    return _origin(a) == _origin(b)
-
-
 def _authority_of(uri: str) -> str:
     """Return the VOSpace authority carried by a ``vos://authority/...`` URI."""
     _scheme, separator, rest = uri.partition("://")
@@ -1692,20 +1218,6 @@ def _parse_datetime(value: str) -> datetime.datetime:
     return datetime.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
 
 
-def _recursive_removal_error(
-    path: str, completed: list[str], cause: Exception
-) -> errors.VOSpaceError:
-    """Return a partial-completion error for a recursive removal failure."""
-    return errors.VOSpaceError(
-        f"recursive removal failed at {path}: {cause}",
-        status=getattr(cause, "status", None),
-        fault=getattr(cause, "fault", None),
-        retry_after=getattr(cause, "retry_after", None),
-        completed=list(completed),
-        failed=[path],
-    )
-
-
 def _ancestors_top_down(path: str) -> list[str]:
     """Return ``path`` and its ancestors from the topmost down to ``path``."""
     result: list[str] = []
@@ -1714,54 +1226,3 @@ def _ancestors_top_down(path: str) -> list[str]:
         current = coordination.canonical_path(f"{current}/{segment}")
         result.append(current)
     return result
-
-
-def _md5_of_file(path: str) -> bytes:
-    """Return the MD5 digest of a local file, read in bounded chunks."""
-    # usedforsecurity=False keeps the integrity hash available on FIPS hosts,
-    # where an unqualified md5() raises before any byte transfer can complete.
-    digest = hashlib.md5(usedforsecurity=False)
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(_READ_CHUNK), b""):
-            digest.update(chunk)
-    return digest.digest()
-
-
-async def _file_body(path: str, callback: Callback) -> AsyncIterator[bytes]:
-    """Yield a local file in bounded chunks, reporting progress via callback."""
-    # Local-disk reads are fast and bounded; async file I/O would add a dependency.
-    with Path(path).open("rb") as handle:  # noqa: ASYNC230 - staging from local disk
-        for chunk in iter(lambda: handle.read(_READ_CHUNK), b""):
-            yield chunk
-            callback.relative_update(len(chunk))
-
-
-def _verify_returned_digest(
-    response: httpx.Response,
-    expected: bytes | None,
-    path: str,
-) -> None:
-    """Validate a server-returned MD5 digest against the uploaded bytes."""
-    if expected is None:
-        return
-    header = response.headers.get("content-md5") or response.headers.get("digest")
-    if header is None:
-        return
-    returned = _decode_digest(header)
-    if returned is not None and returned != expected:
-        msg = f"MD5 mismatch after writing {path}"
-        raise errors.VOSpaceError(msg, status=response.status_code)
-
-
-def _decode_digest(header: str) -> bytes | None:
-    """Decode an MD5 digest header from hex or base64, or ``None`` if unusable."""
-    value = (
-        header.split("=", 1)[1].strip()
-        if header.lower().startswith("md5=")
-        else header.strip()
-    )
-    with contextlib.suppress(ValueError):
-        return bytes.fromhex(value)
-    with contextlib.suppress(ValueError):
-        return base64.b64decode(value, validate=True)
-    return None

@@ -14,7 +14,7 @@ import pytest
 from conftest import BASE_URL, CAPABILITIES, make_fs
 from dask.base import tokenize
 
-from vosfs import VOSpaceFileSystem
+from vosfs import VOSpaceFileSystem, _transfer
 from vosfs.capabilities import ANONYMOUS_METHOD
 from vosfs.negotiate import NegotiatedEndpoint
 
@@ -40,8 +40,10 @@ async def _direct_send(filesystem: VOSpaceFileSystem, kind: str) -> None:
             "GET", f"{filesystem.endpoint_url}/capabilities"
         )
         return
-    await filesystem._byte_send(
-        NegotiatedEndpoint(f"{BASE_URL}/files/data", ANONYMOUS_METHOD), "GET"
+    await _transfer.byte_send(
+        filesystem,
+        NegotiatedEndpoint(f"{BASE_URL}/files/data", ANONYMOUS_METHOD),
+        "GET",
     )
 
 

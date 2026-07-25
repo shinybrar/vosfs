@@ -38,9 +38,21 @@ finally:
     fs.close()
 ```
 
+!!! tip "No credential yet?"
+
+    A CADC proxy certificate comes from `cadc-get-cert`. See
+    [Getting a credential](troubleshooting.md#getting-a-credential).
+
+## Where to go next
+
 - The [User Guide](guide.md) covers construction, credentials, and the
   supported and unsupported behavior.
+- [Recipes](recipes.md) are task-first snippets: read a CSV into pandas, upload
+  a directory, open a FITS file, checkpoint to Zarr.
+- [Troubleshooting](troubleshooting.md) is organized by the error you saw.
 - The [API Reference](api-reference.md) documents the public interface.
+- [fsspec-cli](cli/index.md) turns this (or any async fsspec filesystem) into
+  shell-shaped commands inside your own CLI.
 - The normative surface is the capability contract in
   [`docs/design/trd.md`](https://github.com/shinybrar/vosfs/blob/main/docs/design/trd.md).
 

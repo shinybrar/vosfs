@@ -4,7 +4,7 @@
 
 Status: **Research golden vectors for Issue #145 / #146**
 
-Profile: [reduced BSD/macOS `stat` command profile](../design/fsspec-cli-bsd-macos-stat-command-profile.md)
+Profile: [reduced BSD/macOS `stat` command profile](../design/fsspec-cli/commands.md#stat)
 
 These vectors are implementation inputs. They are not a runtime matrix and must
 not become production capability negotiation. Expected stdout uses the locked

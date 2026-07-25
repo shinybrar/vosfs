@@ -10,7 +10,7 @@ Prototyped: 2026-07-15
 
 Question: [shinybrar/vosfs#80](https://github.com/shinybrar/vosfs/issues/80)
 
-Locked profile: [`fsspec-cli` plain `ls` command profile](../../design/fsspec-cli-plain-ls-command-profile.md)
+Locked profile: [`fsspec-cli` plain `ls` command contract](../../design/fsspec-cli/commands.md#ls)
 
 Client baseline: fsspec 2026.6.0
 
@@ -214,7 +214,7 @@ literal mapped-root behavior.
 - Async host and lifecycle contract: [issue #92](https://github.com/shinybrar/vosfs/issues/92)
 - Source lifecycle failure behavior: [Acquire every referenced async filesystem source before filesystem work](../../adr/0003-acquire-referenced-async-filesystem-sources.md)
 - Tested-status vocabulary and version policy: [issue #81](https://github.com/shinybrar/vosfs/issues/81)
-- Long-format decision: [strict `ls -l` rejection](../../design/fsspec-cli-ls-long-rejection-profile.md)
+- Long-format decision: [why strict POSIX was the wrong bar](../../design/fsspec-cli/lessons.md#12-strict-posix-was-the-wrong-bar)
 - Production tracer sequencing: [issue #83](https://github.com/shinybrar/vosfs/issues/83)
 
 ## Verdict and prototype disposal
@@ -235,6 +235,6 @@ retains the evidence; no production CLI implementation was added by issue #80.
 
 ## Evidence links
 
-- [Locked command profile](../../design/fsspec-cli-plain-ls-command-profile.md)
+- [Locked command contract](../../design/fsspec-cli/commands.md#ls)
 - [Portable capability floor](../fsspec-cli-plain-ls-capability-floor.md)
 - [Issue #80](https://github.com/shinybrar/vosfs/issues/80)

@@ -57,7 +57,7 @@ async def _confirmed_mv_file(  # noqa: PLR0911
     request: _CpRequest, filesystem: AsyncFileSystem
 ) -> _CpFailure | None:
     try:
-        source_info = await filesystem._info(request.source.path)  # noqa: SLF001
+        source_info = await filesystem._info(request.source.path)
     except Exception as error:  # noqa: BLE001
         return _CpFailure(request.source, backend_error=error)
     expected_size, source_failure = _require_source_file_size(

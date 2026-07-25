@@ -152,7 +152,7 @@ async def _read_info(
     filesystem: AsyncFileSystem,
 ) -> bytes:
     try:
-        result = await filesystem._info(operand.path)  # noqa: SLF001
+        result = await filesystem._info(operand.path)
     except Exception as error:
         raise _CommandFailureError(operand, error) from error
     payload = _normalize_info(result)

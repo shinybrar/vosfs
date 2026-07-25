@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import ssl
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -42,6 +43,26 @@ def build_timeout(overrides: Mapping[str, float] | None) -> httpx.Timeout:
         write=values["write"],
         pool=values["pool"],
     )
+
+
+HTTP_OK = 200
+HTTP_CREATED = 201
+HTTP_NO_CONTENT = 204
+HTTP_SEE_OTHER = 303
+HTTP_PRECONDITION_FAILED = 412
+IDENTITY_ENCODING = {"Accept-Encoding": "identity"}
+
+
+def origin(url: str) -> tuple[str, str | None, int | None]:
+    """Return the (scheme, host, port) origin of a URL with default ports."""
+    parts = urlsplit(url)
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    return (parts.scheme, parts.hostname, port)
+
+
+def same_origin(a: str, b: str) -> bool:
+    """Whether two URLs share the same scheme, host, and (defaulted) port."""
+    return origin(a) == origin(b)
 
 
 class ClientPool:

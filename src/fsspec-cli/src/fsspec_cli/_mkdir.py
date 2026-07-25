@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING
 
 from ._command import (
     _backend_category,
-    _CommandFailureError,
+    _Failure,
     _MappedOperand,
+    _raise_operand_failures,
     _render_operand_diagnostic,
     _run_mapped_command,
 )
@@ -26,13 +27,6 @@ class _MkdirRequest:
     operands: tuple[_MappedOperand, ...]
 
 
-@dataclass(frozen=True)
-class _Failure:
-    operand: _MappedOperand
-    backend_error: Exception | None = None
-    uncertain: bool = False
-
-
 async def _run_mkdir(
     command: str,
     request: _MkdirRequest,
@@ -44,26 +38,8 @@ async def _run_mkdir(
             filesystems,
             create_parents=request.create_parents,
         )
-        if not failures:
-            return
-        backend_error = next(
-            (
-                failure.backend_error
-                for failure in failures
-                if failure.backend_error is not None
-            ),
-            None,
-        )
-        try:
-            for failure in failures:
-                _render_failure(command, failure)
-        except Exception as error:
-            raise _CommandFailureError(
-                error=backend_error,
-                render=False,
-                propagate=error,
-            ) from error
-        raise _CommandFailureError(error=backend_error, render=False)
+        if failures:
+            _raise_operand_failures(command, failures, _render_failure)
 
     await _run_mapped_command(command, request.operands, sources, operation)
 
@@ -94,12 +70,12 @@ async def _create_operand(
 ) -> _Failure | None:
     try:
         if create_parents:
-            await filesystem._makedirs(  # noqa: SLF001
+            await filesystem._makedirs(
                 operand.path,
                 exist_ok=True,
             )
         else:
-            await filesystem._mkdir(  # noqa: SLF001
+            await filesystem._mkdir(
                 operand.path,
                 create_parents=False,
             )
@@ -107,7 +83,7 @@ async def _create_operand(
         return _Failure(operand, backend_error=error)
 
     try:
-        info = await filesystem._info(operand.path)  # noqa: SLF001
+        info = await filesystem._info(operand.path)
     except Exception as error:  # noqa: BLE001 - post-mutation verify is uncertain.
         return _Failure(operand, backend_error=error, uncertain=True)
 

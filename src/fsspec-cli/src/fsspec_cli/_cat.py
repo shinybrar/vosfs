@@ -178,7 +178,7 @@ async def _stage_operand(
 ) -> tuple[str | None, _Failure | _StagingFailure | None]:
     # fsspec's native async API intentionally exposes underscore coroutines.
     try:
-        info = await filesystem._info(operand.path)  # noqa: SLF001
+        info = await filesystem._info(operand.path)
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return None, _Failure(operand, backend_error=error)
 
@@ -203,7 +203,7 @@ async def _stage_operand(
         )
 
     try:
-        await filesystem._get_file(operand.path, temporary)  # noqa: SLF001
+        await filesystem._get_file(operand.path, temporary)
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return None, _failure_after_temporary(
             ownership,

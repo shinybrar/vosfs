@@ -14,7 +14,7 @@ from conftest import (
     mock_capabilities,
 )
 
-from vosfs import negotiate
+from vosfs import _transfer, negotiate
 from vosfs.capabilities import ANONYMOUS_METHOD, CERTIFICATE_METHOD, TOKEN_METHOD
 from vosfs.negotiate import (
     DIRECTION_PULL,
@@ -139,8 +139,8 @@ async def test_negotiate_read_returns_endpoint(router: respx.Router) -> None:
     endpoint = f"{BASE_URL}/files/abc"
     _mock_negotiation(router, endpoint)
     fs = make_fs(router, asynchronous=True)
-    negotiated = await fs._negotiate(
-        "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
+    negotiated = await _transfer.negotiate_endpoint(
+        fs, "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
     )
     assert negotiated == NegotiatedEndpoint(endpoint, ANONYMOUS_METHOD)
     await fs.aclose()
@@ -157,8 +157,8 @@ async def test_negotiate_accepts_direct_open_cadc_byte_endpoint(
     )
     fs = make_fs(router, asynchronous=True, token="service-token")
 
-    negotiated = await fs._negotiate(
-        "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
+    negotiated = await _transfer.negotiate_endpoint(
+        fs, "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
     )
 
     assert negotiated == NegotiatedEndpoint(endpoint, ANONYMOUS_METHOD)
@@ -186,8 +186,8 @@ async def test_negotiate_follows_transfer_result_redirect(
         ),
     )
     fs = make_fs(router, asynchronous=True, certfile="/tmp/proxy.pem")  # noqa: S108
-    negotiated = await fs._negotiate(
-        "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
+    negotiated = await _transfer.negotiate_endpoint(
+        fs, "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
     )
     assert negotiated == NegotiatedEndpoint(endpoint, CERTIFICATE_METHOD)
     await fs.aclose()
@@ -205,8 +205,8 @@ async def test_negotiate_rejects_redirect_loop(router: respx.Router) -> None:
     )
     fs = make_fs(router, asynchronous=True)
     with pytest.raises(OSError, match="redirect loop"):
-        await fs._negotiate(
-            "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
+        await _transfer.negotiate_endpoint(
+            fs, "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
         )
     await fs.aclose()
 
@@ -226,8 +226,8 @@ async def test_negotiate_rejects_more_than_five_redirects(
         )
     fs = make_fs(router, asynchronous=True)
     with pytest.raises(OSError, match="more than five"):
-        await fs._negotiate(
-            "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
+        await _transfer.negotiate_endpoint(
+            fs, "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
         )
     await fs.aclose()
 
@@ -238,8 +238,8 @@ async def test_negotiate_non_303_maps_error(router: respx.Router) -> None:
     router.post(SYNC_URL).mock(return_value=httpx.Response(400, text="bad transfer"))
     fs = make_fs(router, asynchronous=True)
     with pytest.raises(OSError, match="400"):
-        await fs._negotiate(
-            "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
+        await _transfer.negotiate_endpoint(
+            fs, "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
         )
     await fs.aclose()
 
@@ -254,7 +254,7 @@ async def test_byte_send_anonymous_has_no_auth(router: respx.Router) -> None:
     router.get(f"{BASE_URL}/files/abc").side_effect = capture
     fs = make_fs(router, asynchronous=True, token="secret")
     endpoint = NegotiatedEndpoint(f"{BASE_URL}/files/abc", ANONYMOUS_METHOD)
-    response = await fs._byte_send(endpoint, "GET")
+    response = await _transfer.byte_send(fs, endpoint, "GET")
     assert response.content == b"hello"
     assert seen["auth"] is None
     await fs.aclose()
@@ -270,7 +270,7 @@ async def test_byte_send_token_endpoint_sends_bearer(router: respx.Router) -> No
     router.get("https://cross.test/files/x").side_effect = capture
     fs = make_fs(router, asynchronous=True, token="tok")
     endpoint = NegotiatedEndpoint("https://cross.test/files/x", TOKEN_METHOD)
-    await fs._byte_send(endpoint, "GET")
+    await _transfer.byte_send(fs, endpoint, "GET")
     assert seen["auth"] == "Bearer tok"
     await fs.aclose()
 
@@ -279,7 +279,7 @@ async def test_byte_send_token_endpoint_requires_https(router: respx.Router) -> 
     fs = make_fs(router, asynchronous=True, token="tok")
     endpoint = NegotiatedEndpoint("http://insecure.test/files/x", TOKEN_METHOD)
     with pytest.raises(OSError, match="https"):
-        await fs._byte_send(endpoint, "GET")
+        await _transfer.byte_send(fs, endpoint, "GET")
     await fs.aclose()
 
 
@@ -289,7 +289,7 @@ async def test_byte_send_certificate_endpoint_requires_https(
     fs = make_fs(router, asynchronous=True, certfile="/tmp/p.pem")  # noqa: S108
     endpoint = NegotiatedEndpoint("http://insecure.test/files/x", CERTIFICATE_METHOD)
     with pytest.raises(OSError, match="https"):
-        await fs._byte_send(endpoint, "GET")
+        await _transfer.byte_send(fs, endpoint, "GET")
     await fs.aclose()
 
 
@@ -300,7 +300,7 @@ async def test_byte_send_rejects_redirect(router: respx.Router) -> None:
     fs = make_fs(router, asynchronous=True)
     endpoint = NegotiatedEndpoint(f"{BASE_URL}/files/x", ANONYMOUS_METHOD)
     with pytest.raises(OSError, match="redirect"):
-        await fs._byte_send(endpoint, "GET")
+        await _transfer.byte_send(fs, endpoint, "GET")
     await fs.aclose()
 
 
@@ -319,8 +319,8 @@ async def test_bearer_not_leaked_to_cross_origin_redirect(router: respx.Router) 
 
     router.get(cross).side_effect = capture
     fs = make_fs(router, asynchronous=True, token="secret-token")
-    await fs._negotiate(
-        "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
+    await _transfer.negotiate_endpoint(
+        fs, "/file.txt", direction=DIRECTION_PULL, protocol_uri=PROTOCOL_HTTPS_GET
     )
     # The bearer reaches the same-origin POST but never the cross-origin details GET.
     assert seen["auth"] is None

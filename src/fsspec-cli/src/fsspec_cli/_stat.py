@@ -13,13 +13,15 @@ import stat as stat_module
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, cast
 
 import typer
 
 from ._command import (
     _binary_stdout,
     _CommandFailureError,
+    _Failure,
+    _first_backend_error,
     _MappedOperand,
     _render_backend_failure,
     _run_mapped_command,
@@ -54,13 +56,6 @@ _MONTHS = (
     "Nov",
     "Dec",
 )
-
-
-@dataclass(frozen=True)
-class _StatFailure:
-    operand: _MappedOperand
-    backend_error: Exception | None = None
-    incompatible: Literal["result"] | None = None
 
 
 @dataclass(frozen=True)
@@ -166,7 +161,7 @@ def _write_line(line: bytes) -> None:
     stdout.flush()
 
 
-def _render_failure(command: str, failure: _StatFailure) -> None:
+def _render_failure(command: str, failure: _Failure) -> None:
     if failure.incompatible == "result" or failure.backend_error is None:
         prefix = _render_diagnostic_prefix(command)
         rendered_operand = _render_diagnostic_value(failure.operand.spelling)
@@ -182,15 +177,15 @@ def _render_failure(command: str, failure: _StatFailure) -> None:
 async def _read_operand(
     operand: _MappedOperand,
     filesystem: AsyncFileSystem,
-) -> _StatSuccess | _StatFailure:
+) -> _StatSuccess | _Failure:
     try:
-        info = await filesystem._info(operand.path)  # noqa: SLF001
+        info = await filesystem._info(operand.path)
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
-        return _StatFailure(operand, backend_error=error)
+        return _Failure(operand, backend_error=error)
 
     validated = _validate_info(info)
     if validated is None:
-        return _StatFailure(operand, incompatible="result")
+        return _Failure(operand, incompatible="result")
     return _StatSuccess(operand, _render_line(operand, validated))
 
 
@@ -199,10 +194,10 @@ async def _trace_operands(
     operands: tuple[_MappedOperand, ...],
     filesystems: Mapping[str, AsyncFileSystem],
 ) -> None:
-    failures: list[_StatFailure] = []
+    failures: list[_Failure] = []
     for operand in operands:
         result = await _read_operand(operand, filesystems[operand.name])
-        if isinstance(result, _StatFailure):
+        if isinstance(result, _Failure):
             failures.append(result)
             try:
                 _render_failure(command, result)
@@ -219,16 +214,8 @@ async def _trace_operands(
             raise _CommandFailureError(error=error) from error
 
     if failures:
-        first_backend_error = next(
-            (
-                failure.backend_error
-                for failure in failures
-                if failure.backend_error is not None
-            ),
-            None,
-        )
         raise _CommandFailureError(
-            error=first_backend_error,
+            error=_first_backend_error(failures),
             render=False,
         )
 
