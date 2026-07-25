@@ -44,6 +44,17 @@
 * Parameterize private command orchestration with concrete command labels
   without adding a supported command or public runner.
 
+## [0.6.0](https://github.com/shinybrar/vosfs/compare/fsspec-cli-v0.5.0...fsspec-cli-v0.6.0) (2026-07-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* **fsspec-cli:** adopt Typer-owned commands ([#319](https://github.com/shinybrar/vosfs/issues/319))
+
+### Features
+
+* **fsspec-cli:** adopt Typer-owned commands ([#319](https://github.com/shinybrar/vosfs/issues/319)) ([bdf94ca](https://github.com/shinybrar/vosfs/commit/bdf94ca811e23484af0522f5dc854772e4fb1401))
+
 ## [0.5.0](https://github.com/shinybrar/vosfs/compare/fsspec-cli-v0.4.0...fsspec-cli-v0.5.0) (2026-07-22)
 
 
