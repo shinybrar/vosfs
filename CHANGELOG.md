@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/shinybrar/vosfs/compare/v0.7.0...v0.8.0) (2026-07-25)
+
+
+### Features
+
+* **vosfs:** honour HTTP Range when the byte endpoint returns 206 ([#335](https://github.com/shinybrar/vosfs/issues/335)) ([8a186cb](https://github.com/shinybrar/vosfs/commit/8a186cb8d45fc456d9ad91f31f3f48d32b8bf82a))
+
 ## [0.7.0](https://github.com/shinybrar/vosfs/compare/v0.6.0...v0.7.0) (2026-07-25)
 
 
