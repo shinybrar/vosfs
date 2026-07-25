@@ -1,8 +1,9 @@
 """Disk-backed staging files for whole-object reads and writes.
 
-OpenCADC Cavern does not implement HTTP byte ranges, so a seekable read is a
-whole-object download into a disk-backed temporary file, and a staged write
-buffers into a temporary file that is uploaded once on a successful close.
+Seekable ``open`` reads still stage one whole-object download into a temporary
+file. Partial ``cat_file`` / ``cat_ranges`` reads may use HTTP ``Range`` instead
+(see :mod:`vosfs._transfer`). A staged write buffers into a temporary file that
+is uploaded once on a successful close.
 
 Both views subclass the standard buffered IO wrappers so they inherit the full
 file-object protocol (``read``/``readinto``/``readline``/iteration/``seek``/

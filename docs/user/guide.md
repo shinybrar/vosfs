@@ -86,9 +86,11 @@ absolute path.
 
 ## Reading and writing
 
-OpenCADC Cavern does not implement HTTP byte ranges, so `vosfs` transfers whole
-objects. Reads stream a whole object (to a local file or a disk-backed
-temporary file for `open`), and writes issue one whole `PUT`.
+Partial `cat_file` / `cat_ranges` reads send HTTP `Range` when the bounds allow.
+If the negotiated byte endpoint returns a validated `206`, only those bytes are
+kept. If it returns `200`/`204` (Cavern ignores `Range`), `vosfs` treats the
+body as a whole object and slices locally. Staged `open` still downloads the
+whole object into a disk-backed temporary file. Writes issue one whole `PUT`.
 
 ```python
 with fs.open("/project/data.csv", "rb") as handle:
@@ -191,7 +193,7 @@ write `vos://` URLs directly. Pass the endpoint (and at most one credential) as
 
     storage_options = {"endpoint_url": "https://staging.canfar.net/arc"}
 
-    # blocksize=None: Cavern has no byte ranges, so each file is one partition.
+    # blocksize=None: staged open is whole-object, so each file is one partition.
     lazy = dd.read_csv("vos://project/d.csv", storage_options=storage_options, blocksize=None)
     result = lazy.compute()
     ```
@@ -241,13 +243,12 @@ write `vos://` URLs directly. Pass the endpoint (and at most one credential) as
     restored = pq.read_table("/project/data.parquet", filesystem=pa_fs)
     ```
 
-!!! note "Whole-object transfer"
+!!! note "Whole-object staged ``open``"
 
-    Cavern serves no byte ranges, so every consumer reads whole objects. Formats
-    that rely on random access still work — `vosfs` stages each object (or Zarr
-    chunk) to a local temporary file — but there is no server-side range
-    optimization. For Dask, pass `blocksize=None` so each file is a single
-    partition.
+    Staged ``open`` still downloads whole objects. Formats that rely on random
+    access work by staging locally. Partial ``cat_file`` / ``cat_ranges`` may
+    use HTTP ``Range`` when the byte endpoint returns ``206``. For Dask over
+    staged files, pass ``blocksize=None`` so each file is a single partition.
 
 ## Capability summary
 
@@ -362,8 +363,7 @@ Native operations and the client-derived behaviors composed from them.
 
 | Operation / feature | Why |
 | --- | --- |
-| Remote byte ranges, `Range` requests | Cavern serves whole objects only |
-| `blockcache::` / `cached::` wrappers | Require server-side byte ranges |
+| `blockcache::` / `cached::` wrappers | Not claimed; use `simplecache::` / `filecache::` |
 | Append, `+` mode, offset / atomic / resumable / multipart writes | One whole `PUT` per file |
 | `touch(truncate=False)` | Would require a partial update |
 | `rm(..., maxdepth=...)` | Bounded-depth deletion is not modeled |

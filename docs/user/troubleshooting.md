@@ -111,8 +111,8 @@ the behavior silently differs from what you may expect:
 
 | Expectation | Reality |
 | --- | --- |
-| A ranged read transfers only those bytes | `cat_file(path, start, end)` **works**, but reads the whole object and slices locally. Correct results, no bandwidth saving. |
-| `blockcache::` / `cached::` wrappers | Need server-side ranges; use `simplecache::` or `filecache::` instead. |
+| A ranged read transfers only those bytes | On backends that answer `206` (for example minoc/`vault`), yes. On Cavern, `Range` is ignored and `vosfs` falls back to a whole-object read then local slice. |
+| `blockcache::` / `cached::` wrappers | Not supported; use `simplecache::` or `filecache::` instead. |
 | FUSE mounting | Not provided. Use the fsspec API or [`fsspec-cli`](cli/index.md). |
 | `created` timestamps, `open_async` | Not part of the profile. |
 

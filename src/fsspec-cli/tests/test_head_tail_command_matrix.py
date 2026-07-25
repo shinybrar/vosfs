@@ -235,13 +235,11 @@ class _StrictReadTransport(httpx.MockTransport):
     def __init__(self) -> None:
         self.requests: list[tuple[str, str]] = []
         self.byte_payloads: list[bytes] = []
+        self.range_headers: list[str] = []
         self.closed = False
         super().__init__(self._respond)
 
     async def _respond(self, request: httpx.Request) -> httpx.Response:
-        if "range" in {name.lower() for name in request.headers}:
-            message = f"unexpected Range header: {request.headers!r}"
-            raise AssertionError(message)
         call = (request.method, request.url.path)
         self.requests.append(call)
         if call == ("GET", "/arc/capabilities"):
@@ -261,12 +259,26 @@ class _StrictReadTransport(httpx.MockTransport):
                 content=_transfer_details(f"{_BASE_URL}/files/blob.bin"),
             )
         if call == ("GET", "/arc/files/blob.bin"):
-            self.byte_payloads.append(_PAYLOAD)
+            range_header = request.headers.get("range")
+            if range_header is None:
+                message = "expected Range header on partial byte GET"
+                raise AssertionError(message)
+            self.range_headers.append(range_header)
+            body = _partial_payload(range_header)
+            self.byte_payloads.append(body)
+            first, last = _inclusive_bounds(range_header, len(_PAYLOAD))
 
             async def stream() -> object:
-                yield _PAYLOAD
+                yield body
 
-            return httpx.Response(200, content=stream())
+            return httpx.Response(
+                206,
+                content=stream(),
+                headers={
+                    "Content-Range": f"bytes {first}-{last}/{len(_PAYLOAD)}",
+                    "Content-Length": str(len(body)),
+                },
+            )
         message = f"unplanned mocked request: {call!r}"
         raise AssertionError(message)
 
@@ -275,7 +287,21 @@ class _StrictReadTransport(httpx.MockTransport):
         await super().aclose()
 
 
-def test_native_vosfs_head_and_tail_profiles_observe_truthful_whole_gets() -> None:
+def _inclusive_bounds(range_header: str, size: int) -> tuple[int, int]:
+    spec = range_header.removeprefix("bytes=")
+    if spec.endswith("-"):
+        first = int(spec[:-1])
+        return first, size - 1
+    first_s, last_s = spec.split("-", 1)
+    return int(first_s), int(last_s)
+
+
+def _partial_payload(range_header: str) -> bytes:
+    first, last = _inclusive_bounds(range_header, len(_PAYLOAD))
+    return _PAYLOAD[first : last + 1]
+
+
+def test_native_vosfs_head_and_tail_profiles_observe_ranged_gets() -> None:
     transports: list[_StrictReadTransport] = []
 
     def make_filesystem() -> VOSpaceFileSystem:
@@ -296,7 +322,10 @@ def test_native_vosfs_head_and_tail_profiles_observe_truthful_whole_gets() -> No
     assert all(isinstance(fs, VOSpaceFileSystem) for fs in source.filesystems)
     assert all(fs._pool.closed is True for fs in source.filesystems)
     assert all(transport.closed for transport in transports)
-    assert all(transport.byte_payloads == [_PAYLOAD] for transport in transports)
+    assert transports[0].byte_payloads == [_PAYLOAD[:4]]
+    assert transports[0].range_headers == ["bytes=0-3"]
+    assert transports[1].byte_payloads == [_PAYLOAD[-3:]]
+    assert transports[1].range_headers == ["bytes=7-"]
     assert transports[0].requests == [
         ("GET", "/arc/capabilities"),
         ("GET", "/arc/nodes"),

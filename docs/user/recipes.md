@@ -63,10 +63,11 @@ with fsspec.open("vos://project/image.fits", "rb", **STORAGE) as handle:
         data = hdul[0].data
 ```
 
-!!! note "The whole file is downloaded"
+!!! note "Staged ``open`` downloads the whole file"
 
-    Cavern serves no byte ranges, so there is no "read just the header"
-    optimization. Budget for the full object size.
+    ``fits.open`` over ``fsspec.open`` uses staged ``open``, which is still a
+    whole-object download. For header-only access on range-capable backends,
+    prefer ``cat_file`` / ``cat_ranges`` with explicit bounds.
 
 ## Process many files without loading them all
 
@@ -122,7 +123,7 @@ than you would use on local disk.
 ```python
 import dask.dataframe as dd
 
-# blocksize=None: Cavern has no byte ranges, so each file is one partition.
+# blocksize=None: staged open is whole-object, so each file is one partition.
 lazy = dd.read_csv(
     "vos://project/night-*/phot.csv",
     storage_options=STORAGE,
@@ -151,8 +152,8 @@ with fsspec.open(
     process(handle)
 ```
 
-`simplecache::` and `filecache::` both work. `blockcache::` and `cached::` do
-**not** — they need server-side byte ranges.
+`simplecache::` and `filecache::` both work. `blockcache::` and `cached::` are
+**not** claimed even when the byte endpoint honours `Range`.
 
 ## Check before you write
 

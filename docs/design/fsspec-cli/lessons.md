@@ -109,8 +109,9 @@ internally is backend-owned and does not change the CLI's contract.
 ## 9. One CLI hook call is not one remote request
 
 `head -c N` awaits one bounded `_cat_file`. That bounds what the CLI *asks
-for*; it does not promise a ranged physical transfer. `vosfs` reads the whole
-object and slices locally, because OpenCADC Cavern serves no HTTP Range.
+for*; the physical transfer follows the backend: `vosfs` may send `Range` and
+keep a `206`, or fall back to a whole-object body when the endpoint answers
+`200`.
 
 Likewise one `_walk` for `tree`, or one `_find`, may perform one listing
 request per reached directory. `du -s` changes the output, not the traversal

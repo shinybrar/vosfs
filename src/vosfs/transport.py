@@ -48,6 +48,7 @@ def build_timeout(overrides: Mapping[str, float] | None) -> httpx.Timeout:
 HTTP_OK = 200
 HTTP_CREATED = 201
 HTTP_NO_CONTENT = 204
+HTTP_PARTIAL_CONTENT = 206
 HTTP_SEE_OTHER = 303
 HTTP_PRECONDITION_FAILED = 412
 IDENTITY_ENCODING = {"Accept-Encoding": "identity"}

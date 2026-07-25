@@ -128,8 +128,16 @@ _Avoid_: `cert_path`, `key_path`, SSL context
 
 **Whole-object staged read**:
 A read that downloads one complete remote object into a disk-backed temporary
-file before exposing local seek and range behavior.
-_Avoid_: Ranged read, block-cached read
+file before exposing local seek and range behavior. Used by `open` and by
+`cat_ranges` when the byte endpoint answers `200`/`204` instead of `206`.
+_Avoid_: Block-cached read, assumed partial network read
+
+**Response-validated ranged read**:
+A partial `cat_file` / `cat_ranges` read that sends HTTP `Range` and keeps the
+partial body only when the negotiated byte endpoint returns a validated `206`
+with matching `Content-Range` and body length. A `200`/`204` is a whole-object
+fallback, never treated as a partial.
+_Avoid_: `Accept-Ranges`-only detection, assumed Range support
 
 **Staged write**:
 A buffered file write committed by one whole-object PUT when the file closes
