@@ -96,6 +96,12 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"src/vosfs/_{moving,removal,transfer}.py" = [
+    # These modules are VOSpaceFileSystem's own implementation, split out of
+    # filesystem.py for size. Reaching the filesystem's internal seams is
+    # intra-implementation access, not a crossing of the public boundary.
+    "SLF001",
+]
 "src/fsspec-cli/src/fsspec_cli/*.py" = [
     # fsspec's async filesystem API is underscore-prefixed by convention
     # (`_info`, `_ls`, `_cat_file`, ...). Awaiting those hooks is the documented
