@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.0](https://github.com/shinybrar/vosfs/compare/v0.6.0...v0.7.0) (2026-07-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* **fsspec-cli:** adopt Typer-owned commands ([#319](https://github.com/shinybrar/vosfs/issues/319))
+
+### Features
+
+* **fsspec-cli:** adopt Typer-owned commands ([#319](https://github.com/shinybrar/vosfs/issues/319)) ([bdf94ca](https://github.com/shinybrar/vosfs/commit/bdf94ca811e23484af0522f5dc854772e4fb1401))
+
+
+### Bug Fixes
+
+* **release:** isolate fsspec-only shared files ([#327](https://github.com/shinybrar/vosfs/issues/327)) ([23412e9](https://github.com/shinybrar/vosfs/commit/23412e91c84852c9996f279435386941c8bf9ba0))
+* **release:** scope shared meta files out of the vosfs package ([#331](https://github.com/shinybrar/vosfs/issues/331)) ([e01ba4d](https://github.com/shinybrar/vosfs/commit/e01ba4db129af51af3e8fae9b598d216aa950eb4))
+
 ## [0.6.0](https://github.com/shinybrar/vosfs/compare/v0.5.0...v0.6.0) (2026-07-22)
 
 
