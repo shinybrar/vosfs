@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 
 _ROOT = Path(__file__).parents[1]
+_CONFIG = _ROOT / ".release/release-please-config.json"
+_MANIFEST = _ROOT / ".release/release-please-manifest.json"
 _WORKFLOWS = _ROOT / ".github/workflows"
 _RELEASE = _WORKFLOWS / "release.yml"
 _PUBLISH = _WORKFLOWS / "publish.yml"
@@ -11,10 +13,46 @@ _PAGES = _WORKFLOWS / "pages.yml"
 
 
 def test_root_release_excludes_shared_fsspec_cli_paths() -> None:
-    config = json.loads((_ROOT / "release-please-config.json").read_text())
+    config = json.loads(_CONFIG.read_text())
     excluded = set(config["packages"]["."]["exclude-paths"])
 
-    assert {"src/fsspec-cli", "CONTEXT.md", "release-please-config.json"} <= excluded
+    assert {"src/fsspec-cli", "docs", ".release"} <= excluded
+
+
+def test_every_exclude_path_is_a_directory_that_exists() -> None:
+    """Release Please can only exclude directories, never individual files.
+
+    `commit-exclude.ts` matches with `file.startsWith(f"{path}/")`, so an entry
+    naming a file can never match and silently does nothing. That is how a
+    component-only `feat!` once leaked into the root package and proposed
+    vosfs 1.0.0: the commit touched `CONTEXT.md` and the release config, both
+    listed as file entries that could not match.
+    """
+    config = json.loads(_CONFIG.read_text())
+
+    for name, package in config["packages"].items():
+        for path in package.get("exclude-paths", []):
+            target = _ROOT / path
+            assert target.is_dir(), (
+                f"{name}: exclude-paths entry {path!r} is not a directory; "
+                "Release Please cannot exclude individual files"
+            )
+
+
+def test_root_package_sees_no_component_only_shared_files() -> None:
+    """Shared, component-authored files must live under an excluded directory.
+
+    Anything a component pull request routinely edits that sits outside these
+    directories re-opens the leak, because the root package's path is `.` and
+    therefore matches every file in the repository.
+    """
+    config = json.loads(_CONFIG.read_text())
+    excluded = config["packages"]["."]["exclude-paths"]
+
+    for shared in (_CONFIG, _MANIFEST, _ROOT / "docs/CONTEXT.md"):
+        relative = shared.relative_to(_ROOT)
+        assert shared.exists(), relative
+        assert any(str(relative).startswith(f"{path}/") for path in excluded), relative
 
 
 def _step(workflow: str, name: str, next_name: str | None = None) -> str:
