@@ -1013,15 +1013,6 @@ annotations define the command through Typer:</p>
 <p>Source-free callbacks need no context parameter. Source-aware callbacks read
 the frozen snapshot from <code>CommandContext</code>, which exposes <strong>only</strong> the source
 mapping — never capability policy or private helpers.</p>
-<p>The bundled <code>sign</code> extension shows the intended shape for a backend-specific
-command:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">fsspec_cli.extensions</span><span class="w"> </span><span class="kn">import</span> <span class="n">sign</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">App</span><span class="p">({</span><span class="s2">&quot;data&quot;</span><span class="p">:</span> <span class="n">data_source</span><span class="p">},</span> <span class="n">extensions</span><span class="o">=</span><span class="p">[</span><span class="n">sign</span><span class="p">])</span>
-</span></code></pre></div>
-<p><code>sign data:/path</code> calls the selected filesystem's <code>sign</code> capability. A source
-without it exits nonzero with one <code>unsupported operation</code> diagnostic and no
-traceback — support is detected by calling, never inferred from backend type.</p>
 <h2 id="exit-statuses">Exit statuses<a class="headerlink" href="#exit-statuses" title="Permanent link">&para;</a></h2>
 <p>Anything shelling out to your CLI needs these:</p>
 <table>
@@ -1061,7 +1052,7 @@ diagnostic to stderr — check stderr, not just the status.</p>
 <h3 id="which-commands-can-exit-141">Which commands can exit <code>141</code><a class="headerlink" href="#which-commands-can-exit-141" title="Permanent link">&para;</a></h3>
 <p>Only the streaming commands, where a closed reader is worth distinguishing from
 a real failure:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cat<span class="w"> </span>data:/huge.log<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-5<span class="w">   </span><span class="c1"># 141</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cat<span class="w"> </span>data:/huge.log<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-5<span class="w">   </span><span class="c1"># 141</span>
 </span></code></pre></div>
 <table>
 <thead>
@@ -1077,7 +1068,7 @@ a real failure:</p>
 </tr>
 <tr>
 <td><code>1</code></td>
-<td><code>ls</code>, <code>ll</code>, <code>du</code>, <code>find</code>, <code>tree</code>, <code>info</code>, <code>size</code>, <code>stat</code>, <code>sign</code></td>
+<td><code>ls</code>, <code>ll</code>, <code>du</code>, <code>find</code>, <code>tree</code>, <code>info</code>, <code>size</code>, <code>stat</code></td>
 </tr>
 </tbody>
 </table>
@@ -1087,7 +1078,7 @@ emitted. If you are checking for <code>141</code>, check for <code>1</code> as w
 which command ran.</p>
 <h2 id="diagnostics">Diagnostics<a class="headerlink" href="#diagnostics" title="Permanent link">&para;</a></h2>
 <p>Failures go to stderr as one line per operand:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>&lt;command&gt;: &lt;operand&gt;: &lt;category&gt;
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>&lt;command&gt;: &lt;operand&gt;: &lt;category&gt;
 </span></code></pre></div>
 <p>Stable categories: <code>not found</code>, <code>file exists</code>, <code>permission denied</code>,
 <code>is a directory</code>, <code>not a directory</code>, <code>unsupported operation</code>,
@@ -1105,8 +1096,8 @@ hostile or malformed path cannot inject terminal escapes.</p>
 <p><code>App.typer_app</code> is built with <code>add_completion=False</code>, because a mounted
 sub-app is the wrong place to install completion. Enable it on <strong>your</strong> root
 app instead:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">app</span> <span class="o">=</span> <span class="n">typer</span><span class="o">.</span><span class="n">Typer</span><span class="p">(</span><span class="n">add_completion</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">app</span><span class="o">.</span><span class="n">add_typer</span><span class="p">(</span><span class="n">App</span><span class="p">(</span><span class="n">sources</span><span class="p">)</span><span class="o">.</span><span class="n">typer_app</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;fs&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">app</span> <span class="o">=</span> <span class="n">typer</span><span class="o">.</span><span class="n">Typer</span><span class="p">(</span><span class="n">add_completion</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">app</span><span class="o">.</span><span class="n">add_typer</span><span class="p">(</span><span class="n">App</span><span class="p">(</span><span class="n">sources</span><span class="p">)</span><span class="o">.</span><span class="n">typer_app</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;fs&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="reference">Reference<a class="headerlink" href="#reference" title="Permanent link">&para;</a></h2>
 <p>The full normative contract lives in
