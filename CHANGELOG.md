@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.0](https://github.com/shinybrar/vosfs/compare/v0.8.0...v0.9.0) (2026-08-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove audited over-engineering across vosfs and fsspec-cli ([#339](https://github.com/shinybrar/vosfs/issues/339))
+
+### Code Refactoring
+
+* remove audited over-engineering across vosfs and fsspec-cli ([#339](https://github.com/shinybrar/vosfs/issues/339)) ([ed0c368](https://github.com/shinybrar/vosfs/commit/ed0c368b29de7978398b36d5391e263e1bd57059))
+
 ## [0.8.0](https://github.com/shinybrar/vosfs/compare/v0.7.0...v0.8.0) (2026-07-25)
 
 
