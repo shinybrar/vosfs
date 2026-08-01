@@ -519,10 +519,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#ls-ll" class="md-nav__link">
+  <a href="#ls" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>ls</code>, <code>ll</code>
+        <code>ls</code>
       </span>
     </span>
   </a>
@@ -756,34 +756,6 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         <code>rm</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#path-strings" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Path strings
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Path strings">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#basename-dirname" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>basename</code>, <code>dirname</code>
       </span>
     </span>
   </a>
@@ -965,10 +937,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#ls-ll" class="md-nav__link">
+  <a href="#ls" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>ls</code>, <code>ll</code>
+        <code>ls</code>
       </span>
     </span>
   </a>
@@ -1214,34 +1186,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#path-strings" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Path strings
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Path strings">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#basename-dirname" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>basename</code>, <code>dirname</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#when-something-fails" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1275,10 +1219,7 @@
 source mapping you passed to <code>App</code>; <code>/path</code> is handed to that backend
 literally.</p>
 <p><code>--</code> ends option parsing. A mapped operand always begins with <code>name:</code>, and a
-source name may not start with <code>-</code>, so <code>--</code> matters mainly for the source-free
-commands, whose operand is a bare string:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>basename<span class="w"> </span>--<span class="w"> </span>-weird-name
-</span></code></pre></div>
+source name may not start with <code>-</code>.</p>
 <h2 id="at-a-glance">At a glance<a class="headerlink" href="#at-a-glance" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1289,8 +1230,8 @@ commands, whose operand is a bare string:</p>
 </thead>
 <tbody>
 <tr>
-<td><a href="#ls-ll"><code>ls</code></a></td>
-<td>List directory contents; <code>-l</code>/<code>ll</code> for long form</td>
+<td><a href="#ls"><code>ls</code></a></td>
+<td>List directory contents; <code>-l</code> for long form</td>
 </tr>
 <tr>
 <td><a href="#du"><code>du</code></a></td>
@@ -1352,31 +1293,25 @@ commands, whose operand is a bare string:</p>
 <td><a href="#rm"><code>rm</code></a></td>
 <td>Remove files; <code>-d</code> empty dirs; guarded <code>-R</code></td>
 </tr>
-<tr>
-<td><a href="#basename-dirname"><code>basename</code> / <code>dirname</code></a></td>
-<td>Path string slicing, no I/O</td>
-</tr>
 </tbody>
 </table>
 <h2 id="listing">Listing<a class="headerlink" href="#listing" title="Permanent link">&para;</a></h2>
-<h3 id="ls-ll"><code>ls</code>, <code>ll</code><a class="headerlink" href="#ls-ll" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>ls<span class="w"> </span>data:/project
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>ls<span class="w"> </span>-A<span class="w"> </span>data:/project<span class="w">          </span><span class="c1"># include dot entries</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>ls<span class="w"> </span>-l<span class="w"> </span>data:/project<span class="w">          </span><span class="c1"># long form</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>myapp<span class="w"> </span>fs<span class="w"> </span>ls<span class="w"> </span>-lh<span class="w"> </span>data:/project<span class="w">         </span><span class="c1"># long form, human-readable sizes</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>myapp<span class="w"> </span>fs<span class="w"> </span>ll<span class="w"> </span>-h<span class="w"> </span>data:/project<span class="w">          </span><span class="c1"># `ll` is always long</span>
+<h3 id="ls"><code>ls</code><a class="headerlink" href="#ls" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>ls<span class="w"> </span>data:/project
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>ls<span class="w"> </span>-A<span class="w"> </span>data:/project<span class="w">          </span><span class="c1"># include dot entries</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>ls<span class="w"> </span>-l<span class="w"> </span>data:/project<span class="w">          </span><span class="c1"># long form</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>myapp<span class="w"> </span>fs<span class="w"> </span>ls<span class="w"> </span>-lh<span class="w"> </span>data:/project<span class="w">         </span><span class="c1"># long form, human-readable sizes</span>
 </span></code></pre></div>
 <p>A file operand prints itself; a directory prints its sorted children. With
 several operands, files come first, then one headed block per directory.</p>
 <p>Long listing shows <strong>only the columns the backend actually supplies</strong>. Against
 local disk you get a full POSIX-like row; against an object store you get type,
 size, and mtime. Missing values show <code>-</code>; nothing is invented.</p>
-<p><code>-h</code> means human-readable, not help. <code>ll</code> does not accept <code>-l</code> — it is already
-long.</p>
+<p><code>-h</code> means human-readable, not help.</p>
 <h3 id="du"><code>du</code><a class="headerlink" href="#du" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>du<span class="w"> </span>data:/project<span class="w">             </span><span class="c1"># per-path usage</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>du<span class="w"> </span>-s<span class="w"> </span>data:/project<span class="w">          </span><span class="c1"># total only</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>du<span class="w"> </span>-sh<span class="w"> </span>data:/project<span class="w">         </span><span class="c1"># total, human-readable</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>du<span class="w"> </span>data:/project<span class="w">             </span><span class="c1"># per-path usage</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>du<span class="w"> </span>-s<span class="w"> </span>data:/project<span class="w">          </span><span class="c1"># total only</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>du<span class="w"> </span>-sh<span class="w"> </span>data:/project<span class="w">         </span><span class="c1"># total, human-readable</span>
 </span></code></pre></div>
 <div class="admonition warning">
 <p class="admonition-title"><code>du</code> is recursive and can be expensive</p>
@@ -1385,29 +1320,29 @@ reads metadata for every file. Against a remote store that is many
 requests. <strong><code>-s</code> changes the output, not the traversal cost.</strong></p>
 </div>
 <h3 id="find"><code>find</code><a class="headerlink" href="#find" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>find<span class="w"> </span>data:/project
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>find<span class="w"> </span>--maxdepth<span class="w"> </span><span class="m">2</span><span class="w"> </span>data:/project
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>find<span class="w"> </span>--type<span class="w"> </span>d<span class="w"> </span>data:/project<span class="w">      </span><span class="c1"># directories instead of files</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>find<span class="w"> </span>data:/project
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>find<span class="w"> </span>--maxdepth<span class="w"> </span><span class="m">2</span><span class="w"> </span>data:/project
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>find<span class="w"> </span>--type<span class="w"> </span>d<span class="w"> </span>data:/project<span class="w">      </span><span class="c1"># directories instead of files</span>
 </span></code></pre></div>
 <p>No predicates, globbing, or <code>-exec</code>. Paths print exactly as the backend
 returned them.</p>
 <h3 id="tree"><code>tree</code><a class="headerlink" href="#tree" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>tree<span class="w"> </span>data:/project
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>tree<span class="w"> </span>--maxdepth<span class="w"> </span><span class="m">2</span><span class="w"> </span>data:/project
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>tree<span class="w"> </span>data:/project
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>tree<span class="w"> </span>--maxdepth<span class="w"> </span><span class="m">2</span><span class="w"> </span>data:/project
 </span></code></pre></div>
 <p>One remote listing request per reached directory — bound it on large trees.</p>
 <h2 id="metadata">Metadata<a class="headerlink" href="#metadata" title="Permanent link">&para;</a></h2>
 <h3 id="size"><code>size</code><a class="headerlink" href="#size" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>size<span class="w"> </span>data:/a.csv
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>size<span class="w"> </span>data:/a.csv<span class="w"> </span>data:/b.csv<span class="w"> </span>archive:/c.csv
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>size<span class="w"> </span>data:/a.csv
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>size<span class="w"> </span>data:/a.csv<span class="w"> </span>data:/b.csv<span class="w"> </span>archive:/c.csv
 </span></code></pre></div>
 <p>Prints <code>&lt;bytes&gt;\t&lt;operand&gt;</code>. With several operands it batches per filesystem
 into one request each, rather than one request per file. Output keeps the
 source name so identical paths on different filesystems stay distinguishable.</p>
 <h3 id="test"><code>test</code><a class="headerlink" href="#test" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">if</span><span class="w"> </span>myapp<span class="w"> </span>fs<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-e<span class="w"> </span>data:/project/output.csv<span class="p">;</span><span class="w"> </span><span class="k">then</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;already done&quot;</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="k">fi</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">if</span><span class="w"> </span>myapp<span class="w"> </span>fs<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-e<span class="w"> </span>data:/project/output.csv<span class="p">;</span><span class="w"> </span><span class="k">then</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;already done&quot;</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="k">fi</span>
 </span></code></pre></div>
 <p><code>-e</code> exists, <code>-d</code> is a directory, <code>-f</code> is a regular file. Exactly one is
 required. No output — the answer is the exit status: <strong><code>0</code> for true, <code>1</code> for
@@ -1419,16 +1354,16 @@ errored" by status alone. A genuine failure also writes a diagnostic to
 stderr, so check stderr if you need to tell them apart.</p>
 </div>
 <h3 id="info"><code>info</code><a class="headerlink" href="#info" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>info<span class="w"> </span>data:/a.csv
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>info<span class="w"> </span>data:/a.csv
 </span></code></pre></div>
 <p>Everything the backend reports: normalized fields plus backend-specific values
 under <code>extra</code> (checksums, ETags, storage class, VOSpace properties). Sparse
 fields stay <code>None</code>.</p>
 <h3 id="stat"><code>stat</code><a class="headerlink" href="#stat" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>stat<span class="w"> </span>data:/a.csv
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>stat<span class="w"> </span>data:/a.csv
 </span></code></pre></div>
 <p>A reduced BSD/macOS-shaped line:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>-rw-r--r-- 1 brars staff 1497 &quot;Jul 17 18:00:00 2026&quot; /a.csv
+<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>-rw-r--r-- 1 brars staff 1497 &quot;Jul 17 18:00:00 2026&quot; /a.csv
 </span></code></pre></div>
 <p>Deliberately narrower than <code>info</code>: it needs the full local-rich field set
 (<code>type</code>, a string <code>name</code>, <code>mode</code>, <code>nlink</code>, <code>uid</code>, <code>gid</code>, <code>size</code>, <code>mtime</code>), and
@@ -1436,8 +1371,8 @@ rejects symlinks. A backend that does not report all of them reports
 <code>incompatible result</code>. Use <code>info</code> for remote backends.</p>
 <h2 id="reading-bytes">Reading bytes<a class="headerlink" href="#reading-bytes" title="Permanent link">&para;</a></h2>
 <h3 id="head-tail"><code>head</code>, <code>tail</code><a class="headerlink" href="#head-tail" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>head<span class="w"> </span>-c<span class="w"> </span><span class="m">512</span><span class="w"> </span>data:/big.log
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>tail<span class="w"> </span>-c<span class="w"> </span><span class="m">512</span><span class="w"> </span>data:/big.log
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>head<span class="w"> </span>-c<span class="w"> </span><span class="m">512</span><span class="w"> </span>data:/big.log
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>tail<span class="w"> </span>-c<span class="w"> </span><span class="m">512</span><span class="w"> </span>data:/big.log
 </span></code></pre></div>
 <p>Byte counts only — there is no <code>-n</code> line mode.</p>
 <div class="admonition note">
@@ -1447,9 +1382,9 @@ those bytes is up to the backend: <code>vosfs</code> may keep a validated <code>
 fall back to a whole-object body when the endpoint answers <code>200</code>.</p>
 </div>
 <h3 id="cat"><code>cat</code><a class="headerlink" href="#cat" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cat<span class="w"> </span>data:/a.txt<span class="w"> </span>data:/b.txt<span class="w"> </span>&gt;<span class="w"> </span>combined.txt
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cat<span class="w"> </span>data:/archive.tar.gz<span class="w"> </span><span class="p">|</span><span class="w"> </span>tar<span class="w"> </span>-tz
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>cat<span class="w"> </span>local.txt<span class="w"> </span><span class="p">|</span><span class="w"> </span>myapp<span class="w"> </span>fs<span class="w"> </span>cat<span class="w"> </span>-<span class="w"> </span>data:/appendix.txt
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cat<span class="w"> </span>data:/a.txt<span class="w"> </span>data:/b.txt<span class="w"> </span>&gt;<span class="w"> </span>combined.txt
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cat<span class="w"> </span>data:/archive.tar.gz<span class="w"> </span><span class="p">|</span><span class="w"> </span>tar<span class="w"> </span>-tz
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>cat<span class="w"> </span>local.txt<span class="w"> </span><span class="p">|</span><span class="w"> </span>myapp<span class="w"> </span>fs<span class="w"> </span>cat<span class="w"> </span>-<span class="w"> </span>data:/appendix.txt
 </span></code></pre></div>
 <p>Binary-safe: no decoding, no separators, no newline insertion. A bare <code>-</code> (or
 no operand) reads stdin.</p>
@@ -1458,10 +1393,10 @@ stays bounded no matter how large the file is. Temporaries are always removed �
 after success, failure, cancellation, or a broken pipe.</p>
 <h2 id="copying-and-moving">Copying and moving<a class="headerlink" href="#copying-and-moving" title="Permanent link">&para;</a></h2>
 <h3 id="cp"><code>cp</code><a class="headerlink" href="#cp" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cp<span class="w"> </span>data:/a.csv<span class="w"> </span>data:/backup/a.csv<span class="w">          </span><span class="c1"># one file</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cp<span class="w"> </span>data:/a.csv<span class="w"> </span>data:/b.csv<span class="w"> </span>data:/backup/<span class="w">   </span><span class="c1"># several into a directory</span>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cp<span class="w"> </span>local:/a.csv<span class="w"> </span>archive:/2026/a.csv<span class="w">        </span><span class="c1"># across filesystems</span>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cp<span class="w"> </span>-R<span class="w"> </span>data:/project<span class="w"> </span>archive:/project<span class="w">       </span><span class="c1"># a whole directory</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cp<span class="w"> </span>data:/a.csv<span class="w"> </span>data:/backup/a.csv<span class="w">          </span><span class="c1"># one file</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cp<span class="w"> </span>data:/a.csv<span class="w"> </span>data:/b.csv<span class="w"> </span>data:/backup/<span class="w">   </span><span class="c1"># several into a directory</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cp<span class="w"> </span>local:/a.csv<span class="w"> </span>archive:/2026/a.csv<span class="w">        </span><span class="c1"># across filesystems</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cp<span class="w"> </span>-R<span class="w"> </span>data:/project<span class="w"> </span>archive:/project<span class="w">       </span><span class="c1"># a whole directory</span>
 </span></code></pre></div>
 <p>Every copy verifies destination metadata after writing. Cross-filesystem copies
 stage through one local temporary.</p>
@@ -1472,13 +1407,13 @@ anything, preserves empty directories, and rejects symlinks and special entries
 <p>It is <strong>not</strong> a snapshot, transaction, mirror, or rollback, and does not
 preserve POSIX metadata.</p>
 <h3 id="mv"><code>mv</code><a class="headerlink" href="#mv" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>mv<span class="w"> </span>data:/draft.csv<span class="w"> </span>data:/final.csv
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>mv<span class="w"> </span>data:/a.csv<span class="w"> </span>data:/b.csv<span class="w"> </span>data:/archive/
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>mv<span class="w"> </span>data:/draft.csv<span class="w"> </span>data:/final.csv
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>mv<span class="w"> </span>data:/a.csv<span class="w"> </span>data:/b.csv<span class="w"> </span>data:/archive/
 </span></code></pre></div>
 <p>Within <strong>one</strong> filesystem only.</p>
 <div class="admonition failure">
 <p class="admonition-title">Cross-filesystem <code>mv</code> is rejected</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>mv: cross-source move unsupported
+<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>mv: cross-source move unsupported
 </span></code></pre></div>
 <p>A correct move must delete the same version of the file it copied, and no
 tested backend supplies a change token strong enough to prove that. Rather
@@ -1488,24 +1423,24 @@ touching anything.</p>
 </div>
 <h2 id="namespace">Namespace<a class="headerlink" href="#namespace" title="Permanent link">&para;</a></h2>
 <h3 id="mkdir"><code>mkdir</code><a class="headerlink" href="#mkdir" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>mkdir<span class="w"> </span>data:/newdir
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>mkdir<span class="w"> </span>-p<span class="w"> </span>data:/a/b/c<span class="w">        </span><span class="c1"># create parents</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>mkdir<span class="w"> </span>data:/newdir
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>mkdir<span class="w"> </span>-p<span class="w"> </span>data:/a/b/c<span class="w">        </span><span class="c1"># create parents</span>
 </span></code></pre></div>
 <p>Silent on success.</p>
 <h3 id="rmdir"><code>rmdir</code><a class="headerlink" href="#rmdir" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rmdir<span class="w"> </span>data:/emptydir
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rmdir<span class="w"> </span>data:/emptydir
 </span></code></pre></div>
 <p>Empty directories only. <code>-p</code> is unsupported.</p>
 <h3 id="unlink"><code>unlink</code><a class="headerlink" href="#unlink" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>unlink<span class="w"> </span>data:/a.csv
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>unlink<span class="w"> </span>data:/a.csv
 </span></code></pre></div>
 <p>Exactly one file. A directory operand is an error.</p>
 <h3 id="rm"><code>rm</code><a class="headerlink" href="#rm" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rm<span class="w"> </span>data:/a.csv
-</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rm<span class="w"> </span>-f<span class="w"> </span>data:/maybe-missing.csv<span class="w">    </span><span class="c1"># ignore missing</span>
-</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rm<span class="w"> </span>-v<span class="w"> </span>data:/a.csv<span class="w">                </span><span class="c1"># print what was removed</span>
-</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rm<span class="w"> </span>-d<span class="w"> </span>data:/emptydir<span class="w">             </span><span class="c1"># also remove empty directories</span>
-</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rm<span class="w"> </span>-R<span class="w"> </span>data:/project<span class="w">              </span><span class="c1"># recursive, if enabled</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rm<span class="w"> </span>data:/a.csv
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rm<span class="w"> </span>-f<span class="w"> </span>data:/maybe-missing.csv<span class="w">    </span><span class="c1"># ignore missing</span>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rm<span class="w"> </span>-v<span class="w"> </span>data:/a.csv<span class="w">                </span><span class="c1"># print what was removed</span>
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rm<span class="w"> </span>-d<span class="w"> </span>data:/emptydir<span class="w">             </span><span class="c1"># also remove empty directories</span>
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rm<span class="w"> </span>-R<span class="w"> </span>data:/project<span class="w">              </span><span class="c1"># recursive, if enabled</span>
 </span></code></pre></div>
 <p><code>-d</code> cannot be combined with other options. <code>-f</code> cannot be combined with <code>-v</code>
 unless <code>-R</code>/<code>-r</code> is also given. <code>-v</code> may be supplied only once; repeated <code>-f</code>
@@ -1517,19 +1452,11 @@ non-atomic</strong> — a failure partway through leaves earlier removals done a
 the rest present or uncertain. There is no prompt, undo, or trash.</p>
 <p>Root paths and any path containing <code>.</code> or <code>..</code> are rejected outright.</p>
 </div>
-<h2 id="path-strings">Path strings<a class="headerlink" href="#path-strings" title="Permanent link">&para;</a></h2>
-<h3 id="basename-dirname"><code>basename</code>, <code>dirname</code><a class="headerlink" href="#basename-dirname" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>basename<span class="w"> </span>/a/b/c.txt<span class="w">          </span><span class="c1"># c.txt</span>
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>basename<span class="w"> </span>/a/b/c.txt<span class="w"> </span>.txt<span class="w">     </span><span class="c1"># c</span>
-</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>dirname<span class="w"> </span>/a/b/c.txt<span class="w">           </span><span class="c1"># /a/b</span>
-</span></code></pre></div>
-<p>Pure string operations — no filesystem is contacted and no source is required.
-<code>data:/x/y</code> is treated as ordinary text.</p>
 <h2 id="when-something-fails">When something fails<a class="headerlink" href="#when-something-fails" title="Permanent link">&para;</a></h2>
 <p>Failures print one line per operand on stderr:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>ls: data:/missing: not found
-</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>cp: data:/src: permission denied
-</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>rm: data:/f: uncertain mutation state
+<div class="language-text highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>ls: data:/missing: not found
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>cp: data:/src: permission denied
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>rm: data:/f: uncertain mutation state
 </span></code></pre></div>
 <p><code>uncertain</code> means the operation was <em>sent</em> but its outcome could not be
 confirmed — it may have applied. Check the actual state before retrying.</p>
