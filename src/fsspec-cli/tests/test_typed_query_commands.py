@@ -12,8 +12,6 @@ from ._support import _source_must_not_run
 @pytest.mark.parametrize(
     ("command", "summary", "parameters"),
     [
-        ("basename", "Strip directory and suffix from a path", ("OPERAND", "SUFFIX")),
-        ("dirname", "Strip the last component from a path", ("OPERAND",)),
         ("info", "Display normalized file information", ("name:/path",)),
         ("size", "Display exact file sizes", ("name:/path",)),
         ("test", "Evaluate a file predicate", ("name:/path", "-e", "-d", "-f")),
@@ -45,8 +43,6 @@ def test_help_comes_from_typed_callback_metadata(
 @pytest.mark.parametrize(
     ("command", "arguments", "contexts"),
     [
-        ("basename", [], ("Missing argument", "OPERAND")),
-        ("dirname", ["a", "b"], ("unexpected extra argument", "b")),
         ("info", ["--unknown", "memory:/a"], ("No such option", "unknown")),
         ("size", [], ("Missing argument", "name:/path")),
         ("test", ["-e"], ("Missing argument", "name:/path")),

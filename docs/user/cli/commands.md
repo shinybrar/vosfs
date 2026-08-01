@@ -5,18 +5,13 @@ source mapping you passed to `App`; `/path` is handed to that backend
 literally.
 
 `--` ends option parsing. A mapped operand always begins with `name:`, and a
-source name may not start with `-`, so `--` matters mainly for the source-free
-commands, whose operand is a bare string:
-
-```bash
-myapp fs basename -- -weird-name
-```
+source name may not start with `-`.
 
 ## At a glance
 
 | Command | Does |
 | --- | --- |
-| [`ls`](#ls-ll) | List directory contents; `-l`/`ll` for long form |
+| [`ls`](#ls) | List directory contents; `-l` for long form |
 | [`du`](#du) | Recursive byte usage |
 | [`find`](#find) | Recursive path list |
 | [`tree`](#tree) | Recursive tree drawing |
@@ -32,18 +27,16 @@ myapp fs basename -- -weird-name
 | [`rmdir`](#rmdir) | Remove empty directories |
 | [`unlink`](#unlink) | Remove one file |
 | [`rm`](#rm) | Remove files; `-d` empty dirs; guarded `-R` |
-| [`basename` / `dirname`](#basename-dirname) | Path string slicing, no I/O |
 
 ## Listing
 
-### `ls`, `ll` {#ls-ll}
+### `ls` {#ls}
 
 ```bash
 myapp fs ls data:/project
 myapp fs ls -A data:/project          # include dot entries
 myapp fs ls -l data:/project          # long form
 myapp fs ls -lh data:/project         # long form, human-readable sizes
-myapp fs ll -h data:/project          # `ll` is always long
 ```
 
 A file operand prints itself; a directory prints its sorted children. With
@@ -53,8 +46,7 @@ Long listing shows **only the columns the backend actually supplies**. Against
 local disk you get a full POSIX-like row; against an object store you get type,
 size, and mtime. Missing values show `-`; nothing is invented.
 
-`-h` means human-readable, not help. `ll` does not accept `-l` — it is already
-long.
+`-h` means human-readable, not help.
 
 ### `du`
 
@@ -272,19 +264,6 @@ is idempotent, and `-f` with no operands succeeds silently.
     the rest present or uncertain. There is no prompt, undo, or trash.
 
     Root paths and any path containing `.` or `..` are rejected outright.
-
-## Path strings
-
-### `basename`, `dirname` {#basename-dirname}
-
-```bash
-myapp fs basename /a/b/c.txt          # c.txt
-myapp fs basename /a/b/c.txt .txt     # c
-myapp fs dirname /a/b/c.txt           # /a/b
-```
-
-Pure string operations — no filesystem is contacted and no source is required.
-`data:/x/y` is treated as ordinary text.
 
 ## When something fails
 

@@ -1,4 +1,4 @@
-"""Listing execution for the central ``ls`` and ``ll`` callbacks."""
+"""Listing execution for the central ``ls`` callback."""
 
 from __future__ import annotations
 

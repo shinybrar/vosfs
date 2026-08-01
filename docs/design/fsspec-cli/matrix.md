@@ -45,9 +45,6 @@ transcribed here.
 | Command surface | Scope | Source form | Status | Evidence |
 | --- | --- | --- | --- | --- |
 | Plain `ls` | source | `local`, `memory`, `vosfs` | `pass` | `test_listing.py`, `test_command_matrix.py` |
-| `basename` | source-free | `not entered` | `pass` | `test_basename.py`, `test_basename_process.py` |
-| `basename` suffix form | source-free | `not entered` | `pass` | `test_basename.py` |
-| `dirname` | source-free | `not entered` | `pass` | `test_dirname.py`, `test_dirname_process.py` |
 | Plain `cat` | source | `local`, `memory` | `pass` | `test_cat.py`, `test_cat_process.py` |
 | `cat` stdin and `-` | stdin / mixed | `memory` | `pass` | `test_cat.py`, `test_cat_process.py` |
 | Base `mkdir` | source | `local`, `vosfs` | `pass` | `test_mkdir.py` |
@@ -65,7 +62,6 @@ transcribed here.
 | --- | --- | --- | --- |
 | `rmdir -p` | command preflight | `unsupported` | `test_rmdir.py` |
 | `cat -u` | command preflight | `unsupported` | `test_cat.py` |
-| `basename` / `dirname` option and extra-operand forms | command preflight | `unsupported` | `test_basename.py`, `test_dirname.py` |
 | Base `rm` option rejection | command preflight | `unsupported` | `test_rm.py` |
 | Same-source directory `mv` | source | `unsupported` | `test_mv.py` — `_info` only; no target resolution, staging, or `_mv` |
 | Same-source multi-file `mv` shape | command preflight | `unsupported` | `test_mv.py` |

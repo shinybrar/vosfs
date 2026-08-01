@@ -160,7 +160,7 @@ myapp fs cat data:/huge.log | head -5   # 141
 | Broken pipe gives | Commands |
 | --- | --- |
 | `141` | `cat`, `head`, `tail`, `rm -v` |
-| `1` | `ls`, `ll`, `du`, `find`, `tree`, `info`, `size`, `stat` |
+| `1` | `ls`, `du`, `find`, `tree`, `info`, `size`, `stat` |
 
 The second group formats and buffers its whole output before a single write, so
 a broken pipe there is an ordinary output failure with nothing partially

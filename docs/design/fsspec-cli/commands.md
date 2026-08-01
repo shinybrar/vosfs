@@ -14,7 +14,7 @@ the gate wins.
 | Command | Form | Backend hooks awaited |
 | --- | --- | --- |
 | `ls` | `ls [-A] [--] name:/path...` | `_info`, `_ls` |
-| `ls -l`, `ll` | `ls [-Alh] [--] name:/path...` | `_info`, `_ls(detail=True)` |
+| `ls -l` | `ls [-Alh] [--] name:/path...` | `_info`, `_ls(detail=True)` |
 | `du` | `du [-sh] [--] name:/path` | `_du` |
 | `find` | `find [--maxdepth N] [--type f\|d] [--] name:/path` | `_find` |
 | `tree` | `tree [--maxdepth N] [--] name:/path` | `_walk` |
@@ -32,8 +32,6 @@ the gate wins.
 | `rmdir` | `rmdir [--] name:/path...` | `_info`, `_rmdir` |
 | `unlink` | `unlink [--] name:/path` | `_info`, `_rm_file` |
 | `rm` | `rm [-dfv] [-R\|-r] [--] [name:/path...]` | `_info`, `_rm_file`, `_rmdir` |
-| `basename` | `basename string [suffix]` | none (source-free) |
-| `dirname` | `dirname string` | none (source-free) |
 
 ## Listing
 
@@ -58,11 +56,10 @@ guide.md
 
 `-A` includes entries beginning with a dot, excluding `.` and `..`.
 
-### `ls -l` / `ls -lh` / `ll`
+### `ls -l` / `ls -lh`
 
-Long listing through the §10 normalization layer with adaptive columns. `ll` is
-an inherent-long alias; it accepts `-A` and `-h` but **not** `-l`, which would
-be redundant. `-h` requires a long listing:
+Long listing through the §10 normalization layer with adaptive columns. `-h`
+requires a long listing:
 
 ```text
 ls: -h: requires long listing
@@ -338,29 +335,6 @@ Recursive removal is **sequential and non-atomic**: failure or cancellation can
 leave earlier confirmed removals in place and the rest present or uncertain.
 There is no prompt, rollback, retry, trash, or recovery. A root operand and any
 dot segment are rejected as `rejected path`.
-
-## Source-free lexical commands
-
-### `basename` / `dirname`
-
-Apply the POSIX Issue 8 string algorithms to exactly one argv token. They never
-interpret the token as a mapped operand, validate a source name, acquire a
-source, or perform filesystem work. `basename` accepts an optional suffix
-operand to strip.
-
-A NUL byte in the operand is rejected as `invalid operand`; an embedded newline
-is data, not an error. `memory:/docs/a.txt` is ordinary lexical data.
-
-```text
-dirname a       -> .        basename a/b        -> b
-dirname a/b     -> a        basename /a/b.txt .txt -> b
-dirname /a/b    -> /a       basename /          -> /
-dirname //      -> /        basename a/b/       -> b
-```
-
-Neither expands `~`, resolves dot segments, nor infers a default source.
-Multi-operand and zero-delimited GNU extensions are out of scope and are
-rejected by Typer.
 
 ## Deliberately out of scope
 

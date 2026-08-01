@@ -53,9 +53,8 @@ local disk plus a remote VOSpace archive.
 
 ## Commands
 
-`ls` · `ll` · `du` · `find` · `tree` · `size` · `test` · `info` · `stat` ·
-`head` · `tail` · `cat` · `cp` · `mv` · `mkdir` · `rmdir` · `unlink` · `rm` ·
-`basename` · `dirname`.
+`ls` · `du` · `find` · `tree` · `size` · `test` · `info` · `stat` ·
+`head` · `tail` · `cat` · `cp` · `mv` · `mkdir` · `rmdir` · `unlink` · `rm`.
 
 Recursive `cp -R` is on by default; recursive `rm -R` is **off** by default and
 must be enabled explicitly:

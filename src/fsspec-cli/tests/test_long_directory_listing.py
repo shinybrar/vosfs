@@ -5,7 +5,6 @@ from types import MappingProxyType
 import pytest
 from fsspec_cli._listing import to_listing as normalize_listing
 
-from ._ansi import strip_ansi
 from ._support import _invoke, _RecordingSource
 
 
@@ -20,16 +19,6 @@ from ._support import _invoke, _RecordingSource
         (
             "ls",
             ["-lh", "memory:/docs"],
-            "file    2B  guide.md\nfile  1.5K  notes.txt\n",
-        ),
-        (
-            "ll",
-            ["memory:/docs"],
-            "file     2  guide.md\nfile  1536  notes.txt\n",
-        ),
-        (
-            "ll",
-            ["-h", "memory:/docs"],
             "file    2B  guide.md\nfile  1.5K  notes.txt\n",
         ),
     ],
@@ -201,15 +190,15 @@ def test_long_listing_continues_after_an_incompatible_operand_atomically() -> No
     )
 
     result = _invoke(
-        "ll",
-        ["memory:/bad", "memory:/good"],
+        "ls",
+        ["-l", "memory:/bad", "memory:/good"],
         sources={"memory": source},
     )
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
         "memory:/good:\nfile  4  ok.txt\n",
-        "ll: memory:/bad: incompatible result\n",
+        "ls: memory:/bad: incompatible result\n",
     )
     assert [
         (event[0], event[2], event[3]) for event in source.events if event[0] == "ls"
@@ -244,12 +233,3 @@ def test_long_listing_rejects_non_concrete_detail_lists(listing: object) -> None
         "",
         "ls: memory:/docs: incompatible result\n",
     )
-
-
-def test_ll_uses_its_own_typer_command_context() -> None:
-    result = _invoke("ll", ["--long", "memory:/docs"])
-
-    assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = strip_ansi(result.stderr)
-    assert "Usage: root ll" in diagnostic
-    assert "No such option: --long" in diagnostic
