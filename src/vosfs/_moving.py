@@ -18,6 +18,7 @@ import errno
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from vosfs import _coordination as coordination
 from vosfs import errors
 
 if TYPE_CHECKING:
@@ -45,14 +46,6 @@ class MovePlan:
     entries: tuple[MoveEntry, ...]
     recursive: bool
     maxdepth: int | None
-
-
-@dataclass(frozen=True)
-class MoveResult:
-    """Destination verification outcome for one move plan."""
-
-    completed: tuple[str, ...]
-    failed: tuple[str, ...]
 
 
 async def plan(  # noqa: PLR0913 - one parameter per resolved move policy.
@@ -106,7 +99,7 @@ async def plan(  # noqa: PLR0913 - one parameter per resolved move policy.
     if await filesystem._exists(destination):
         msg = f"move destination already exists: {destination}"
         raise FileExistsError(msg)
-    destination_paths = filesystem._coordinator.remap(source_paths, destination)
+    destination_paths = coordination.remap(source_paths, destination)
     entries = tuple(
         MoveEntry(
             source=path,
@@ -127,10 +120,10 @@ async def execute(
     filesystem: VOSpaceFileSystem,
     move_plan: MovePlan,
     **kwargs: Any,  # noqa: ANN401 - fsspec forwards copy options
-) -> MoveResult:
+) -> None:
     """Copy, verify, and only then delete one preflighted move plan."""
     if not move_plan.entries:
-        return MoveResult((), ())
+        return
     kwargs.pop("on_error", None)
     try:
         await filesystem._copy(
@@ -142,29 +135,18 @@ async def execute(
             **kwargs,
         )
     except Exception as exc:
-        result = await verify_destinations(filesystem, move_plan)
+        completed, failed = await verify_destinations(filesystem, move_plan)
+        filesystem._invalidate(move_plan.destination)
+        msg = f"move copy failed ({len(completed)} completed, {len(failed)} failed)"
+        raise errors.VOSpaceError(msg, completed=completed, failed=failed) from exc
+    completed, failed = await verify_destinations(filesystem, move_plan)
+    if failed:
         filesystem._invalidate(move_plan.destination)
         msg = (
-            f"move copy failed ({len(result.completed)} completed, "
-            f"{len(result.failed)} failed)"
+            f"move copy is incomplete ({len(completed)} completed, "
+            f"{len(failed)} failed); source is kept"
         )
-        raise errors.VOSpaceError(
-            msg,
-            completed=list(result.completed),
-            failed=list(result.failed),
-        ) from exc
-    result = await verify_destinations(filesystem, move_plan)
-    if result.failed:
-        filesystem._invalidate(move_plan.destination)
-        msg = (
-            f"move copy is incomplete ({len(result.completed)} completed, "
-            f"{len(result.failed)} failed); source is kept"
-        )
-        raise errors.VOSpaceError(
-            msg,
-            completed=list(result.completed),
-            failed=list(result.failed),
-        )
+        raise errors.VOSpaceError(msg, completed=completed, failed=failed)
     await remove_sources(
         filesystem,
         move_plan.entries,
@@ -172,13 +154,12 @@ async def execute(
     )
     filesystem._invalidate(move_plan.source)
     filesystem._invalidate(move_plan.destination)
-    return result
 
 
 async def verify_destinations(
     filesystem: VOSpaceFileSystem,
     move_plan: MovePlan,
-) -> MoveResult:
+) -> tuple[list[str], list[str]]:
     """Return destination paths whose type and file size did or did not verify."""
     completed: list[str] = []
     failed: list[str] = []
@@ -195,7 +176,7 @@ async def verify_destinations(
             completed.append(entry.destination)
         else:
             failed.append(entry.destination)
-    return MoveResult(tuple(completed), tuple(failed))
+    return completed, failed
 
 
 async def remove_sources(

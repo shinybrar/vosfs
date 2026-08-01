@@ -21,7 +21,6 @@ parent materialization.
 from __future__ import annotations
 
 import posixpath
-from importlib.metadata import version
 from typing import TYPE_CHECKING
 
 import pytest
@@ -35,48 +34,15 @@ from fsspec.tests.abstract import (
     AbstractPipeTests,
     AbstractPutTests,
 )
-from fsspec.tests.abstract.common import GLOB_EDGE_CASES_TESTS
 from vospace_sim import VOSpaceSim
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Iterator
 
     from vosfs import VOSpaceFileSystem
 
-# Derived from the installed package so skip reasons never drift from the
-# shipped version. The unsupported capabilities they describe are fixed by the
-# capability contract; the version label simply tracks the release under test.
-_VERSION = f"vosfs v{version('vosfs')}"
-
-_QUESTION_MARK = (
-    f"unsupported in {_VERSION} (TRD sections 4 and 11): the path grammar "
-    "reserves '?' as a URL query delimiter, so question-mark glob paths cannot "
-    "be expressed"
-)
-
-
-def _glob_params(reason_for: Callable[..., str | None]) -> list:
-    """Build a parametrization that skips the unsupported glob-edge-case rows.
-
-    ``reason_for(path, recursive, maxdepth, expected)`` returns a skip reason for
-    a row vosfs cannot express, or ``None`` for a row that must run normally.
-    """
-    params = []
-    for path, recursive, maxdepth, expected in GLOB_EDGE_CASES_TESTS["argvalues"]:
-        reason = reason_for(path, recursive, maxdepth, expected)
-        marks = (pytest.mark.skip(reason=reason),) if reason else ()
-        params.append(pytest.param(path, recursive, maxdepth, expected, marks=marks))
-    return params
-
-
-def _question_mark_glob_reason(path, _recursive, _maxdepth, _expected) -> str | None:
-    if "?" in path:
-        return _QUESTION_MARK
-    # Copy, get, and put share the same path-normalization limitation.
-    return None
-
-
-_QUESTION_MARK_GLOB_PARAMS = _glob_params(_question_mark_glob_reason)
+# The six question-mark glob edge cases are skipped by the
+# ``pytest_collection_modifyitems`` hook in ``conftest.py``.
 
 
 class VOSpaceFixtures(AbstractFixtures):
@@ -110,33 +76,6 @@ class TestCopy(VOSpaceFixtures, AbstractCopyTests):
     # copies, are supported: ``_cp_file`` creates the destination file's parent
     # and materializes intermediate ContainerNodes, so these inherited tests run.
 
-    @pytest.mark.parametrize(
-        GLOB_EDGE_CASES_TESTS["argnames"], _QUESTION_MARK_GLOB_PARAMS
-    )
-    def test_copy_glob_edge_cases(  # noqa: PLR0913 - mirrors the abstract signature
-        self,
-        path,
-        recursive,
-        maxdepth,
-        expected,
-        fs,
-        fs_join,
-        fs_glob_edge_cases_files,
-        fs_target,
-        fs_sanitize_path,
-    ):
-        super().test_copy_glob_edge_cases(
-            path,
-            recursive,
-            maxdepth,
-            expected,
-            fs,
-            fs_join,
-            fs_glob_edge_cases_files,
-            fs_target,
-            fs_sanitize_path,
-        )
-
 
 class TestGet(VOSpaceFixtures, AbstractGetTests):
     """Remote-to-local download suite."""
@@ -145,67 +84,9 @@ class TestGet(VOSpaceFixtures, AbstractGetTests):
     # normalizes fsspec's forwarded list of sources (see the list branch on
     # VOSpaceFileSystem._strip_protocol).
 
-    @pytest.mark.parametrize(
-        GLOB_EDGE_CASES_TESTS["argnames"], _QUESTION_MARK_GLOB_PARAMS
-    )
-    def test_get_glob_edge_cases(  # noqa: PLR0913 - mirrors the abstract signature
-        self,
-        path,
-        recursive,
-        maxdepth,
-        expected,
-        fs,
-        fs_join,
-        fs_glob_edge_cases_files,
-        local_fs,
-        local_join,
-        local_target,
-    ):
-        super().test_get_glob_edge_cases(
-            path,
-            recursive,
-            maxdepth,
-            expected,
-            fs,
-            fs_join,
-            fs_glob_edge_cases_files,
-            local_fs,
-            local_join,
-            local_target,
-        )
-
 
 class TestPut(VOSpaceFixtures, AbstractPutTests):
     """Local-to-remote upload suite."""
-
-    @pytest.mark.parametrize(
-        GLOB_EDGE_CASES_TESTS["argnames"], _QUESTION_MARK_GLOB_PARAMS
-    )
-    def test_put_glob_edge_cases(  # noqa: PLR0913 - mirrors the abstract signature
-        self,
-        path,
-        recursive,
-        maxdepth,
-        expected,
-        fs,
-        fs_join,
-        fs_target,
-        local_glob_edge_cases_files,
-        local_join,
-        fs_sanitize_path,
-    ):
-        super().test_put_glob_edge_cases(
-            path,
-            recursive,
-            maxdepth,
-            expected,
-            fs,
-            fs_join,
-            fs_target,
-            local_glob_edge_cases_files,
-            local_join,
-            fs_sanitize_path,
-        )
 
 
 class TestPipe(VOSpaceFixtures, AbstractPipeTests):

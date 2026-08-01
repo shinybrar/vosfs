@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Literal, NoReturn
 import pytest
 from click.utils import strip_ansi
 from fsspec.asyn import AsyncFileSystem
-from fsspec_cli import App, AsyncFilesystemSource
-from typer.testing import CliRunner, Result
+
+from ._support import _invoke
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -28,21 +28,6 @@ class _ReadCall:
 
 class _ReadControl(BaseException):
     pass
-
-
-def _source_must_not_run() -> NoReturn:
-    raise AssertionError
-
-
-def _invoke(
-    command: Literal["head", "tail"],
-    arguments: list[str],
-    *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, [command, *arguments])
 
 
 class _ReadFileSystem(AsyncFileSystem):

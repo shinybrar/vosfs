@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, NoReturn
 import pytest
 import typer
 
-from ._support import _invoke_unlink, _RecordingSource, _source_must_not_run
+from ._support import _invoke, _RecordingSource, _source_must_not_run
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -18,7 +18,7 @@ def test_unlink_removes_one_file_without_stdout() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_unlink(["memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("unlink", ["memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -38,7 +38,8 @@ def test_unlink_passes_nonfinal_dot_and_separator_spelling_to_backend() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_unlink(
+    result = _invoke(
+        "unlink",
         ["memory:/docs//./notes.txt/"],
         sources={"memory": source},
     )
@@ -52,7 +53,7 @@ def test_unlink_passes_nonfinal_dot_and_separator_spelling_to_backend() -> None:
 
 
 def test_unlink_rejects_a_missing_mapped_filesystem_operand() -> None:
-    result = _invoke_unlink([])
+    result = _invoke("unlink", [])
 
     assert (result.exit_code, result.stdout) == (2, "")
     assert "Missing argument" in result.stderr
@@ -60,7 +61,7 @@ def test_unlink_rejects_a_missing_mapped_filesystem_operand() -> None:
 
 
 def test_unlink_rejects_extra_operands_without_entering_sources() -> None:
-    result = _invoke_unlink(["memory:/one", "memory:/two"])
+    result = _invoke("unlink", ["memory:/one", "memory:/two"])
 
     assert (result.exit_code, result.stdout) == (2, "")
     assert "unexpected extra argument" in result.stderr
@@ -74,7 +75,7 @@ def test_unlink_rejects_extra_operands_without_entering_sources() -> None:
 def test_unlink_reports_extra_operand_before_second_operand_validation(
     second: str,
 ) -> None:
-    result = _invoke_unlink(["memory:/one", second])
+    result = _invoke("unlink", ["memory:/one", second])
 
     assert (result.exit_code, result.stdout) == (2, "")
     assert "unexpected extra argument" in result.stderr
@@ -100,7 +101,7 @@ def test_unlink_reports_extra_operand_before_second_operand_validation(
     ],
 )
 def test_unlink_rejects_every_option_without_entering_sources(option: str) -> None:
-    result = _invoke_unlink([option, "memory:/file"])
+    result = _invoke("unlink", [option, "memory:/file"])
 
     assert (result.exit_code, result.stdout) == (2, "")
     if option == "--help=value":
@@ -115,7 +116,8 @@ def test_unlink_accepts_operand_after_option_terminator() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_unlink(
+    result = _invoke(
+        "unlink",
         ["--", "memory:/docs/notes.txt"],
         sources={"memory": source},
     )
@@ -134,7 +136,7 @@ def test_unlink_accepts_operand_after_option_terminator() -> None:
 
 
 def test_unlink_treats_dashed_tokens_after_terminator_as_operands() -> None:
-    result = _invoke_unlink(["--", "-f"])
+    result = _invoke("unlink", ["--", "-f"])
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -158,7 +160,7 @@ def test_unlink_rejects_root_and_final_dot_paths_before_source_entry(
     path: str,
     rendered: str,
 ) -> None:
-    result = _invoke_unlink([path])
+    result = _invoke("unlink", [path])
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -180,7 +182,7 @@ def test_unlink_rejects_malformed_mapped_filesystem_operands(
     arguments: list[str],
     rendered: str,
 ) -> None:
-    result = _invoke_unlink(arguments)
+    result = _invoke("unlink", arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -188,7 +190,8 @@ def test_unlink_rejects_malformed_mapped_filesystem_operands(
 
 
 def test_unlink_reports_unknown_names_with_locale_sorted_known_names() -> None:
-    result = _invoke_unlink(
+    result = _invoke(
+        "unlink",
         ["other:/file"],
         sources={
             "zeta": _source_must_not_run,
@@ -207,7 +210,7 @@ def test_unlink_reports_unknown_names_with_locale_sorted_known_names() -> None:
 def test_unlink_rejects_non_file_types(info_result: object) -> None:
     source = _RecordingSource([], info_result=info_result)
 
-    result = _invoke_unlink(["memory:/docs"], sources={"memory": source})
+    result = _invoke("unlink", ["memory:/docs"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -223,7 +226,7 @@ def test_unlink_rejects_non_file_types(info_result: object) -> None:
 def test_unlink_rejects_a_missing_file() -> None:
     source = _RecordingSource([], info_error=FileNotFoundError("missing"))
 
-    result = _invoke_unlink(["memory:/missing"], sources={"memory": source})
+    result = _invoke("unlink", ["memory:/missing"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -248,7 +251,7 @@ def test_unlink_maps_pre_mutation_failures_to_locked_categories(
     error = error_factory()
     source = _RecordingSource([], info_error=error)
 
-    result = _invoke_unlink(["memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("unlink", ["memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -282,7 +285,7 @@ def test_unlink_reports_uncertain_mutation_after_delete_attempt(
         },
     )
 
-    result = _invoke_unlink(["memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("unlink", ["memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -297,7 +300,7 @@ def test_unlink_rejects_when_post_check_shows_the_file_still_present() -> None:
         post_info_by_path={"/docs/notes.txt": {"type": "file"}},
     )
 
-    result = _invoke_unlink(["memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("unlink", ["memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -312,7 +315,7 @@ def test_unlink_rejects_ambiguous_post_check_shapes() -> None:
         post_info_by_path={"/docs/notes.txt": {"type": "directory"}},
     )
 
-    result = _invoke_unlink(["memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("unlink", ["memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -327,7 +330,7 @@ def test_unlink_refuses_an_active_same_thread_event_loop(monkeypatch) -> None:
 
     async def invoke() -> object:
         monkeypatch.setattr(asyncio, "run", recording_run)
-        return _invoke_unlink(["memory:/file"])
+        return _invoke("unlink", ["memory:/file"])
 
     result = real_run(invoke())
 
@@ -349,7 +352,7 @@ def test_unlink_preserves_control_flow_unchanged(control: BaseException) -> None
     source = _RecordingSource([], rm_file_error=control)
 
     with pytest.raises(type(control)) as caught:
-        _invoke_unlink(["memory:/docs/notes.txt"], sources={"memory": source})
+        _invoke("unlink", ["memory:/docs/notes.txt"], sources={"memory": source})
 
     assert type(caught.value) is type(control)
     if not isinstance(control, asyncio.CancelledError):
@@ -379,7 +382,7 @@ def test_unlink_preserves_backend_error_when_its_diagnostic_write_fails(
 
     monkeypatch.setattr(typer, "echo", fail_diagnostic)
 
-    result = _invoke_unlink(["memory:/file"], sources={"memory": source})
+    result = _invoke("unlink", ["memory:/file"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.exception is renderer_error
@@ -396,7 +399,8 @@ def test_unlink_stops_acquisition_after_a_source_factory_failure() -> None:
         message = "factory"
         raise ValueError(message)
 
-    result = _invoke_unlink(
+    result = _invoke(
+        "unlink",
         ["alpha:/one"],
         sources={"alpha": factory_failure, "beta": _source_must_not_run},
     )
@@ -411,7 +415,7 @@ def test_unlink_stops_acquisition_after_a_source_factory_failure() -> None:
 def test_unlink_reports_source_exit_failures() -> None:
     source = _RecordingSource([], exit_error=OSError("exit"))
 
-    result = _invoke_unlink(["memory:/file"], sources={"memory": source})
+    result = _invoke("unlink", ["memory:/file"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -419,7 +423,7 @@ def test_unlink_reports_source_exit_failures() -> None:
 
 
 def test_unlink_help_comes_from_typed_callback() -> None:
-    result = _invoke_unlink(["--help"])
+    result = _invoke("unlink", ["--help"])
 
     assert result.exit_code == 0
     assert "Usage:" in result.stdout
@@ -430,7 +434,7 @@ def test_unlink_accepts_hidden_file_paths_that_are_not_final_dot_components() ->
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_unlink(["memory:/.hidden"], sources={"memory": source})
+    result = _invoke("unlink", ["memory:/.hidden"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -446,7 +450,7 @@ def test_unlink_never_calls_rm_or_rmdir_primitives() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events, trap_rmdir=True)
 
-    result = _invoke_unlink(["memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("unlink", ["memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert [event[0] for event in events if event[0] == "rm_file"] == ["rm_file"]

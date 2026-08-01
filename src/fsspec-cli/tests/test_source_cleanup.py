@@ -9,7 +9,7 @@ import typer
 from fsspec_cli import App
 from typer.testing import CliRunner
 
-from ._support import _invoke_ls, _RecordingSource, _source_must_not_run
+from ._support import _invoke, _RecordingSource, _source_must_not_run
 
 
 def _fail_diagnostic_writes(
@@ -43,7 +43,8 @@ def test_ls_reports_every_source_exit_failure_in_reverse_order() -> None:
     alpha = _RecordingSource(events, exit_error=OSError("alpha\\\0\r\n"))
     beta = _RecordingSource(events, exit_error=RuntimeError("beta failure"))
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["alpha:/one", "beta:/two"],
         sources={"alpha": alpha, "beta": beta},
     )
@@ -75,7 +76,8 @@ def test_ls_finishes_cleanup_before_a_diagnostic_write_can_fail(
         (diagnostic_control, diagnostic_control),
         events,
     )
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["alpha:/one", "beta:/two"],
         sources={"alpha": alpha, "beta": beta},
     )
@@ -106,7 +108,8 @@ def test_ls_propagates_first_diagnostic_control_after_every_render(
     beta = _RecordingSource(events, exit_error=RuntimeError("beta exit"))
     diagnostics = _fail_diagnostic_writes(monkeypatch, controls)
     with pytest.raises(_ControlFlow) as caught:
-        _invoke_ls(
+        _invoke(
+            "ls",
             ["alpha:/one", "beta:/two"],
             sources={"alpha": alpha, "beta": beta},
         )
@@ -126,7 +129,8 @@ def test_ls_treats_ordinary_diagnostic_write_failures_as_status_one(
         monkeypatch,
         (RuntimeError("diagnostic write"), RuntimeError("diagnostic write")),
     )
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["alpha:/one", "beta:/two"],
         sources={"alpha": alpha, "beta": beta},
     )
@@ -142,7 +146,8 @@ def test_ls_renders_source_names_and_empty_exception_messages() -> None:
     def broken_source() -> NoReturn:
         raise RuntimeError
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         [f"{source_name}:/file"],
         sources={source_name: broken_source},
     )
@@ -162,7 +167,8 @@ def test_ls_reports_acquisition_before_cleanup_failures() -> None:
     def broken_source() -> NoReturn:
         raise acquisition_error
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["first:/one", "broken:/two"],
         sources={"first": first, "broken": broken_source},
     )
@@ -180,7 +186,7 @@ def test_ls_retains_a_command_diagnostic_when_cleanup_fails() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events, None, exit_error=OSError("cleanup"))
 
-    result = _invoke_ls(["memory:/file"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/file"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -206,7 +212,8 @@ def test_ls_cleans_up_then_propagates_info_control_flow_unchanged(
     beta = _RecordingSource(events, exit_result=True)
 
     with pytest.raises(type(control)) as caught:
-        _invoke_ls(
+        _invoke(
+            "ls",
             ["alpha:/one", "beta:/two"],
             sources={"alpha": alpha, "beta": beta},
         )
@@ -236,7 +243,7 @@ def test_ls_cleans_up_then_propagates_system_exit_unchanged() -> None:
     control = SystemExit(7)
     source = _RecordingSource(events, info_error=control)
 
-    result = _invoke_ls(["memory:/file"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/file"], sources={"memory": source})
 
     assert result.exception is control
     assert result.exit_code == 7
@@ -255,7 +262,8 @@ def test_ls_propagates_factory_control_flow_after_cleaning_prior_sources() -> No
         raise control
 
     with pytest.raises(_ControlFlow) as caught:
-        _invoke_ls(
+        _invoke(
+            "ls",
             ["first:/one", "broken:/two", "later:/three"],
             sources={
                 "first": first,
@@ -284,7 +292,8 @@ def test_ls_propagates_entry_control_flow_without_exiting_failed_entry() -> None
             raise AssertionError
 
     with pytest.raises(_ControlFlow) as caught:
-        _invoke_ls(
+        _invoke(
+            "ls",
             ["first:/one", "broken:/two"],
             sources={"first": first, "broken": BrokenContext},
         )
@@ -301,7 +310,7 @@ def test_ls_passes_keyboard_interrupt_to_cleanup_before_typer_handles_it() -> No
     control = KeyboardInterrupt()
     source = _RecordingSource(events, info_error=control)
 
-    result = _invoke_ls(["memory:/file"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/file"], sources={"memory": source})
 
     assert result.exit_code != 0
     exception_type, exception, traceback = source.exit_calls[0]
@@ -318,7 +327,8 @@ def test_ls_propagates_the_first_cleanup_control_flow_after_all_exits() -> None:
     beta = _RecordingSource(events, exit_error=first_control)
 
     with pytest.raises(_ControlFlow) as caught:
-        _invoke_ls(
+        _invoke(
+            "ls",
             ["alpha:/one", "beta:/two"],
             sources={"alpha": alpha, "beta": beta},
         )
@@ -338,7 +348,8 @@ def test_ls_preserves_primary_control_flow_across_cleanup_failures() -> None:
     )
     beta = _RecordingSource(events, exit_error=_ControlFlow("beta exit"))
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["alpha:/one", "beta:/two"],
         sources={"alpha": alpha, "beta": beta},
     )
@@ -361,7 +372,8 @@ def test_ls_cleanup_control_flow_precedes_an_ordinary_command_error() -> None:
     beta = _RecordingSource(events, exit_error=cleanup_control)
 
     with pytest.raises(_ControlFlow) as caught:
-        _invoke_ls(
+        _invoke(
+            "ls",
             ["alpha:/one", "beta:/two"],
             sources={"alpha": alpha, "beta": beta},
         )
@@ -378,7 +390,7 @@ def test_ls_ignores_truthy_exit_suppression_for_an_incompatible_result() -> None
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events, None, exit_result=True)
 
-    result = _invoke_ls(["memory:/file"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/file"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""

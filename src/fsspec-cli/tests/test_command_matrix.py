@@ -16,7 +16,6 @@ from typer.testing import CliRunner
 
 from ._ansi import strip_ansi
 from ._matrix_support import (
-    _block_network,
     _exercise_cat_profile,
     _exercise_cp_locked_profile,
     _exercise_locked_profile,
@@ -35,19 +34,12 @@ from ._matrix_support import (
     _exercise_stat_locked_profile,
     _exercise_unlink_locked_profile,
     _invoke,
-    _invoke_cat,
-    _invoke_cp,
-    _invoke_ls,
+    _memory_source,
     _ProbedSource,
 )
 from ._support import _source_must_not_run
 
 _SYNC_MV_MESSAGE = "public sync mv must not be called"
-
-
-@pytest.fixture(autouse=True)
-def _prohibit_unplanned_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    _block_network(monkeypatch)
 
 
 def _populate_local(root: Path) -> None:
@@ -102,21 +94,7 @@ def test_adapted_local_plain_ls_profile_uses_native_temporary_storage(
 def test_adapted_memory_plain_ls_profile_has_isolated_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(MemoryFileSystem, "store", {})
-    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
-    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
-
-    def make_filesystem() -> AsyncFileSystemWrapper:
-        MemoryFileSystem.store.clear()
-        MemoryFileSystem.pseudo_dirs[:] = [""]
-        MemoryFileSystem.clear_instance_cache()
-        filesystem = MemoryFileSystem()
-        filesystem.makedirs("/docs")
-        for name in ("notes.txt", ".hidden", "guide.md"):
-            filesystem.pipe_file(f"/docs/{name}", name.encode())
-        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
-
-    source = _ProbedSource(make_filesystem)
+    source = _memory_source(monkeypatch)
 
     _exercise_locked_profile("memory", source, "/docs")
 
@@ -168,21 +146,7 @@ def test_adapted_local_long_listing_profile_is_rich_and_uses_detail(
 def test_adapted_memory_long_listing_profile_is_sparse_and_uses_detail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(MemoryFileSystem, "store", {})
-    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
-    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
-
-    def make_filesystem() -> AsyncFileSystemWrapper:
-        MemoryFileSystem.store.clear()
-        MemoryFileSystem.pseudo_dirs[:] = [""]
-        MemoryFileSystem.clear_instance_cache()
-        filesystem = MemoryFileSystem()
-        filesystem.makedirs("/docs")
-        for name in ("notes.txt", ".hidden", "guide.md"):
-            filesystem.pipe_file(f"/docs/{name}", name.encode())
-        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
-
-    source = _ProbedSource(make_filesystem)
+    source = _memory_source(monkeypatch)
 
     _exercise_long_listing_profile(
         "memory",
@@ -215,21 +179,7 @@ def test_adapted_local_base_mkdir_profile_uses_native_temporary_storage(
 def test_adapted_memory_base_mkdir_profile_over_eager_parent_creation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(MemoryFileSystem, "store", {})
-    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
-    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
-
-    def make_filesystem() -> AsyncFileSystemWrapper:
-        MemoryFileSystem.store.clear()
-        MemoryFileSystem.pseudo_dirs[:] = [""]
-        MemoryFileSystem.clear_instance_cache()
-        filesystem = MemoryFileSystem()
-        filesystem.makedirs("/docs")
-        for name in ("notes.txt", ".hidden", "guide.md"):
-            filesystem.pipe_file(f"/docs/{name}", name.encode())
-        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
-
-    source = _ProbedSource(make_filesystem)
+    source = _memory_source(monkeypatch)
 
     _exercise_mkdir_memory_over_eager_failure("memory", source, "/docs")
 
@@ -336,22 +286,7 @@ def test_adapted_local_mkdir_p_profile_uses_native_temporary_storage(
 def test_adapted_memory_mkdir_p_profile_has_isolated_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(MemoryFileSystem, "store", {})
-    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
-    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
-
-    def make_filesystem() -> AsyncFileSystemWrapper:
-        MemoryFileSystem.store.clear()
-        MemoryFileSystem.pseudo_dirs[:] = [""]
-        MemoryFileSystem.clear_instance_cache()
-        filesystem = MemoryFileSystem()
-        filesystem.makedirs("/docs")
-        filesystem.mkdir("/docs/empty")
-        for name in ("notes.txt", ".hidden", "guide.md"):
-            filesystem.pipe_file(f"/docs/{name}", name.encode())
-        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
-
-    source = _ProbedSource(make_filesystem)
+    source = _memory_source(monkeypatch, directories=("/docs", "/docs/empty"))
 
     _exercise_mkdir_p_locked_profile("memory", source, "/docs")
 
@@ -364,8 +299,9 @@ def test_typer_rejects_ls_long_option_spelling_without_source_work() -> None:
         source_calls += 1
         raise AssertionError
 
-    result = _invoke_ls(
+    result = _invoke(
         App({"memory": source_must_not_run}),
+        "ls",
         ["--long", "memory:/docs"],
     )
 
@@ -520,20 +456,8 @@ def test_adapted_local_plain_cat_profile(tmp_path: Path) -> None:
 
 
 def test_adapted_memory_plain_cat_profile(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(MemoryFileSystem, "store", {})
-    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
-    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
     payload = b"\xff\xfe\0memory-cat"
-
-    def make_filesystem() -> AsyncFileSystemWrapper:
-        MemoryFileSystem.store.clear()
-        MemoryFileSystem.pseudo_dirs[:] = [""]
-        MemoryFileSystem.clear_instance_cache()
-        filesystem = MemoryFileSystem()
-        filesystem.pipe_file("/docs/blob.bin", payload)
-        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
-
-    source = _ProbedSource(make_filesystem)
+    source = _memory_source(monkeypatch, {"/docs/blob.bin": payload}, directories=())
 
     _exercise_cat_profile("memory", source, "/docs/blob.bin", payload=payload)
 
@@ -545,7 +469,7 @@ def test_adapted_memory_plain_cat_profile(monkeypatch: pytest.MonkeyPatch) -> No
 def test_cat_u_rejection_is_source_free() -> None:
     source = _source_must_not_run
     app = App({"memory": source})
-    result = _invoke_cat(app, ["-u", "memory:/file"])
+    result = _invoke(app, "cat", ["-u", "memory:/file"])
 
     assert (result.exit_code, result.stdout) == (2, "")
     assert "No such option" in result.stderr
@@ -555,20 +479,11 @@ def test_cat_u_rejection_is_source_free() -> None:
 def test_adapted_memory_cat_stdin_dash_mixed_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(MemoryFileSystem, "store", {})
-    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
-    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
-
-    def make_filesystem() -> AsyncFileSystemWrapper:
-        MemoryFileSystem.store.clear()
-        MemoryFileSystem.pseudo_dirs[:] = [""]
-        MemoryFileSystem.clear_instance_cache()
-        filesystem = MemoryFileSystem()
-        filesystem.pipe_file("/docs/left.bin", b"L")
-        filesystem.pipe_file("/docs/right.bin", b"R")
-        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
-
-    source = _ProbedSource(make_filesystem)
+    source = _memory_source(
+        monkeypatch,
+        {"/docs/left.bin": b"L", "/docs/right.bin": b"R"},
+        directories=(),
+    )
     app = App({"memory": source})
     result = CliRunner().invoke(
         app.typer_app,
@@ -605,22 +520,7 @@ def test_adapted_local_base_rmdir_profile_uses_native_temporary_storage(
 def test_adapted_memory_base_rmdir_profile_has_isolated_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(MemoryFileSystem, "store", {})
-    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
-    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
-
-    def make_filesystem() -> AsyncFileSystemWrapper:
-        MemoryFileSystem.store.clear()
-        MemoryFileSystem.pseudo_dirs[:] = [""]
-        MemoryFileSystem.clear_instance_cache()
-        filesystem = MemoryFileSystem()
-        filesystem.makedirs("/docs")
-        filesystem.mkdir("/docs/empty")
-        for name in ("notes.txt", ".hidden", "guide.md"):
-            filesystem.pipe_file(f"/docs/{name}", name.encode())
-        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
-
-    source = _ProbedSource(make_filesystem)
+    source = _memory_source(monkeypatch, directories=("/docs", "/docs/empty"))
 
     _exercise_rmdir_locked_profile("memory", source, "/docs")
 
@@ -664,21 +564,7 @@ def test_adapted_local_unlink_profile_uses_native_temporary_storage(
 def test_adapted_memory_unlink_profile_has_isolated_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(MemoryFileSystem, "store", {})
-    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
-    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
-
-    def make_filesystem() -> AsyncFileSystemWrapper:
-        MemoryFileSystem.store.clear()
-        MemoryFileSystem.pseudo_dirs[:] = [""]
-        MemoryFileSystem.clear_instance_cache()
-        filesystem = MemoryFileSystem()
-        filesystem.makedirs("/docs")
-        for name in ("notes.txt", ".hidden", "guide.md"):
-            filesystem.pipe_file(f"/docs/{name}", name.encode())
-        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
-
-    source = _ProbedSource(make_filesystem)
+    source = _memory_source(monkeypatch)
 
     _exercise_unlink_locked_profile("memory", source, "/docs")
 
@@ -761,22 +647,7 @@ def test_adapted_local_multi_source_cp_profile_uses_native_temporary_storage(
 def test_adapted_memory_base_rm_profile_has_isolated_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(MemoryFileSystem, "store", {})
-    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
-    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
-
-    def make_filesystem() -> AsyncFileSystemWrapper:
-        MemoryFileSystem.store.clear()
-        MemoryFileSystem.pseudo_dirs[:] = [""]
-        MemoryFileSystem.clear_instance_cache()
-        filesystem = MemoryFileSystem()
-        filesystem.makedirs("/docs")
-        filesystem.mkdir("/docs/empty")
-        for name in ("notes.txt", ".hidden", "guide.md"):
-            filesystem.pipe_file(f"/docs/{name}", name.encode())
-        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
-
-    source = _ProbedSource(make_filesystem)
+    source = _memory_source(monkeypatch, directories=("/docs", "/docs/empty"))
 
     _exercise_rm_locked_profile("memory", source, "/docs")
     _exercise_rm_directory_profile("memory", source, "/docs")
@@ -787,22 +658,7 @@ def test_adapted_memory_base_rm_profile_has_isolated_state(
 def test_adapted_memory_cp_profile_has_isolated_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(MemoryFileSystem, "store", {})
-    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
-    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
-
-    def make_filesystem() -> AsyncFileSystemWrapper:
-        MemoryFileSystem.store.clear()
-        MemoryFileSystem.pseudo_dirs[:] = [""]
-        MemoryFileSystem.clear_instance_cache()
-        filesystem = MemoryFileSystem()
-        filesystem.makedirs("/docs")
-        filesystem.mkdir("/docs/target")
-        for name in ("notes.txt", ".hidden", "guide.md"):
-            filesystem.pipe_file(f"/docs/{name}", name.encode())
-        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
-
-    source = _ProbedSource(make_filesystem)
+    source = _memory_source(monkeypatch, directories=("/docs", "/docs/target"))
 
     _exercise_cp_locked_profile("memory", source, "/docs")
 
@@ -810,22 +666,7 @@ def test_adapted_memory_cp_profile_has_isolated_state(
 def test_adapted_memory_multi_source_cp_profile_has_isolated_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(MemoryFileSystem, "store", {})
-    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
-    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
-
-    def make_filesystem() -> AsyncFileSystemWrapper:
-        MemoryFileSystem.store.clear()
-        MemoryFileSystem.pseudo_dirs[:] = [""]
-        MemoryFileSystem.clear_instance_cache()
-        filesystem = MemoryFileSystem()
-        filesystem.makedirs("/docs")
-        filesystem.mkdir("/docs/target")
-        for name in ("notes.txt", ".hidden", "guide.md"):
-            filesystem.pipe_file(f"/docs/{name}", name.encode())
-        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
-
-    source = _ProbedSource(make_filesystem)
+    source = _memory_source(monkeypatch, directories=("/docs", "/docs/target"))
 
     _exercise_multi_source_cp_locked_profile("memory", source, "/docs")
 
@@ -868,7 +709,7 @@ def test_cross_source_cp_between_adapted_local_and_memory(
         }
     )
 
-    result = _invoke_cp(app, [source_operand, destination_operand])
+    result = _invoke(app, "cp", [source_operand, destination_operand])
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     if direction == "local-to-memory":
@@ -894,8 +735,9 @@ def test_adapted_local_recursive_cp_profile_uses_native_temporary_storage(
         )
     )
 
-    result = _invoke_cp(
+    result = _invoke(
         App({"local": source}),
+        "cp",
         [
             "-R",
             f"local:{_local_command_path(source_root)}",
@@ -934,8 +776,9 @@ def test_adapted_local_recursive_cp_rejects_real_link_and_special_entries(
         )
     )
 
-    result = _invoke_cp(
+    result = _invoke(
         App({"local": source}),
+        "cp",
         [
             "-R",
             f"local:{_local_command_path(source_root)}",
@@ -963,8 +806,9 @@ def test_adapted_memory_recursive_cp_profile_has_isolated_state(
     memory.pipe_file("/source/nested/notes.txt", b"notes")
     source = _ProbedSource(lambda: AsyncFileSystemWrapper(memory, asynchronous=True))
 
-    result = _invoke_cp(
+    result = _invoke(
         App({"memory": source}),
+        "cp",
         ["-r", "memory:/source", "memory:/copy"],
     )
 
@@ -1022,8 +866,9 @@ def test_recursive_cp_between_distinct_adapted_source_names(
         else "/destination/copy"
     )
 
-    result = _invoke_cp(
+    result = _invoke(
         App({"source": source, "destination": destination}),
+        "cp",
         ["-R", f"source:{source_path}", f"destination:{destination_path}"],
     )
 
@@ -1337,19 +1182,7 @@ def test_adapted_local_stat_profile_uses_native_temporary_storage(
 def test_adapted_memory_stat_profile_fails_closed_on_incomplete_info(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(MemoryFileSystem, "store", {})
-    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
-    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
-
-    def make_filesystem() -> AsyncFileSystemWrapper:
-        MemoryFileSystem.store.clear()
-        MemoryFileSystem.pseudo_dirs[:] = [""]
-        MemoryFileSystem.clear_instance_cache()
-        filesystem = MemoryFileSystem()
-        filesystem.pipe_file("/docs/notes.txt", b"abc")
-        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
-
-    source = _ProbedSource(make_filesystem)
+    source = _memory_source(monkeypatch, {"/docs/notes.txt": b"abc"}, directories=())
 
     _exercise_stat_incomplete_profile("memory", source, "/docs/notes.txt")
 

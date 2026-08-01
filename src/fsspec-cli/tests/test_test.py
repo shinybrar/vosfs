@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, NoReturn
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 from fsspec.asyn import AsyncFileSystem
-from fsspec_cli import App, AsyncFilesystemSource
-from typer.testing import CliRunner, Result
+
+from ._support import _invoke
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -23,20 +23,6 @@ class _PredicateCall:
 
 class _TestControl(BaseException):
     pass
-
-
-def _source_must_not_run() -> NoReturn:
-    raise AssertionError
-
-
-def _invoke_test(
-    arguments: list[str],
-    *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["test", *arguments])
 
 
 class _PredicateFileSystem(AsyncFileSystem):
@@ -127,7 +113,8 @@ def test_test_uses_one_matching_hook_without_output(
 ) -> None:
     source = _PredicateSource(result=predicate_result)
 
-    result = _invoke_test(
+    result = _invoke(
+        "test",
         [selector, "memory:/docs/a.txt"],
         sources={"memory": source},
     )
@@ -141,7 +128,8 @@ def test_test_uses_one_matching_hook_without_output(
 def test_test_accepts_an_interspersed_selector_and_option_terminator() -> None:
     source = _PredicateSource(result=True)
 
-    result = _invoke_test(
+    result = _invoke(
+        "test",
         ["memory:/docs", "-d", "--"],
         sources={"memory": source},
     )
@@ -151,7 +139,7 @@ def test_test_accepts_an_interspersed_selector_and_option_terminator() -> None:
 
 
 def test_test_help_comes_from_typed_callback() -> None:
-    result = _invoke_test(["--help"])
+    result = _invoke("test", ["--help"])
 
     assert (result.exit_code, result.stderr) == (0, "")
     help_text = result.stdout
@@ -186,7 +174,7 @@ def test_test_preflight_failures_are_stable_and_source_free(
     arguments: list[str],
     diagnostic: str,
 ) -> None:
-    result = _invoke_test(arguments)
+    result = _invoke("test", arguments)
 
     assert (result.exit_code, result.stdout, result.stderr) == (2, "", diagnostic)
 
@@ -207,7 +195,7 @@ def test_test_leaves_usage_failures_to_typer(
     arguments: list[str],
     contexts: tuple[str, ...],
 ) -> None:
-    result = _invoke_test(arguments)
+    result = _invoke("test", arguments)
 
     assert (result.exit_code, result.stdout) == (2, "")
     diagnostic = result.stderr
@@ -218,7 +206,8 @@ def test_test_leaves_usage_failures_to_typer(
 def test_test_accepts_a_repeated_selector_through_typer() -> None:
     source = _PredicateSource(result=True)
 
-    result = _invoke_test(
+    result = _invoke(
+        "test",
         ["-e", "-e", "memory:/a"],
         sources={"memory": source},
     )
@@ -231,7 +220,7 @@ def test_test_accepts_a_repeated_selector_through_typer() -> None:
 def test_test_rejects_non_boolean_results(predicate_result: object) -> None:
     source = _PredicateSource(result=predicate_result)
 
-    result = _invoke_test(["-e", "memory:/a"], sources={"memory": source})
+    result = _invoke("test", ["-e", "memory:/a"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -256,7 +245,7 @@ def test_test_reports_backend_failures_and_passes_them_to_cleanup(
 ) -> None:
     source = _PredicateSource(error=error)
 
-    result = _invoke_test(["-f", "memory:/a"], sources={"memory": source})
+    result = _invoke("test", ["-f", "memory:/a"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -271,7 +260,7 @@ def test_test_reports_backend_failures_and_passes_them_to_cleanup(
 def test_test_false_result_remains_silent_when_source_exit_fails() -> None:
     source = _PredicateSource(result=False, exit_error=OSError("cleanup"))
 
-    result = _invoke_test(["-e", "memory:/a"], sources={"memory": source})
+    result = _invoke("test", ["-e", "memory:/a"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -285,7 +274,7 @@ def test_test_cleans_up_then_propagates_backend_control_flow() -> None:
     source = _PredicateSource(error=control)
 
     with pytest.raises(_TestControl) as caught:
-        _invoke_test(["-e", "memory:/a"], sources={"memory": source})
+        _invoke("test", ["-e", "memory:/a"], sources={"memory": source})
 
     assert caught.value is control
     assert source.lifecycle == ["factory", "enter", "exit"]

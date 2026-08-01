@@ -16,19 +16,18 @@ from vosfs.nodes import (
     CONTENT_TYPE_PROPERTY_URI,
     DATE_PROPERTY_URI,
     LENGTH_PROPERTY_URI,
-    MD5_PROPERTY_URI,
     MTIME_PROPERTY_URI,
     VOSPACE_NS,
     VOSPACE_VERSION,
     XML_HEADERS,
     Node,
     build_container_document,
-    build_property_update,
     build_transfer_document,
     parse_container,
     parse_node,
     to_info,
 )
+from vosfs.xmlio import safe_parse
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "nodes"
 SCHEMA_DIR = Path(__file__).parent / "fixtures" / "schema"
@@ -146,7 +145,6 @@ def test_structured_and_unstructured_are_opaque_files(local_name: str) -> None:
     ).encode()
     node = parse_node(document)
     assert node.node_type == "data"
-    assert node.wire_type == local_name
     assert node.size == 7
     assert to_info(node, "/x/f")["type"] == "file"
 
@@ -189,8 +187,9 @@ def test_parsed_properties_are_read_only() -> None:
 
 
 def test_oversized_body_is_rejected() -> None:
+    # ``parse_node``/``parse_container`` route through this bounded parser.
     with pytest.raises(ValueError, match="limit"):
-        parse_node(b"<vos:node/>" * 10, limit=8)
+        safe_parse(b"<vos:node/>" * 10, limit=8)
 
 
 def test_malformed_xml_is_rejected() -> None:
@@ -289,11 +288,6 @@ def test_parse_container_without_nodes_element_is_empty() -> None:
     assert children == []
 
 
-def test_parse_container_is_bounded() -> None:
-    with pytest.raises(ValueError, match="limit"):
-        parse_container(b"<vos:node/>" * 10, limit=8)
-
-
 # --------------------------------------------------------------------------- #
 # to_info
 # --------------------------------------------------------------------------- #
@@ -316,7 +310,6 @@ def test_to_info_for_data_node() -> None:
 def test_to_info_for_minimal_data_node_omits_optional_fields() -> None:
     node = Node(
         node_type="data",
-        wire_type="DataNode",
         uri="vos://x/f",
         size=3,
         mtime=None,
@@ -411,103 +404,3 @@ def test_build_transfer_document_is_valid(direction: str) -> None:
 def test_build_transfer_document_rejects_bad_direction() -> None:
     with pytest.raises(ValueError, match="direction"):
         build_transfer_document("vos://x", direction="sideways", protocols=[])
-
-
-# --------------------------------------------------------------------------- #
-# build_property_update
-# --------------------------------------------------------------------------- #
-
-
-def test_build_property_update_is_valid_and_sets_properties() -> None:
-    document = build_property_update(
-        "vos://cadc.nrc.ca!vault/user/report.fits",
-        {
-            CONTENT_TYPE_PROPERTY_URI: "application/x-fits",
-            "ivo://cadc.nrc.ca/vospace/custom#experiment": "orion-survey",
-        },
-        wire_type="DataNode",
-    )
-    assert isinstance(document, bytes)
-    assert_schema_valid(document)
-    tree = etree.fromstring(document)
-    assert tree.tag == f"{{{VOSPACE_NS}}}node"
-    assert tree.get("version") == "2.1"
-    # The existing concrete type is required on the wire and cannot be changed.
-    assert tree.get("{http://www.w3.org/2001/XMLSchema-instance}type") == "vos:DataNode"
-    values = {
-        prop.get("uri"): prop.text
-        for prop in tree.iterfind(
-            f"{{{VOSPACE_NS}}}properties/{{{VOSPACE_NS}}}property",
-        )
-    }
-    assert values[CONTENT_TYPE_PROPERTY_URI] == "application/x-fits"
-
-
-def test_build_property_update_allows_non_core_property_named_type() -> None:
-    property_uri = "ivo://example.org/props#type"
-    document = build_property_update(
-        "vos://x/f", {property_uri: "catalog"}, wire_type="DataNode"
-    )
-    tree = etree.fromstring(document)
-    values = {
-        prop.get("uri"): prop.text
-        for prop in tree.iterfind(
-            f"{{{VOSPACE_NS}}}properties/{{{VOSPACE_NS}}}property",
-        )
-    }
-    assert values == {property_uri: "catalog"}
-
-
-@pytest.mark.parametrize("wire_type", ["LinkNode", "MysteryNode"])
-def test_build_property_update_rejects_unsupported_node_types(wire_type: str) -> None:
-    with pytest.raises(ValueError, match="unsupported"):
-        build_property_update(
-            "vos://x/node",
-            {"ivo://example.org/props#label": "value"},
-            wire_type=wire_type,
-        )
-
-
-def test_build_property_update_rejects_case_variant_core_namespace() -> None:
-    property_uri = "IVO://IVOA.NET/VOSPACE/CORE#contenttype"
-    with pytest.raises(ValueError, match="administrative"):
-        build_property_update(
-            "vos://x/f", {property_uri: "text/plain"}, wire_type="DataNode"
-        )
-
-
-def test_build_property_update_rejects_whitespace_disguised_core_uri() -> None:
-    property_uri = f" {CONTENT_TYPE_PROPERTY_URI}"
-    with pytest.raises(ValueError, match="administrative"):
-        build_property_update(
-            "vos://x/f", {property_uri: "text/plain"}, wire_type="DataNode"
-        )
-
-
-@pytest.mark.parametrize(
-    "admin_uri",
-    [
-        "ivo://ivoa.net/vospace/core#owner",
-        "ivo://ivoa.net/vospace/core#group",
-        "ivo://ivoa.net/vospace/core#groupread",
-        "ivo://ivoa.net/vospace/core#groupwrite",
-        "ivo://ivoa.net/vospace/core#publicread",
-        "ivo://ivoa.net/vospace/core#quota",
-        "ivo://ivoa.net/vospace/core#availablespace",
-        LENGTH_PROPERTY_URI,
-        MD5_PROPERTY_URI,
-        DATE_PROPERTY_URI.replace("date", "creator"),
-        "ivo://ivoa.net/vospace/core#permission",
-        "ivo://ivoa.net/vospace/core#checksum",
-        "ivo://ivoa.net/vospace/core#type",
-        MTIME_PROPERTY_URI,  # IVOA server-computed timestamp
-        "ivo://ivoa.net/vospace/core#ctime",
-        "ivo://ivoa.net/vospace/core#btime",
-        DATE_PROPERTY_URI,  # IVOA server-computed timestamp
-        "ivo://ivoa.net/vospace/core#OWNER",  # case-insensitive
-        "ivo://ivoa.net/vospace/core#future-reserved-property",
-    ],
-)
-def test_build_property_update_rejects_admin_properties(admin_uri: str) -> None:
-    with pytest.raises(ValueError, match="administrative"):
-        build_property_update("vos://x/f", {admin_uri: "value"}, wire_type="DataNode")

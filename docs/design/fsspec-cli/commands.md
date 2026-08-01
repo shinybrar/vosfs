@@ -34,7 +34,6 @@ the gate wins.
 | `rm` | `rm [-dfv] [-R\|-r] [--] [name:/path...]` | `_info`, `_rm_file`, `_rmdir` |
 | `basename` | `basename string [suffix]` | none (source-free) |
 | `dirname` | `dirname string` | none (source-free) |
-| `sign` | `sign [--] name:/path` (opt-in) | `sign` |
 
 ## Listing
 
@@ -362,14 +361,6 @@ dirname //      -> /        basename a/b/       -> b
 Neither expands `~`, resolves dot segments, nor infers a default source.
 Multi-operand and zero-delimited GNU extensions are out of scope and are
 rejected by Typer.
-
-## Extensions
-
-### `sign` (opt-in)
-
-Calls the selected filesystem's `sign` capability. A source without it exits
-nonzero with one `unsupported operation` diagnostic and no traceback. The
-extension does not infer support from backend type or protocol.
 
 ## Deliberately out of scope
 

@@ -8,14 +8,14 @@ from typing import NoReturn
 import pytest
 import typer
 
-from ._support import _invoke_rmdir, _RecordingSource, _source_must_not_run
+from ._support import _invoke, _RecordingSource, _source_must_not_run
 
 
 def test_rmdir_removes_one_empty_directory_without_stdout() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events, info_result={"type": "directory"})
 
-    result = _invoke_rmdir(["memory:/docs/empty"], sources={"memory": source})
+    result = _invoke("rmdir", ["memory:/docs/empty"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -35,7 +35,8 @@ def test_rmdir_passes_nonfinal_dot_and_separator_spelling_to_backend() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events, info_result={"type": "directory"})
 
-    result = _invoke_rmdir(
+    result = _invoke(
+        "rmdir",
         ["memory:/docs//./empty/"],
         sources={"memory": source},
     )
@@ -52,7 +53,8 @@ def test_rmdir_acquires_distinct_sources_before_reusing_them() -> None:
     events: list[tuple[object, ...]] = []
     shared_source = _RecordingSource(events, info_result={"type": "directory"})
 
-    result = _invoke_rmdir(
+    result = _invoke(
+        "rmdir",
         ["alpha:/one", "beta:/two", "alpha:/three"],
         sources={
             "beta": shared_source,
@@ -91,7 +93,8 @@ def test_rmdir_continues_after_an_earlier_success() -> None:
         rmdir_by_path={"/docs/bad": OSError(errno.ENOTEMPTY, "directory not empty")},
     )
 
-    result = _invoke_rmdir(
+    result = _invoke(
+        "rmdir",
         ["memory:/docs/good", "memory:/docs/bad"],
         sources={"memory": source},
     )
@@ -113,7 +116,8 @@ def test_rmdir_continues_after_an_earlier_failure() -> None:
         rmdir_by_path={"/docs/bad": OSError(errno.ENOTEMPTY, "directory not empty")},
     )
 
-    result = _invoke_rmdir(
+    result = _invoke(
+        "rmdir",
         ["memory:/docs/bad", "memory:/docs/good"],
         sources={"memory": source},
     )
@@ -131,7 +135,8 @@ def test_rmdir_processes_repeated_operands_independently() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events, info_result={"type": "directory"})
 
-    result = _invoke_rmdir(
+    result = _invoke(
+        "rmdir",
         ["memory:/docs/empty", "memory:/docs/empty"],
         sources={"memory": source},
     )
@@ -148,7 +153,7 @@ def test_rmdir_processes_repeated_operands_independently() -> None:
 
 
 def test_rmdir_rejects_a_missing_mapped_filesystem_operand() -> None:
-    result = _invoke_rmdir([])
+    result = _invoke("rmdir", [])
 
     assert (result.exit_code, result.stdout) == (2, "")
     assert "Missing argument" in result.stderr
@@ -162,7 +167,7 @@ def test_rmdir_rejects_a_missing_mapped_filesystem_operand() -> None:
 def test_rmdir_rejects_unsupported_options_without_entering_sources(
     option: str,
 ) -> None:
-    result = _invoke_rmdir([option, "memory:/docs/empty"])
+    result = _invoke("rmdir", [option, "memory:/docs/empty"])
 
     assert (result.exit_code, result.stdout) == (2, "")
     if option == "--help=value":
@@ -194,7 +199,7 @@ def test_rmdir_rejects_root_and_final_dot_paths_before_source_entry(
         source_calls += 1
         raise AssertionError
 
-    result = _invoke_rmdir([path], sources={"memory": source_must_not_run})
+    result = _invoke("rmdir", [path], sources={"memory": source_must_not_run})
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -220,7 +225,7 @@ def test_rmdir_rejects_malformed_mapped_filesystem_operands(
     arguments: list[str],
     rendered: str,
 ) -> None:
-    result = _invoke_rmdir(arguments)
+    result = _invoke("rmdir", arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -228,7 +233,8 @@ def test_rmdir_rejects_malformed_mapped_filesystem_operands(
 
 
 def test_rmdir_reports_unknown_names_with_locale_sorted_known_names() -> None:
-    result = _invoke_rmdir(
+    result = _invoke(
+        "rmdir",
         ["other:/docs/empty"],
         sources={
             "zeta": _source_must_not_run,
@@ -254,7 +260,7 @@ def test_rmdir_reports_unknown_names_with_locale_sorted_known_names() -> None:
 def test_rmdir_rejects_non_directory_types(info_result: object, category: str) -> None:
     source = _RecordingSource([], info_result=info_result)
 
-    result = _invoke_rmdir(["memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("rmdir", ["memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -265,7 +271,7 @@ def test_rmdir_rejects_non_directory_types(info_result: object, category: str) -
 def test_rmdir_rejects_a_missing_directory() -> None:
     source = _RecordingSource([], info_error=FileNotFoundError("missing"))
 
-    result = _invoke_rmdir(["memory:/missing"], sources={"memory": source})
+    result = _invoke("rmdir", ["memory:/missing"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -292,7 +298,8 @@ def test_rmdir_rejects_a_source_without_async_rmdir() -> None:
 
             return _Wrapped()
 
-    result = _invoke_rmdir(
+    result = _invoke(
+        "rmdir",
         ["memory:/docs/empty"],
         sources={"memory": _StripRmdir()},
     )
@@ -324,7 +331,7 @@ def test_rmdir_maps_pre_mutation_failures_to_locked_categories(
     error = error_factory()
     source = _RecordingSource([], info_error=error)
 
-    result = _invoke_rmdir(["memory:/docs/empty"], sources={"memory": source})
+    result = _invoke("rmdir", ["memory:/docs/empty"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -356,7 +363,7 @@ def test_rmdir_treats_mutation_exception_with_path_still_present_as_confirmed_fa
         rmdir_error=error,
     )
 
-    result = _invoke_rmdir(["memory:/docs/empty"], sources={"memory": source})
+    result = _invoke("rmdir", ["memory:/docs/empty"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -399,7 +406,7 @@ def test_rmdir_treats_mutation_exception_with_proven_absence_as_success() -> Non
         post_info_by_path={"/docs/empty": FileNotFoundError("gone")},
     )
 
-    result = _invoke_rmdir(["memory:/docs/empty"], sources={"memory": source})
+    result = _invoke("rmdir", ["memory:/docs/empty"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -439,7 +446,7 @@ def test_rmdir_reports_uncertain_state_when_mutation_and_post_check_are_ambiguou
         post_info_by_path={"/docs/empty": PermissionError("denied during verify")},
     )
 
-    result = _invoke_rmdir(["memory:/docs/empty"], sources={"memory": source})
+    result = _invoke("rmdir", ["memory:/docs/empty"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -465,7 +472,7 @@ def test_rmdir_reports_uncertain_state_for_ambiguous_post_check_after_void_rmdir
         post_info_by_path={"/docs/empty": error},
     )
 
-    result = _invoke_rmdir(["memory:/docs/empty"], sources={"memory": source})
+    result = _invoke("rmdir", ["memory:/docs/empty"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -479,7 +486,7 @@ def test_rmdir_rejects_when_post_check_shows_the_directory_still_present() -> No
         post_info_by_path={"/docs/empty": {"type": "directory"}},
     )
 
-    result = _invoke_rmdir(["memory:/docs/empty"], sources={"memory": source})
+    result = _invoke("rmdir", ["memory:/docs/empty"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -493,7 +500,7 @@ def test_rmdir_rejects_ambiguous_post_check_shapes() -> None:
         post_info_by_path={"/docs/empty": {"type": "file"}},
     )
 
-    result = _invoke_rmdir(["memory:/docs/empty"], sources={"memory": source})
+    result = _invoke("rmdir", ["memory:/docs/empty"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -508,7 +515,7 @@ def test_rmdir_refuses_an_active_same_thread_event_loop(monkeypatch) -> None:
             raise AssertionError
 
         monkeypatch.setattr(asyncio, "run", refuse_nested_run)
-        return _invoke_rmdir(["memory:/docs/empty"])
+        return _invoke("rmdir", ["memory:/docs/empty"])
 
     result = real_run(invoke())
 
@@ -531,7 +538,7 @@ def test_rmdir_preserves_control_flow_unchanged(control: BaseException) -> None:
     )
 
     with pytest.raises(type(control)) as caught:
-        _invoke_rmdir(["memory:/docs/empty"], sources={"memory": source})
+        _invoke("rmdir", ["memory:/docs/empty"], sources={"memory": source})
 
     assert type(caught.value) is type(control)
     if not isinstance(control, asyncio.CancelledError):
@@ -561,7 +568,7 @@ def test_rmdir_preserves_backend_error_when_its_diagnostic_write_fails(
 
     monkeypatch.setattr(typer, "echo", fail_diagnostic)
 
-    result = _invoke_rmdir(["memory:/docs/empty"], sources={"memory": source})
+    result = _invoke("rmdir", ["memory:/docs/empty"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.exception is renderer_error
@@ -581,7 +588,8 @@ def test_rmdir_stops_acquisition_after_a_source_factory_failure() -> None:
     def broken_source() -> NoReturn:
         raise factory_error
 
-    result = _invoke_rmdir(
+    result = _invoke(
+        "rmdir",
         ["first:/one", "broken:/two", "later:/three"],
         sources={
             "first": first,
@@ -607,7 +615,8 @@ def test_rmdir_reports_source_exit_failures_in_reverse_order() -> None:
         events, info_result={"type": "directory"}, exit_error=RuntimeError("beta exit")
     )
 
-    result = _invoke_rmdir(
+    result = _invoke(
+        "rmdir",
         ["alpha:/one", "beta:/two"],
         sources={"alpha": alpha, "beta": beta},
     )
@@ -626,7 +635,7 @@ def test_rmdir_accepts_hidden_directory_paths_that_are_not_final_dot_components(
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events, info_result={"type": "directory"})
 
-    result = _invoke_rmdir(["memory:/.hidden"], sources={"memory": source})
+    result = _invoke("rmdir", ["memory:/.hidden"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == ""

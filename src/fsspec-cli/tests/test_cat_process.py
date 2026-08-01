@@ -8,8 +8,13 @@ from pathlib import Path
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_TIMEOUT = 5
+from ._process_support import (
+    _REPO_ROOT,
+    _TIMEOUT,
+    _environment,
+    _run_redirected,
+)
+
 _SIGPIPE_EXIT = 141  # 128 + SIGPIPE (13): sole broken pipe on stdout.
 _NATIVE_NEWLINE = os.linesep.encode()
 _OUTPUT_ERROR = (
@@ -22,55 +27,18 @@ def _command(mode: str, *operands: str) -> list[str]:
     return [sys.executable, str(_CHILD_PATH), mode, "cat", *operands]
 
 
-def _environment(
-    *,
-    tracking_path: Path | None = None,
-    tmpdir: Path | None = None,
-) -> dict[str, str]:
-    environment = os.environ.copy()
-    environment.update(
-        {
-            "LANG": "C",
-            "LC_ALL": "C",
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "PYTHONUNBUFFERED": "1",
-        }
-    )
-    if tracking_path is not None:
-        environment["FSSPEC_CLI_CAT_PROCESS_TRACKING"] = str(tracking_path)
-    if tmpdir is not None:
-        environment["TMPDIR"] = str(tmpdir)
-        environment["TEMP"] = str(tmpdir)
-        environment["TMP"] = str(tmpdir)
-    return environment
-
-
-def _run_redirected(
+def _run(
     mode: str,
     *operands: str,
     stdin: bytes | None = None,
     tracking_path: Path | None = None,
     tmpdir: Path | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
-    environment = _environment(tracking_path=tracking_path, tmpdir=tmpdir)
-    if stdin is None:
-        return subprocess.run(  # noqa: S603 - fixed interpreter and child source.
-            _command(mode, *operands),
-            cwd=_REPO_ROOT,
-            env=environment,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            timeout=_TIMEOUT,
-            check=False,
-        )
-    return subprocess.run(  # noqa: S603 - fixed interpreter and child source.
+    return _run_redirected(
         _command(mode, *operands),
-        cwd=_REPO_ROOT,
-        env=environment,
-        input=stdin,
-        capture_output=True,
-        timeout=_TIMEOUT,
-        check=False,
+        stdin=stdin,
+        tracking_path=tracking_path,
+        tmpdir=tmpdir,
     )
 
 
@@ -100,7 +68,7 @@ def _run_broken_stdout_pipe(
 
 
 def test_public_seam_cat_emits_all_byte_values() -> None:
-    result = _run_redirected("bytes", "memory:/bytes")
+    result = _run("bytes", "memory:/bytes")
 
     assert result.returncode == 0
     assert result.stdout == bytes(range(256))
@@ -108,7 +76,7 @@ def test_public_seam_cat_emits_all_byte_values() -> None:
 
 
 def test_public_seam_cat_emits_empty_content() -> None:
-    result = _run_redirected("empty", "memory:/empty")
+    result = _run("empty", "memory:/empty")
 
     assert result.returncode == 0
     assert result.stdout == b""
@@ -214,7 +182,7 @@ def test_public_seam_cat_prefix_stdout_failure_during_stdin_at_each_position(
         with tempfile.NamedTemporaryFile(delete=False) as tracking:
             tracking_path = Path(tracking.name)
         try:
-            result = _run_redirected(
+            result = _run(
                 mode,
                 *operands,
                 stdin=stdin,
@@ -246,7 +214,7 @@ def test_public_seam_cat_reports_mapped_stdout_failures(
     operands: tuple[str, ...],
 ) -> None:
     expected_stdout = b"" if mode == "fail" else b"abc"
-    result = _run_redirected(mode, *operands)
+    result = _run(mode, *operands)
 
     assert result.returncode == 1
     assert result.stdout == expected_stdout
@@ -254,7 +222,7 @@ def test_public_seam_cat_reports_mapped_stdout_failures(
 
 
 def test_cat_output_failure_keeps_already_known_backend_diagnostics() -> None:
-    result = _run_redirected("runtime-and-fail", "memory:/missing", "memory:/docs")
+    result = _run("runtime-and-fail", "memory:/missing", "memory:/docs")
 
     assert result.returncode == 1
     assert result.stdout == b""
@@ -265,7 +233,7 @@ def test_cat_output_failure_keeps_already_known_backend_diagnostics() -> None:
 
 def test_public_seam_cat_operand_free_reads_binary_stdin_pipe() -> None:
     payload = b"\xff\xfe\0pipe-stdin"
-    result = _run_redirected("stdin", stdin=payload)
+    result = _run("stdin", stdin=payload)
 
     assert result.returncode == 0
     assert result.stdout == payload
@@ -273,7 +241,7 @@ def test_public_seam_cat_operand_free_reads_binary_stdin_pipe() -> None:
 
 
 def test_public_seam_cat_preserves_file_stdin_file_order_over_pipe() -> None:
-    result = _run_redirected(
+    result = _run(
         "mixed",
         "memory:/left",
         "-",
@@ -288,7 +256,7 @@ def test_public_seam_cat_preserves_file_stdin_file_order_over_pipe() -> None:
 
 def test_public_seam_cat_repeated_dash_second_sees_eof_on_pipe() -> None:
     payload = b"once-only"
-    result = _run_redirected("repeat-dash", "-", "-", stdin=payload)
+    result = _run("repeat-dash", "-", "-", stdin=payload)
 
     assert result.returncode == 0
     assert result.stdout == payload

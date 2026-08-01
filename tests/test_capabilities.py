@@ -4,6 +4,7 @@ import httpx
 import pytest
 import respx
 from conftest import BASE_URL, make_fs
+from conftest import CAPABILITIES as FULL_CAPABILITIES
 
 from vosfs import capabilities
 from vosfs.capabilities import (
@@ -11,36 +12,6 @@ from vosfs.capabilities import (
     TOKEN_METHOD,
     parse_bindings,
 )
-
-FULL_CAPABILITIES = f"""<?xml version="1.0" encoding="UTF-8"?>
-<vosi:capabilities xmlns:vosi="http://www.ivoa.net/xml/VOSICapabilities/v1.0"
-                   xmlns:vs="http://www.ivoa.net/xml/VODataService/v1.1"
-                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <capability standardID="ivo://ivoa.net/std/VOSpace/v2.0#nodes">
-    <interface xsi:type="vs:ParamHTTP" role="std">
-      <accessURL use="base">{BASE_URL}/nodes</accessURL>
-    </interface>
-    <interface xsi:type="vs:ParamHTTP" role="std">
-      <accessURL use="base">{BASE_URL}/nodes</accessURL>
-      <securityMethod standardID="ivo://ivoa.net/sso#token"/>
-    </interface>
-    <interface xsi:type="vs:ParamHTTP" role="std">
-      <accessURL use="base">{BASE_URL}/nodes</accessURL>
-      <securityMethod standardID="ivo://ivoa.net/sso#tls-with-certificate"/>
-    </interface>
-  </capability>
-  <capability standardID="ivo://ivoa.net/std/VOSpace#sync-2.1">
-    <interface xsi:type="vs:ParamHTTP" role="std">
-      <accessURL use="full">{BASE_URL}/synctrans</accessURL>
-    </interface>
-    <interface xsi:type="vs:ParamHTTP" role="std">
-      <accessURL use="full">{BASE_URL}/synctrans</accessURL>
-      <securityMethod standardID="ivo://ivoa.net/sso#token"/>
-      <securityMethod standardID="ivo://ivoa.net/sso#tls-with-certificate"/>
-    </interface>
-  </capability>
-</vosi:capabilities>
-""".encode()
 
 
 def _caps(security_method: str) -> capabilities.ServiceBindings:

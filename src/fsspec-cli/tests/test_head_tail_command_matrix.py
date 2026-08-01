@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, Literal, NoReturn, TypeVar
 
 import httpx
-import pytest
 from fsspec.asyn import AsyncFileSystem
 from fsspec.implementations.asyn_wrapper import AsyncFileSystemWrapper
 from fsspec.implementations.local import LocalFileSystem
@@ -17,7 +16,15 @@ from typer.testing import CliRunner
 
 from vosfs import VOSpaceFileSystem
 
-from ._matrix_support import _block_network
+from ._matrix_support import (
+    _memory_factory,
+)
+from ._vosfs_matrix_support import (
+    _BASE_URL,
+    _SYNC_CAPABILITIES,
+    _vos_data,
+    _vos_document,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -137,11 +144,6 @@ def _exercise_profiles(
     assert source.exit_calls == [(None, None, None), (None, None, None)]
 
 
-@pytest.fixture(autouse=True)
-def _prohibit_unplanned_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    _block_network(monkeypatch)
-
-
 def test_adapted_local_head_and_tail_profiles_use_native_storage(
     tmp_path: Path,
 ) -> None:
@@ -161,21 +163,11 @@ def test_adapted_local_head_and_tail_profiles_use_native_storage(
 
 
 def test_adapted_memory_head_and_tail_profiles_use_isolated_state(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch,
 ) -> None:
-    monkeypatch.setattr(MemoryFileSystem, "store", {})
-    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
-    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
-
-    def make_filesystem() -> AsyncFileSystemWrapper:
-        MemoryFileSystem.store.clear()
-        MemoryFileSystem.pseudo_dirs[:] = [""]
-        MemoryFileSystem.clear_instance_cache()
-        filesystem = MemoryFileSystem()
-        filesystem.pipe_file("/blob.bin", _PAYLOAD)
-        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
-
-    source = _ProfileSource(make_filesystem)
+    source = _ProfileSource(
+        _memory_factory(monkeypatch, {"/blob.bin": _PAYLOAD}, directories=())
+    )
 
     _exercise_profiles("memory", source, "/blob.bin")
 
@@ -183,42 +175,8 @@ def test_adapted_memory_head_and_tail_profiles_use_isolated_state(
     assert all(isinstance(fs.sync_fs, MemoryFileSystem) for fs in source.filesystems)
 
 
-_BASE_URL = "https://example.test/arc"
-_NODES_URL = f"{_BASE_URL}/nodes"
-_SYNC_URL = f"{_BASE_URL}/synctrans"
-_AUTHORITY = "example.test!vault"
-_CAPABILITIES = f"""<?xml version="1.0" encoding="UTF-8"?>
-<vosi:capabilities xmlns:vosi="http://www.ivoa.net/xml/VOSICapabilities/v1.0"
-                   xmlns:vs="http://www.ivoa.net/xml/VODataService/v1.1"
-                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <capability standardID="ivo://ivoa.net/std/VOSpace/v2.0#nodes">
-    <interface xsi:type="vs:ParamHTTP" role="std">
-      <accessURL use="base">{_NODES_URL}</accessURL>
-    </interface>
-  </capability>
-  <capability standardID="ivo://ivoa.net/std/VOSpace#sync-2.1">
-    <interface xsi:type="vs:ParamHTTP" role="std">
-      <accessURL use="full">{_SYNC_URL}</accessURL>
-    </interface>
-  </capability>
-</vosi:capabilities>
-""".encode()
-_NODE = f"""<vos:node
-    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/blob.bin">
-  <vos:properties>
-    <vos:property uri="ivo://ivoa.net/vospace/core#length">{len(_PAYLOAD)}</vos:property>
-  </vos:properties>
-</vos:node>
-""".encode()
-_ROOT = f"""<vos:node
-    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}">
-  <vos:properties/><vos:nodes/>
-</vos:node>
-""".encode()
+_NODE = _vos_data("/blob.bin", length=len(_PAYLOAD))
+_ROOT = _vos_document("ContainerNode", "", "<vos:properties/><vos:nodes/>")
 
 
 def _transfer_details(endpoint: str) -> bytes:
@@ -243,7 +201,7 @@ class _StrictReadTransport(httpx.MockTransport):
         call = (request.method, request.url.path)
         self.requests.append(call)
         if call == ("GET", "/arc/capabilities"):
-            return httpx.Response(200, content=_CAPABILITIES)
+            return httpx.Response(200, content=_SYNC_CAPABILITIES)
         if call == ("GET", "/arc/nodes"):
             return httpx.Response(200, content=_ROOT)
         if call == ("GET", "/arc/nodes/blob.bin"):

@@ -10,6 +10,7 @@ network.
 from __future__ import annotations
 
 import re
+from importlib.metadata import version
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, unquote, urlsplit
 
@@ -26,6 +27,28 @@ BASE_URL = "https://staging.canfar.net/arc"
 NODES_URL = f"{BASE_URL}/nodes"
 SYNC_URL = f"{BASE_URL}/synctrans"
 AUTHORITY = "example.test!vault"
+
+# Derived from the installed package so skip reasons never drift from the
+# shipped version. The unsupported capabilities they describe are fixed by the
+# capability contract; the version label simply tracks the release under test.
+_VERSION = f"vosfs v{version('vosfs')}"
+
+_QUESTION_MARK = (
+    f"unsupported in {_VERSION} (TRD sections 4 and 11): the path grammar "
+    "reserves '?' as a URL query delimiter, so question-mark glob paths cannot "
+    "be expressed"
+)
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Skip abstract-suite glob edge cases the path grammar cannot express."""
+    for item in items:
+        if "_glob_edge_cases" not in item.name:
+            continue
+        callspec = getattr(item, "callspec", None)
+        if callspec is not None and "?" in callspec.params.get("path", ""):
+            item.add_marker(pytest.mark.skip(reason=_QUESTION_MARK))
+
 
 CAPABILITIES = f"""<?xml version="1.0" encoding="UTF-8"?>
 <vosi:capabilities xmlns:vosi="http://www.ivoa.net/xml/VOSICapabilities/v1.0"
@@ -58,12 +81,73 @@ CAPABILITIES = f"""<?xml version="1.0" encoding="UTF-8"?>
 """.encode()
 
 
-ROOT_CONTAINER = (
-    f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
-    f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-    f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}">'
-    "<vos:properties/><vos:nodes/></vos:node>"
-).encode()
+_XMLNS = (
+    'xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
+    'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+)
+
+
+def data_child(uri: str, length: int | None = None) -> str:
+    """Return a DataNode child element for embedding in a container listing."""
+    properties = (
+        "<vos:properties/>"
+        if length is None
+        else (
+            '<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
+            f"{length}</vos:property></vos:properties>"
+        )
+    )
+    return f'<vos:node xsi:type="vos:DataNode" uri="{uri}">{properties}</vos:node>'
+
+
+def container_child(uri: str) -> str:
+    """Return a ContainerNode child element for embedding in a listing."""
+    return (
+        f'<vos:node xsi:type="vos:ContainerNode" uri="{uri}">'
+        "<vos:properties/></vos:node>"
+    )
+
+
+def data_xml(uri: str, length: int | None = None) -> bytes:
+    """Return a standalone DataNode document with an optional length property."""
+    child = data_child(uri, length)
+    return child.replace("<vos:node ", f"<vos:node {_XMLNS} ", 1).encode()
+
+
+def container_xml(uri: str, children: str = "") -> bytes:
+    """Return a ContainerNode listing document with the given child elements."""
+    return (
+        f'<vos:node {_XMLNS} xsi:type="vos:ContainerNode" uri="{uri}">'
+        f"<vos:properties/><vos:nodes>{children}</vos:nodes></vos:node>"
+    ).encode()
+
+
+ROOT_CONTAINER = container_xml(f"vos://{AUTHORITY}")
+
+
+def call_urls(router: respx.Router, method: str, prefix: str) -> list[str]:
+    """Return the recorded request URLs matching one method and URL prefix."""
+    return [
+        str(call.request.url)
+        for call in router.calls
+        if call.request.method == method and str(call.request.url).startswith(prefix)
+    ]
+
+
+async def stream_body(data: bytes) -> AsyncIterator[bytes]:
+    """Yield ``data`` once so a mock response is genuinely streamable."""
+    yield data
+
+
+def make_sim_fs(
+    router: respx.Router,
+    sim: Any,
+    *,
+    asynchronous: bool = True,
+) -> VOSpaceFileSystem:
+    """Install ``sim`` on ``router`` and build a filesystem over it."""
+    sim.install(router)
+    return make_fs(router, asynchronous=asynchronous)
 
 
 def mock_capabilities(router: respx.Router) -> None:
@@ -102,14 +186,7 @@ def data_node_response(
         return httpx.Response(200, content=ROOT_CONTAINER)
     if path not in files:
         return httpx.Response(404)
-    length_uri = "ivo://ivoa.net/vospace/core#length"
-    document = (
-        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
-        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-        f'xsi:type="vos:DataNode" uri="vos://{AUTHORITY}{path}">'
-        f'<vos:properties><vos:property uri="{length_uri}">'
-        f"{len(files[path])}</vos:property></vos:properties></vos:node>"
-    ).encode()
+    document = data_xml(f"vos://{AUTHORITY}{path}", len(files[path]))
     return httpx.Response(200, content=document)
 
 
@@ -149,9 +226,6 @@ def mock_transfers(
         side_effect=details_get
     )
 
-    async def _stream(data: bytes) -> AsyncIterator[bytes]:
-        yield data
-
     def byte_op(request: httpx.Request) -> httpx.Response:
         path = request.url.params["p"]
         if request.method in ("PUT", "POST"):
@@ -167,7 +241,7 @@ def mock_transfers(
             if ranged is not None:
                 return ranged
         # An async-generator body makes the mock response genuinely streamable.
-        return httpx.Response(200, content=_stream(content))
+        return httpx.Response(200, content=stream_body(content))
 
     router.route(url__regex=rf"^{re.escape(BASE_URL)}/files").mock(side_effect=byte_op)
 
@@ -193,13 +267,10 @@ def _ranged_response(request: httpx.Request, content: bytes) -> httpx.Response |
     if start < 0 or end < start or start >= size:
         return httpx.Response(416)
 
-    async def _stream(data: bytes) -> AsyncIterator[bytes]:
-        yield data
-
     body = content[start : end + 1]
     return httpx.Response(
         206,
-        content=_stream(body),
+        content=stream_body(body),
         headers={
             "Content-Range": f"bytes {start}-{end}/{size}",
             "Content-Length": str(len(body)),

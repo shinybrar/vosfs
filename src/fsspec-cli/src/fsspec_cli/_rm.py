@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ._command import (
     _binary_stdout,
     _CommandFailureError,
+    _first_backend_error,
     _MappedOperand,
     _render_output_failure,
     _run_mapped_command,
@@ -24,6 +24,8 @@ from ._rmdir import _render_failure as _render_rmdir_failure
 from ._unlink import _confirmed_rm_file, _render_failure, _UnlinkFailure
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from fsspec.asyn import AsyncFileSystem
 
     from ._app import AsyncFilesystemSource
@@ -75,18 +77,10 @@ async def _remove_directory_entry(
     operand: _MappedOperand,
     filesystem: AsyncFileSystem,
 ) -> _UnlinkFailure | _RmdirFailure | None:
-    try:
-        info = await filesystem._info(operand.path)
-    except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
-        return _UnlinkFailure(operand, backend_error=error)
-
-    if not isinstance(info, Mapping) or not isinstance(info.get("type"), str):
-        return _UnlinkFailure(operand, incompatible="result")
-    if info["type"] == "file":
-        return await _confirmed_rm_file(operand, filesystem)
-    if info["type"] == "directory":
+    failure = await _confirmed_rm_file(operand, filesystem)
+    if isinstance(failure, _UnlinkFailure) and failure.incompatible == "directory":
         return await _remove_empty_directory(operand, filesystem)
-    return _UnlinkFailure(operand, incompatible="result")
+    return failure
 
 
 async def _trace_operands(
@@ -142,14 +136,7 @@ async def _run_rm(
     async def operation(filesystems: Mapping[str, AsyncFileSystem]) -> None:
         failures: list[_UnlinkFailure | _RmdirFailure | _RecursiveRmFailure] = []
         output_error = await _trace_operands(command, request, filesystems, failures)
-        backend_error = next(
-            (
-                failure.backend_error
-                for failure in failures
-                if failure.backend_error is not None
-            ),
-            None,
-        )
+        backend_error = _first_backend_error(failures)
         if not request.verbose:
             for failure in failures:
                 _render_rm_failure_or_raise(command, failure)

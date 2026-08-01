@@ -10,9 +10,7 @@ from __future__ import annotations
 
 from urllib.parse import quote, unquote
 
-PROTOCOL = "vos"
-
-_SCHEME_PREFIX = f"{PROTOCOL}:"
+_SCHEME_PREFIX = "vos:"
 # Percent-encodings that would smuggle a path separator into a single segment.
 _ENCODED_SEPARATORS = ("%2f", "%5c")
 

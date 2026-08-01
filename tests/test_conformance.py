@@ -8,15 +8,9 @@ import fsspec
 import httpx
 import pytest
 import respx
-from conftest import BASE_URL, SYNC_URL, make_fs, target_path
+from conftest import BASE_URL, SYNC_URL, make_fs, make_sim_fs, target_path
 from fsspec.callbacks import Callback
 from vospace_sim import VOSpaceSim
-
-
-def _sync_fs(router: respx.Router, sim: VOSpaceSim) -> object:
-    sim.install(router)
-    return make_fs(router)
-
 
 # --- client-derived traversal ---------------------------------------------------
 
@@ -29,7 +23,7 @@ def test_walk_find_glob_du(router: respx.Router) -> None:
         .add_container("/d/sub")
         .add_file("/d/sub/b.txt", b"bb")
     )
-    fs = _sync_fs(router, sim)
+    fs = make_sim_fs(router, sim, asynchronous=False)
     assert sorted(fs.find("/d")) == ["/d/a.txt", "/d/sub/b.txt"]
     assert fs.glob("/d/*.txt") == ["/d/a.txt"]
     assert fs.du("/d") == 5
@@ -42,7 +36,7 @@ def test_walk_find_glob_du(router: respx.Router) -> None:
 
 def test_ukey_and_checksum(router: respx.Router) -> None:
     sim = VOSpaceSim().add_file("/f", b"data")
-    fs = _sync_fs(router, sim)
+    fs = make_sim_fs(router, sim, asynchronous=False)
     assert isinstance(fs.ukey("/f"), str)
     assert isinstance(fs.checksum("/f"), int)
     fs.close()
@@ -50,7 +44,7 @@ def test_ukey_and_checksum(router: respx.Router) -> None:
 
 def test_read_block(router: respx.Router) -> None:
     sim = VOSpaceSim().add_file("/f", b"0123456789")
-    fs = _sync_fs(router, sim)
+    fs = make_sim_fs(router, sim, asynchronous=False)
     assert fs.read_block("/f", 2, 3) == b"234"
     fs.close()
 
@@ -67,7 +61,7 @@ def test_recursive_get_materializes_tree_without_container_byte_negotiation(
         .add_file("/tree/root.bin", b"root-bytes")
         .add_file("/tree/nested/leaf.bin", b"leaf-bytes")
     )
-    fs = _sync_fs(router, sim)
+    fs = make_sim_fs(router, sim, asynchronous=False)
     target = tmp_path / "download"
     try:
         fs.get("/tree", str(target), recursive=True)
@@ -100,7 +94,7 @@ def test_get_paired_list_materializes_containers(
     tmp_path: Path,
 ) -> None:
     sim = VOSpaceSim().add_container("/empty").add_file("/file.bin", b"paired")
-    fs = _sync_fs(router, sim)
+    fs = make_sim_fs(router, sim, asynchronous=False)
     local_empty = tmp_path / "empty"
     local_file = tmp_path / "file.bin"
     try:
@@ -126,7 +120,7 @@ async def test_async_facade_hooks(router: respx.Router) -> None:
 
 def test_sync_facade_mirrors(router: respx.Router) -> None:
     sim = VOSpaceSim().add_file("/f", b"sync")
-    fs = _sync_fs(router, sim)
+    fs = make_sim_fs(router, sim, asynchronous=False)
     assert fs.info("/f")["type"] == "file"
     assert fs.cat_file("/f") == b"sync"
     fs.close()

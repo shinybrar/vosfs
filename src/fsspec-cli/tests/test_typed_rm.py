@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-from typing import NoReturn
-
 import pytest
 from fsspec_cli import App
 from typer.testing import CliRunner
 
 from ._ansi import strip_ansi
-
-
-def _source_must_not_run() -> NoReturn:
-    raise AssertionError
+from ._support import _source_must_not_run
 
 
 def _invoke(

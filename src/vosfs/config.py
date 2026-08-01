@@ -60,11 +60,6 @@ class Credential:
     token_file: str | None = None
     certfile: str | None = None
 
-    @property
-    def is_anonymous(self) -> bool:
-        """Whether no credential is configured."""
-        return self.method == "anonymous"
-
     def read_bearer(self) -> str:
         """Return the current bearer token, rereading its source each call.
 
@@ -92,6 +87,23 @@ class Credential:
         raise PermissionError(msg)
 
 
+def _at_most_one(pairs: tuple[tuple[str, str | None], ...], error: str) -> list[str]:
+    """Return the names of configured sources, refusing more than one.
+
+    Args:
+        pairs: Candidate ``(name, value)`` sources; a truthy value counts.
+        error: The message prefix for the mutual-exclusion failure.
+
+    Raises:
+        ValueError: If more than one source carries a truthy value.
+    """
+    named = [name for name, value in pairs if value]
+    if len(named) > 1:
+        msg = f"{error}; got {', '.join(named)}"
+        raise ValueError(msg)
+    return named
+
+
 def resolve_credential(
     *,
     token: str | None,
@@ -108,19 +120,10 @@ def resolve_credential(
     Raises:
         ValueError: If more than one credential source is configured.
     """
-    explicit = [
-        name
-        for name, value in (
-            ("token", token),
-            ("tokenfile", tokenfile),
-            ("certfile", certfile),
-        )
-        if value
-    ]
-    if len(explicit) > 1:
-        names = ", ".join(explicit)
-        msg = f"token, tokenfile, and certfile are mutually exclusive; got {names}"
-        raise ValueError(msg)
+    explicit = _at_most_one(
+        (("token", token), ("tokenfile", tokenfile), ("certfile", certfile)),
+        "token, tokenfile, and certfile are mutually exclusive",
+    )
     if explicit:
         if token:
             return Credential(method="token", token_literal=token)
@@ -136,19 +139,14 @@ def _resolve_from_environment(environ: Mapping[str, str]) -> Credential:
     env_token = environ.get(ENV_TOKEN, "").strip()
     env_token_file = environ.get(ENV_TOKEN_FILE, "").strip()
     env_cert_file = environ.get(ENV_CERT_FILE, "").strip()
-    configured = [
-        name
-        for name, value in (
+    _at_most_one(
+        (
             (ENV_TOKEN, env_token),
             (ENV_TOKEN_FILE, env_token_file),
             (ENV_CERT_FILE, env_cert_file),
-        )
-        if value
-    ]
-    if len(configured) > 1:
-        names = ", ".join(configured)
-        msg = f"at most one credential environment variable may be set; got {names}"
-        raise ValueError(msg)
+        ),
+        "at most one credential environment variable may be set",
+    )
     if env_token:
         return Credential(method="token", token_env=ENV_TOKEN)
     if env_token_file:

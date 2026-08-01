@@ -9,7 +9,7 @@ import pytest
 import typer
 from fsspec_cli._stat import _format_mtime, _write_line
 
-from ._support import _invoke_stat, _RecordingSource, _source_must_not_run
+from ._support import _invoke, _RecordingSource, _source_must_not_run
 
 
 @pytest.fixture(autouse=True)
@@ -75,7 +75,7 @@ _GOLDEN_B = '-rw-r--r-- 1 424242 424242 2 "Jul 17 22:06:10 2026" /stat-b\n'
 
 
 def test_stat_help_matches_locked_usage_and_draft() -> None:
-    result = _invoke_stat(["--help"])
+    result = _invoke("stat", ["--help"])
 
     assert result.exit_code == 0
     plain_help = result.stdout
@@ -88,7 +88,7 @@ def test_stat_renders_one_local_rich_file_line() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events, info_result=_RICH_FILE)
 
-    result = _invoke_stat(["memory:/stat-file"], sources={"memory": source})
+    result = _invoke("stat", ["memory:/stat-file"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stderr == ""
@@ -102,7 +102,7 @@ def test_stat_renders_one_local_rich_file_line() -> None:
 def test_stat_renders_one_local_rich_directory_line() -> None:
     source = _RecordingSource([], info_result=_RICH_DIR)
 
-    result = _invoke_stat(["memory:/stat-dir"], sources={"memory": source})
+    result = _invoke("stat", ["memory:/stat-dir"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stderr == ""
@@ -119,7 +119,8 @@ def test_stat_renders_multiple_operands_in_argv_order() -> None:
         },
     )
 
-    result = _invoke_stat(
+    result = _invoke(
+        "stat",
         ["memory:/stat-a", "memory:/stat-b"],
         sources={"memory": source},
     )
@@ -144,7 +145,8 @@ def test_stat_continues_after_missing_path() -> None:
         },
     )
 
-    result = _invoke_stat(
+    result = _invoke(
+        "stat",
         ["memory:/stat-a", "memory:/stat-missing", "memory:/stat-b"],
         sources={"memory": source},
     )
@@ -165,7 +167,7 @@ def test_stat_rejects_symlink_as_incompatible() -> None:
         info_result={**_RICH_FILE, "islink": True, "destination": "file.txt"},
     )
 
-    result = _invoke_stat(["memory:/stat-link"], sources={"memory": source})
+    result = _invoke("stat", ["memory:/stat-link"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -183,7 +185,7 @@ def test_stat_rejects_incomplete_memory_shape() -> None:
         },
     )
 
-    result = _invoke_stat(["memory:/file.txt"], sources={"memory": source})
+    result = _invoke("stat", ["memory:/file.txt"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -213,7 +215,7 @@ def test_stat_rejects_incomplete_memory_shape() -> None:
 def test_stat_rejects_malformed_info(info: dict[str, object]) -> None:
     source = _RecordingSource([], info_result=info)
 
-    result = _invoke_stat(["memory:/stat-file"], sources={"memory": source})
+    result = _invoke("stat", ["memory:/stat-file"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -233,7 +235,7 @@ def test_stat_falls_back_to_decimal_when_owner_lookup_overflows(
     monkeypatch.setattr("fsspec_cli._stat.grp.getgrgid", overflow_group)
     source = _RecordingSource([], info_result=_RICH_FILE)
 
-    result = _invoke_stat(["memory:/stat-file"], sources={"memory": source})
+    result = _invoke("stat", ["memory:/stat-file"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stderr == ""
@@ -250,7 +252,7 @@ def test_stat_ignores_extra_info_keys() -> None:
     }
     source = _RecordingSource([], info_result=info)
 
-    result = _invoke_stat(["memory:/stat-file"], sources={"memory": source})
+    result = _invoke("stat", ["memory:/stat-file"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stderr == ""
@@ -263,7 +265,7 @@ def test_stat_escapes_backend_message_control_characters() -> None:
         info_error=OSError("bad\\\0\r\npath"),
     )
 
-    result = _invoke_stat(["memory:/stat-x"], sources={"memory": source})
+    result = _invoke("stat", ["memory:/stat-x"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -276,7 +278,8 @@ def test_stat_acquires_distinct_sources_before_reuse() -> None:
     events: list[tuple[object, ...]] = []
     shared = _RecordingSource(events, info_result=_RICH_FILE)
 
-    result = _invoke_stat(
+    result = _invoke(
+        "stat",
         ["alpha:/one", "beta:/two", "alpha:/three"],
         sources={
             "beta": shared,
@@ -316,7 +319,7 @@ def test_stat_acquires_distinct_sources_before_reuse() -> None:
     ],
 )
 def test_stat_rejects_unsupported_options_source_free(arguments: list[str]) -> None:
-    result = _invoke_stat(arguments)
+    result = _invoke("stat", arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -338,7 +341,7 @@ def test_stat_rejects_operand_shapes_source_free(
     arguments: list[str],
     diagnostic: str,
 ) -> None:
-    result = _invoke_stat(arguments)
+    result = _invoke("stat", arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -346,7 +349,7 @@ def test_stat_rejects_operand_shapes_source_free(
 
 
 def test_stat_leaves_missing_operand_to_typer() -> None:
-    result = _invoke_stat([])
+    result = _invoke("stat", [])
 
     assert (result.exit_code, result.stdout) == (2, "")
     diagnostic = result.stderr
@@ -357,7 +360,7 @@ def test_stat_leaves_missing_operand_to_typer() -> None:
 def test_stat_accepts_option_delimiter() -> None:
     source = _RecordingSource([], info_result=_RICH_FILE)
 
-    result = _invoke_stat(["--", "memory:/stat-file"], sources={"memory": source})
+    result = _invoke("stat", ["--", "memory:/stat-file"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == _GOLDEN_FILE
@@ -391,7 +394,8 @@ def test_stat_stops_after_stdout_short_write(
 
     monkeypatch.setattr("fsspec_cli._stat._binary_stdout", _Stdout)
 
-    result = _invoke_stat(
+    result = _invoke(
+        "stat",
         ["memory:/stat-a", "memory:/stat-b"],
         sources={"memory": source},
     )
@@ -444,7 +448,7 @@ def test_stat_keeps_broken_pipe_silent_but_reports_exit_failure(
         raise broken_pipe
 
     monkeypatch.setattr("fsspec_cli._stat._write_line", break_stdout)
-    result = _invoke_stat(["memory:/stat-file"], sources={"memory": source})
+    result = _invoke("stat", ["memory:/stat-file"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -460,7 +464,7 @@ def test_stat_preserves_cancellation() -> None:
     source = _RecordingSource([], info_error=control)
 
     with pytest.raises(asyncio.CancelledError) as caught:
-        _invoke_stat(["memory:/stat-file"], sources={"memory": source})
+        _invoke("stat", ["memory:/stat-file"], sources={"memory": source})
 
     assert type(caught.value) is asyncio.CancelledError
     exception_type, exception, traceback = source.exit_calls[0]
@@ -488,7 +492,7 @@ def test_stat_preserves_backend_error_when_diagnostic_write_fails(
 
     monkeypatch.setattr(typer, "echo", fail_diagnostic)
 
-    result = _invoke_stat(["memory:/file"], sources={"memory": source})
+    result = _invoke("stat", ["memory:/file"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.exception is renderer_error

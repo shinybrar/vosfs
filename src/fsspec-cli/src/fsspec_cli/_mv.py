@@ -15,11 +15,9 @@ from ._command import (
 from ._cp import (
     _CpFailure,
     _CpRequest,
-    _freeze_transfer_proof,
+    _prepare_transfer,
     _render_failure,
     _require_directory,
-    _require_source_file_size,
-    _resolve_destination,
     _verify_transfer,
 )
 
@@ -53,27 +51,13 @@ def _plan_mv(
     )
 
 
-async def _confirmed_mv_file(  # noqa: PLR0911
+async def _confirmed_mv_file(
     request: _CpRequest, filesystem: AsyncFileSystem
 ) -> _CpFailure | None:
-    try:
-        source_info = await filesystem._info(request.source.path)
-    except Exception as error:  # noqa: BLE001
-        return _CpFailure(request.source, backend_error=error)
-    expected_size, source_failure = _require_source_file_size(
-        request.source,
-        source_info,
-    )
-    if source_failure is not None:
-        return source_failure
-    if expected_size is None:
-        return _CpFailure(request.source, incompatible="result")
-    proof = _freeze_transfer_proof(source_info, expected_size)
-    resolved, failure = await _resolve_destination(
-        request.destination, request.source.path, filesystem
-    )
-    if failure is not None:
-        return failure
+    prepared = await _prepare_transfer(request, filesystem, filesystem)
+    if isinstance(prepared, _CpFailure):
+        return prepared
+    proof, resolved = prepared
     if request.source.path == resolved:
         return None
     declared_operation = type(filesystem).__dict__.get("_mv")

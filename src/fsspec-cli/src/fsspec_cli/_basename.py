@@ -1,4 +1,4 @@
-"""Lexical execution for typed ``basename``."""
+"""Lexical execution for typed ``basename`` and ``dirname``."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import typer
 
 from ._command import _usage_error
 from ._diagnostics import _render_diagnostic_value
-from ._path import _lexical_basename
+from ._path import _lexical_basename, _lexical_parent
 
 
 def _validate_operand(command: str, operand: str) -> None:
@@ -31,3 +31,8 @@ def _run_basename(command: str, operand: str, suffix: str | None) -> None:
     if suffix is not None:
         result = _apply_optional_suffix(result, suffix)
     typer.echo(result, nl=True, color=True)
+
+
+def _run_dirname(command: str, operand: str) -> None:
+    _validate_operand(command, operand)
+    typer.echo(_lexical_parent(operand), nl=True, color=True)

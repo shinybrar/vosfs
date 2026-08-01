@@ -3,10 +3,10 @@
 from typing import NoReturn
 
 import pytest
-from fsspec_cli import App, AsyncFilesystemSource
-from typer.testing import CliRunner, Result
+from fsspec_cli import AsyncFilesystemSource
+from typer.testing import Result
 
-from ._matrix_support import _block_network
+from ._support import _invoke
 
 _CLI_RUNNER_ENV = {
     "NO_COLOR": "1",
@@ -14,27 +14,12 @@ _CLI_RUNNER_ENV = {
 }
 
 
-@pytest.fixture(autouse=True)
-def _prohibit_unplanned_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    _block_network(monkeypatch)
-
-
-def _source_must_not_run() -> NoReturn:
-    raise AssertionError
-
-
 def _invoke_basename(
     arguments: list[str],
     *,
     sources: dict[str, AsyncFilesystemSource] | None = None,
 ) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(
-        App(sources).typer_app,
-        ["basename", *arguments],
-        env=_CLI_RUNNER_ENV,
-    )
+    return _invoke("basename", arguments, sources=sources, env=_CLI_RUNNER_ENV)
 
 
 @pytest.mark.parametrize(

@@ -6,7 +6,7 @@ import asyncio
 import inspect
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeAlias, TypeGuard
+from typing import TYPE_CHECKING, TypeGuard
 
 from ._command import (
     _collate,
@@ -36,19 +36,6 @@ class _WalkRow:
     root: str
     directories: tuple[str, ...]
     files: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class _MaterializedRows:
-    values: list[object]
-
-
-@dataclass(frozen=True)
-class _MaterializationError:
-    error: BaseException
-
-
-_MaterializationOutcome: TypeAlias = _MaterializedRows | _MaterializationError
 
 
 def _valid_root(value: object) -> TypeGuard[str]:
@@ -198,21 +185,8 @@ def _render_tree(request: _TreeRequest, rows: Mapping[str, _WalkRow]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _materialize_sync(iterator: Iterator[object]) -> _MaterializationOutcome:
-    try:
-        values = list(iterator)
-    except BaseException as error:  # noqa: BLE001 - cross task boundary as data.
-        return _MaterializationError(error)
-    return _MaterializedRows(values)
-
-
-async def _materialize_iterator(iterator: Iterator[object]) -> list[object]:
-    outcome = await _drain_current_operation(
-        asyncio.to_thread(_materialize_sync, iterator)
-    )
-    if isinstance(outcome, _MaterializationError):
-        raise outcome.error
-    return outcome.values
+def _materialize_rows(iterator: Iterator[object]) -> list[object]:
+    return list(iterator)
 
 
 async def _consume_walk(result: object) -> list[object] | None:
@@ -228,7 +202,9 @@ async def _consume_walk(result: object) -> list[object] | None:
     resolved = await _drain_current_operation(result)
     if not isinstance(resolved, Iterator):
         return None
-    return await _materialize_iterator(resolved)
+    return await _drain_current_operation(
+        asyncio.to_thread(_materialize_rows, resolved)
+    )
 
 
 async def _next_async(iterator: AsyncIterator[object]) -> tuple[bool, object]:

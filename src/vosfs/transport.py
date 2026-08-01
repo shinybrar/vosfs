@@ -28,9 +28,6 @@ DEFAULT_TIMEOUTS: dict[str, float] = {
     "pool": 10.0,
 }
 
-_PLAIN = "plain"
-_CERT = "cert"
-
 
 def build_timeout(overrides: Mapping[str, float] | None) -> httpx.Timeout:
     """Return an ``httpx.Timeout`` from the defaults plus any overrides."""
@@ -54,15 +51,14 @@ HTTP_PRECONDITION_FAILED = 412
 IDENTITY_ENCODING = {"Accept-Encoding": "identity"}
 
 
-def origin(url: str) -> tuple[str, str | None, int | None]:
-    """Return the (scheme, host, port) origin of a URL with default ports."""
-    parts = urlsplit(url)
-    port = parts.port or (443 if parts.scheme == "https" else 80)
-    return (parts.scheme, parts.hostname, port)
-
-
 def same_origin(a: str, b: str) -> bool:
     """Whether two URLs share the same scheme, host, and (defaulted) port."""
+
+    def origin(url: str) -> tuple[str, str | None, int]:
+        parts = urlsplit(url)
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        return (parts.scheme, parts.hostname, port)
+
     return origin(a) == origin(b)
 
 
@@ -88,20 +84,14 @@ class ClientPool:
         self._trust_env = trust_env
         self._timeout = timeout
         self._injected = injected_transport
-        self._clients: dict[str, httpx.AsyncClient] = {}
-        self._lock: asyncio.Lock | None = None
+        self._clients: dict[bool, httpx.AsyncClient] = {}
+        self._lock = asyncio.Lock()
         self._closed = False
 
     def _ensure_open(self) -> None:
         if self._closed:
             msg = "I/O operation on closed filesystem"
             raise ValueError(msg)
-
-    def _get_lock(self) -> asyncio.Lock:
-        """Return the pool lock, creating it lazily on first contention."""
-        if self._lock is None:
-            self._lock = asyncio.Lock()
-        return self._lock
 
     async def client(self, *, use_cert: bool = False) -> httpx.AsyncClient:
         """Return the pooled client for the requested TLS configuration.
@@ -114,34 +104,33 @@ class ClientPool:
         if use_cert and self._certfile is None:
             msg = "no certificate is configured for a certificate transfer"
             raise ValueError(msg)
-        key = _CERT if use_cert else _PLAIN
-        if key in self._clients:
-            return self._clients[key]
-        async with self._get_lock():
+        if use_cert in self._clients:
+            return self._clients[use_cert]
+        async with self._lock:
             # Re-check under the lock: a concurrent ``aclose`` may have run
             # between the fast-path check and lock acquisition, so a client must
             # never be built (and leaked) into an already-closed pool.
             self._ensure_open()
-            if key not in self._clients:
-                self._clients[key] = self._build(key)
-            return self._clients[key]
+            if use_cert not in self._clients:
+                self._clients[use_cert] = self._build(use_cert=use_cert)
+            return self._clients[use_cert]
 
-    def _build(self, key: str) -> httpx.AsyncClient:
-        """Construct one client for the given TLS key."""
+    def _build(self, *, use_cert: bool) -> httpx.AsyncClient:
+        """Construct one client for the given TLS configuration."""
         return httpx.AsyncClient(
-            transport=self._transport_for(key),
+            transport=self._transport_for(use_cert=use_cert),
             follow_redirects=False,
             trust_env=self._trust_env,
             timeout=self._timeout,
             auth=None,
         )
 
-    def _transport_for(self, key: str) -> httpx.AsyncBaseTransport:
-        """Return the transport for a TLS key: injected, certificate, or plain."""
+    def _transport_for(self, *, use_cert: bool) -> httpx.AsyncBaseTransport:
+        """Return the configured transport: injected, certificate, or plain."""
         if self._injected is not None:
             return self._injected
         # Client-certificate TLS requires genuine PEM material.
-        if key == _CERT:  # pragma: no cover
+        if use_cert:  # pragma: no cover
             return self._build_cert_transport()
         return httpx.AsyncHTTPTransport(
             verify=True, retries=0, trust_env=self._trust_env
@@ -183,7 +172,7 @@ class ClientPool:
         that guards lazy client creation, so a waiter cannot build and store an
         open client after the pool has been closed.
         """
-        async with self._get_lock():
+        async with self._lock:
             self._closed = True
             clients = list(self._clients.values())
             self._clients.clear()
