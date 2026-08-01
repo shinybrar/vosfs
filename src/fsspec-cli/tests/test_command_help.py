@@ -6,18 +6,14 @@ objects instead of importing Typer's private Click fork.
 
 from __future__ import annotations
 
-from typing import Any, NoReturn
+from typing import Any
 
 import pytest
 import typer.main
 from fsspec_cli import App
 from typer.testing import CliRunner
 
-from ._support import _invoke_ll
-
-
-def _source_must_not_run() -> NoReturn:
-    raise AssertionError
+from ._support import _invoke, _source_must_not_run
 
 
 def _commands(**capabilities: Any) -> dict[str, Any]:
@@ -60,7 +56,7 @@ def test_every_registered_option_has_help_text(capabilities: dict[str, Any]) -> 
 
 
 def test_ll_rejects_the_redundant_long_listing_option() -> None:
-    result = _invoke_ll(["-l", "memory:/docs"])
+    result = _invoke("ll", ["-l", "memory:/docs"])
 
     assert result.exit_code == 2
     assert result.stdout == ""

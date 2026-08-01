@@ -6,7 +6,7 @@ import pytest
 from fsspec_cli._listing import to_listing as normalize_listing
 
 from ._ansi import strip_ansi
-from ._support import _invoke_ll, _invoke_ls, _RecordingSource
+from ._support import _invoke, _RecordingSource
 
 
 @pytest.mark.parametrize(
@@ -49,8 +49,7 @@ def test_long_listing_renders_detail_rows_with_one_directory_call(
         ],
     )
 
-    invoke = _invoke_ls if command == "ls" else _invoke_ll
-    result = invoke(arguments, sources={"memory": source})
+    result = _invoke(command, arguments, sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, stdout, "")
     assert [(event[0], *event[2:-1]) for event in events] == [
@@ -69,7 +68,9 @@ def test_long_listing_file_uses_its_info_result_without_calling_ls() -> None:
         MappingProxyType({"name": "/docs/report.bin", "type": "file", "size": 2048}),
     )
 
-    result = _invoke_ls(["-lh", "memory:/docs/report.bin"], sources={"memory": source})
+    result = _invoke(
+        "ls", ["-lh", "memory:/docs/report.bin"], sources={"memory": source}
+    )
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
@@ -91,7 +92,7 @@ def test_long_listing_preserves_almost_all_selection_and_sorting() -> None:
         ],
     )
 
-    result = _invoke_ls(["-Al", "memory:/docs"], sources={"memory": source})
+    result = _invoke("ls", ["-Al", "memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
@@ -119,7 +120,7 @@ def test_long_listing_does_not_normalize_omitted_hidden_rows(monkeypatch) -> Non
         ],
     )
 
-    result = _invoke_ls(["-l", "memory:/docs"], sources={"memory": source})
+    result = _invoke("ls", ["-l", "memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
@@ -147,7 +148,7 @@ def test_long_listing_selected_normalization_failure_is_atomic(monkeypatch) -> N
         ],
     )
 
-    result = _invoke_ls(["-l", "memory:/docs"], sources={"memory": source})
+    result = _invoke("ls", ["-l", "memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -170,7 +171,8 @@ def test_long_listing_preserves_multi_operand_grouping() -> None:
         },
     )
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["-l", "memory:/z", "memory:/b.txt", "memory:/a"],
         sources={"memory": source},
     )
@@ -198,7 +200,8 @@ def test_long_listing_continues_after_an_incompatible_operand_atomically() -> No
         },
     )
 
-    result = _invoke_ll(
+    result = _invoke(
+        "ll",
         ["memory:/bad", "memory:/good"],
         sources={"memory": source},
     )
@@ -234,7 +237,7 @@ def test_long_listing_rejects_non_concrete_detail_lists(listing: object) -> None
         ls_result=listing,
     )
 
-    result = _invoke_ls(["-l", "memory:/docs"], sources={"memory": source})
+    result = _invoke("ls", ["-l", "memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -244,7 +247,7 @@ def test_long_listing_rejects_non_concrete_detail_lists(listing: object) -> None
 
 
 def test_ll_uses_its_own_typer_command_context() -> None:
-    result = _invoke_ll(["--long", "memory:/docs"])
+    result = _invoke("ll", ["--long", "memory:/docs"])
 
     assert (result.exit_code, result.stdout) == (2, "")
     diagnostic = strip_ansi(result.stderr)

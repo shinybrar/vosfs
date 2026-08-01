@@ -16,7 +16,7 @@ import pytest
 from fsspec_cli import App
 from typer.main import get_command
 
-from ._support import _invoke_info, _RecordingSource
+from ._support import _invoke, _RecordingSource
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -153,7 +153,7 @@ def _frozenset_cycle() -> object:
 
 
 def test_info_help_matches_locked_usage() -> None:
-    result = _invoke_info(["--help"])
+    result = _invoke("info", ["--help"])
 
     assert result.exit_code == 0
     plain_help = result.stdout
@@ -166,7 +166,7 @@ def test_info_renders_every_normalized_field_and_python_extra_value() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events, info_result=_INFO)
 
-    result = _invoke_info(["memory:/docs/report.txt"], sources={"memory": source})
+    result = _invoke("info", ["memory:/docs/report.txt"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, _OUTPUT, "")
     assert [(event[0], event[2]) for event in events if event[0] == "info"] == [
@@ -217,7 +217,8 @@ def test_info_rendering_is_stable_across_python_hash_seeds() -> None:
 def test_info_accepts_the_option_delimiter() -> None:
     source = _RecordingSource([], info_result=_INFO)
 
-    result = _invoke_info(
+    result = _invoke(
+        "info",
         ["--", "memory:/docs/report.txt"],
         sources={"memory": source},
     )
@@ -238,7 +239,7 @@ def test_info_rejects_invalid_argv_before_source_entry(
     arguments: list[str],
     diagnostic: str,
 ) -> None:
-    result = _invoke_info(arguments)
+    result = _invoke("info", arguments)
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         2,
@@ -264,7 +265,7 @@ def test_info_leaves_usage_failures_to_typer(
     arguments: list[str],
     contexts: tuple[str, ...],
 ) -> None:
-    result = _invoke_info(arguments)
+    result = _invoke("info", arguments)
 
     assert (result.exit_code, result.stdout) == (2, "")
     diagnostic = result.stderr
@@ -285,7 +286,7 @@ def test_info_leaves_usage_failures_to_typer(
 def test_info_rejects_malformed_result(result: object) -> None:
     source = _RecordingSource([], info_result=result)
 
-    invocation = _invoke_info(["memory:/x"], sources={"memory": source})
+    invocation = _invoke("info", ["memory:/x"], sources={"memory": source})
 
     assert (invocation.exit_code, invocation.stdout, invocation.stderr) == (
         1,
@@ -299,7 +300,7 @@ def test_info_rejects_a_recursive_extra_value() -> None:
     info["cycle"] = info
     source = _RecordingSource([], info_result=info)
 
-    result = _invoke_info(["memory:/x"], sources={"memory": source})
+    result = _invoke("info", ["memory:/x"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -316,7 +317,7 @@ def test_info_rejects_a_recursive_mapping_key_graph() -> None:
         info_result={"name": "/x", "type": "file", "keyed": {key: "value"}},
     )
 
-    result = _invoke_info(["memory:/x"], sources={"memory": source})
+    result = _invoke("info", ["memory:/x"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -338,7 +339,7 @@ def test_info_rejects_recursive_container_subclasses(
         info_result={"name": "/x", "type": "file", "cycle": cycle()},
     )
 
-    result = _invoke_info(["memory:/x"], sources={"memory": source})
+    result = _invoke("info", ["memory:/x"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -359,7 +360,7 @@ def test_info_accepts_a_shared_acyclic_container_subclass() -> None:
         },
     )
 
-    result = _invoke_info(["memory:/x"], sources={"memory": source})
+    result = _invoke("info", ["memory:/x"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stderr == ""
@@ -378,7 +379,7 @@ def test_info_rejects_distinct_mapping_keys_with_one_presentation() -> None:
         },
     )
 
-    result = _invoke_info(["memory:/x"], sources={"memory": source})
+    result = _invoke("info", ["memory:/x"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -397,7 +398,7 @@ def test_info_uses_the_authoritative_mapping_core_interface() -> None:
         },
     )
 
-    result = _invoke_info(["memory:/x"], sources={"memory": source})
+    result = _invoke("info", ["memory:/x"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stderr == ""
@@ -416,7 +417,7 @@ def test_info_freezes_each_validated_mapping_key_spelling() -> None:
         },
     )
 
-    result = _invoke_info(["memory:/x"], sources={"memory": source})
+    result = _invoke("info", ["memory:/x"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stderr == ""
@@ -433,7 +434,7 @@ def test_info_turns_an_ordinary_repr_failure_into_an_atomic_incompatible_result(
         info_result={"name": "/x", "type": "file", "opaque": _ReprFailure(error)},
     )
 
-    result = _invoke_info(["memory:/x"], sources={"memory": source})
+    result = _invoke("info", ["memory:/x"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -485,7 +486,7 @@ def test_info_preserves_repr_control_flow_through_cleanup_and_direct_caller(
 def test_info_maps_an_ordinary_backend_failure() -> None:
     source = _RecordingSource([], info_error=FileNotFoundError("gone"))
 
-    result = _invoke_info(["memory:/missing"], sources={"memory": source})
+    result = _invoke("info", ["memory:/missing"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -510,7 +511,7 @@ def test_info_writes_and_flushes_one_complete_binary_payload(
 
     monkeypatch.setattr("fsspec_cli._info._binary_stdout", _Stdout)
 
-    result = _invoke_info(["memory:/docs/report.txt"], sources={"memory": source})
+    result = _invoke("info", ["memory:/docs/report.txt"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     assert calls == [("write", _OUTPUT.encode()), ("flush", None)]
@@ -531,7 +532,7 @@ def test_info_reports_a_short_write_and_still_cleans_up(
 
     monkeypatch.setattr("fsspec_cli._info._binary_stdout", _ShortStdout)
 
-    result = _invoke_info(["memory:/docs/report.txt"], sources={"memory": source})
+    result = _invoke("info", ["memory:/docs/report.txt"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -558,7 +559,7 @@ def test_info_keeps_broken_pipe_silent_but_reports_cleanup_failure(
 
     monkeypatch.setattr("fsspec_cli._info._binary_stdout", _BrokenStdout)
 
-    result = _invoke_info(["memory:/docs/report.txt"], sources={"memory": source})
+    result = _invoke("info", ["memory:/docs/report.txt"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -576,7 +577,7 @@ def test_info_propagates_control_flow_unchanged_after_cleanup() -> None:
     source = _RecordingSource([], info_error=control)
 
     with pytest.raises(asyncio.CancelledError) as caught:
-        _invoke_info(["memory:/x"], sources={"memory": source})
+        _invoke("info", ["memory:/x"], sources={"memory": source})
 
     assert type(caught.value) is asyncio.CancelledError
     exception_type, exception, traceback = source.exit_calls[0]

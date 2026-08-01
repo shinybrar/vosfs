@@ -15,19 +15,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-import typer
-
 from ._command import (
     _binary_stdout,
     _CommandFailureError,
     _Failure,
     _first_backend_error,
     _MappedOperand,
-    _render_backend_failure,
+    _render_failure,
     _run_mapped_command,
     _write_binary,
 )
-from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 
 if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
@@ -159,19 +156,6 @@ def _write_line(line: bytes) -> None:
     stdout = _binary_stdout()
     _write_binary(stdout, line)
     stdout.flush()
-
-
-def _render_failure(command: str, failure: _Failure) -> None:
-    if failure.incompatible == "result" or failure.backend_error is None:
-        prefix = _render_diagnostic_prefix(command)
-        rendered_operand = _render_diagnostic_value(failure.operand.spelling)
-        typer.echo(
-            f"{prefix} {rendered_operand}: incompatible result",
-            err=True,
-            color=True,
-        )
-        return
-    _render_backend_failure(command, failure.operand, failure.backend_error)
 
 
 async def _read_operand(

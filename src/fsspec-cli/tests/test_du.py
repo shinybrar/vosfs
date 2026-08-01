@@ -7,7 +7,7 @@ import pytest
 import typer
 
 from ._ansi import strip_ansi
-from ._support import _invoke_du, _RecordingSource
+from ._support import _invoke, _RecordingSource
 
 
 class _ExplodingMapping(dict[str, int]):
@@ -31,7 +31,7 @@ def test_du_renders_exact_backend_paths_atomically_after_one_call() -> None:
         ),
     )
 
-    result = _invoke_du(["memory:/docs"], sources={"memory": source})
+    result = _invoke("du", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
@@ -50,7 +50,7 @@ def test_du_accepts_an_empty_detail_mapping_without_output() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events, du_result={})
 
-    result = _invoke_du(["memory:/empty"], sources={"memory": source})
+    result = _invoke("du", ["memory:/empty"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     assert [(event[0], *event[2:-1]) for event in events] == [
@@ -81,7 +81,7 @@ def test_du_accepts_grouped_repeated_and_interspersed_options(
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events, du_result=du_result)
 
-    result = _invoke_du(arguments, sources={"memory": source})
+    result = _invoke("du", arguments, sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, stdout, "")
     du_events = [event for event in events if event[0] == "du"]
@@ -90,7 +90,7 @@ def test_du_accepts_grouped_repeated_and_interspersed_options(
 
 @pytest.mark.parametrize("arguments", [["--help"], ["-s", "--help"]])
 def test_du_help_comes_from_typed_callback(arguments: list[str]) -> None:
-    result = _invoke_du(arguments)
+    result = _invoke("du", arguments)
 
     plain_help = strip_ansi(result.stdout)
     assert (result.exit_code, result.stderr) == (0, "")
@@ -128,7 +128,7 @@ def test_du_usage_failures_are_typer_owned_and_source_free(
     arguments: list[str],
     contexts: tuple[str, ...],
 ) -> None:
-    result = _invoke_du(arguments)
+    result = _invoke("du", arguments)
 
     assert (result.exit_code, result.stdout) == (2, "")
     diagnostic = strip_ansi(result.stderr)
@@ -137,7 +137,7 @@ def test_du_usage_failures_are_typer_owned_and_source_free(
 
 
 def test_du_validates_dash_operand_after_option_terminator() -> None:
-    result = _invoke_du(["--", "-"])
+    result = _invoke("du", ["--", "-"])
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         2,
@@ -164,7 +164,7 @@ def test_du_validates_dash_operand_after_option_terminator() -> None:
 def test_du_rejects_incompatible_detail_results_atomically(du_result: object) -> None:
     source = _RecordingSource([], du_result=du_result)
 
-    result = _invoke_du(["memory:/docs"], sources={"memory": source})
+    result = _invoke("du", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -177,7 +177,7 @@ def test_du_rejects_incompatible_detail_results_atomically(du_result: object) ->
 def test_du_rejects_incompatible_summary_results(du_result: object) -> None:
     source = _RecordingSource([], du_result=du_result)
 
-    result = _invoke_du(["-s", "memory:/docs"], sources={"memory": source})
+    result = _invoke("du", ["-s", "memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -205,7 +205,7 @@ def test_du_reports_backend_failures_and_passes_them_to_cleanup(
 ) -> None:
     source = _RecordingSource([], du_error=error)
 
-    result = _invoke_du(["memory:/docs"], sources={"memory": source})
+    result = _invoke("du", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -224,7 +224,7 @@ def test_du_validates_the_complete_mapping_before_output() -> None:
         du_result={"/docs/good": 1, "/docs/bad": -1},
     )
 
-    result = _invoke_du(["memory:/docs"], sources={"memory": source})
+    result = _invoke("du", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -249,7 +249,7 @@ def test_du_cleans_up_after_an_output_failure(monkeypatch: pytest.MonkeyPatch) -
         raise output_error
 
     monkeypatch.setattr(typer, "echo", fail_stdout)
-    result = _invoke_du(["memory:/docs"], sources={"memory": source})
+    result = _invoke("du", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -273,7 +273,7 @@ def test_du_keeps_broken_pipe_silent_and_cleans_up(
         raise broken_pipe
 
     monkeypatch.setattr(typer, "echo", break_stdout)
-    result = _invoke_du(["memory:/docs"], sources={"memory": source})
+    result = _invoke("du", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (1, "", "")
     exception_type, exception, traceback = source.exit_calls[0]
@@ -289,7 +289,7 @@ def test_du_retains_complete_output_when_source_exit_fails() -> None:
         exit_error=OSError("cleanup"),
     )
 
-    result = _invoke_du(["memory:/docs"], sources={"memory": source})
+    result = _invoke("du", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -307,6 +307,6 @@ def test_du_cleans_up_then_propagates_backend_control_flow() -> None:
     )
 
     with pytest.raises(_DuControl) as caught:
-        _invoke_du(["memory:/docs"], sources={"memory": source})
+        _invoke("du", ["memory:/docs"], sources={"memory": source})
 
     assert caught.value is control

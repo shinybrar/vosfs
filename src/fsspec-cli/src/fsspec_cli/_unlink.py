@@ -70,11 +70,7 @@ def _render_failure(command: str, failure: _UnlinkFailure) -> None:
         _render_operand_diagnostic(command, failure.operand, "uncertain mutation state")
     elif failure.incompatible == "directory":
         _render_operand_diagnostic(command, failure.operand, "is a directory")
-    elif failure.incompatible == "result":
-        _render_operand_diagnostic(command, failure.operand, "incompatible result")
-    elif isinstance(failure.backend_error, IsADirectoryError):
-        _render_operand_diagnostic(command, failure.operand, "is a directory")
-    elif failure.backend_error is None:
+    elif failure.incompatible == "result" or failure.backend_error is None:
         _render_operand_diagnostic(command, failure.operand, "incompatible result")
     else:
         _render_backend_failure(command, failure.operand, failure.backend_error)

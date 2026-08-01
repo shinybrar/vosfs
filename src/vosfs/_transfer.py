@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlsplit
 
 import httpx
@@ -214,16 +214,10 @@ async def open_read_stream(
         filesystem, endpoint, "GET", headers=transport.IDENTITY_ENCODING, stream=True
     )
     if response.status_code not in (transport.HTTP_OK, transport.HTTP_NO_CONTENT):
-        body = errors.bounded_text(await response.aread())
-        retry_after = errors.parse_retry_after(response.headers.get("retry-after"))
-        await response.aclose()
-        raise errors.http_exception(
-            response.status_code,
-            body=body,
-            fault=errors.extract_fault(body),
-            path=path,
-            retry_after=retry_after,
-        )
+        try:
+            await _raise_byte_error(response, path)
+        finally:
+            await response.aclose()
     return response
 
 
@@ -270,10 +264,8 @@ async def read_slice(
     range_header = http_range_header(start, end)
     if range_header is None:
         return (await read_whole(filesystem, path))[start:end]
-    body, whole = await _byte_get(
-        filesystem, path, range_header=range_header, target_validated=False
-    )
-    return body[start:end] if whole else body
+    values = await read_grouped_ranges(filesystem, path, [(0, start, end)])
+    return values[0][1]
 
 
 async def read_grouped_ranges(
@@ -287,7 +279,7 @@ async def read_grouped_ranges(
         return []
 
     async def download(temp_path: str) -> None:
-        await _download_to_path(filesystem, path, temp_path, target_validated=True)
+        await filesystem._download_file(path, temp_path, target_validated=True)
 
     first_range = http_range_header(ranges[0][1], ranges[0][2])
     if first_range is None:
@@ -320,60 +312,22 @@ async def read_grouped_ranges(
             if status in (transport.HTTP_OK, transport.HTTP_NO_CONTENT):
                 # Whole-object fallback wins for every range on this object.
                 return await _slice_streamed_object(response, ranges)
-            body = errors.bounded_text(await response.aread())
-            retry_after = errors.parse_retry_after(response.headers.get("retry-after"))
-            raise errors.http_exception(
-                status,
-                body=body,
-                fault=errors.extract_fault(body),
-                path=path,
-                retry_after=retry_after,
-            )
+            await _raise_byte_error(response, path)
         finally:
             await response.aclose()
     return values
 
 
-async def _byte_get(
-    filesystem: VOSpaceFileSystem,
-    path: str,
-    *,
-    range_header: str,
-    target_validated: bool,
-) -> tuple[bytes, bool]:
-    """GET bytes with ``Range``; ``True`` means the body is the whole object."""
-    (await filesystem._get_bindings()).require_sync()
-    if not target_validated:
-        await validate_read_target(filesystem, path)
-    endpoint = await negotiate_endpoint(
-        filesystem,
-        path,
-        direction=negotiate.DIRECTION_PULL,
-        protocol_uri=negotiate.PROTOCOL_HTTPS_GET,
+async def _raise_byte_error(response: httpx.Response, path: str) -> NoReturn:
+    """Raise the mapped exception for a failed byte response."""
+    body = errors.bounded_text(await response.aread())
+    raise errors.http_exception(
+        response.status_code,
+        body=body,
+        fault=errors.extract_fault(body),
+        path=path,
+        retry_after=errors.parse_retry_after(response.headers.get("retry-after")),
     )
-    headers = {**transport.IDENTITY_ENCODING, "Range": range_header}
-    response = await byte_send(
-        filesystem, endpoint, "GET", headers=headers, stream=True
-    )
-    try:
-        status = response.status_code
-        if status == transport.HTTP_PARTIAL_CONTENT:
-            body = await _raw_body(response)
-            _validate_partial(body, response.headers.get("content-range"), range_header)
-            return body, False
-        if status in (transport.HTTP_OK, transport.HTTP_NO_CONTENT):
-            return await _raw_body(response), True
-        body = errors.bounded_text(await response.aread())
-        retry_after = errors.parse_retry_after(response.headers.get("retry-after"))
-        raise errors.http_exception(
-            status,
-            body=body,
-            fault=errors.extract_fault(body),
-            path=path,
-            retry_after=retry_after,
-        )
-    finally:
-        await response.aclose()
 
 
 async def _raw_body(response: httpx.Response) -> bytes:
@@ -416,44 +370,14 @@ async def _slice_streamed_object(
     ranges: Sequence[tuple[int, int | None, int | None]],
 ) -> list[tuple[int, bytes]]:
     """Stage one whole-object response to disk and return local slices."""
-    temp_path = staging.new_temp_path()
-    try:
+
+    async def download(temp_path: str) -> None:
         with Path(temp_path).open("wb") as local:  # noqa: ASYNC230 - disk-backed staging
             if response.status_code != transport.HTTP_NO_CONTENT:
                 async for chunk in response.aiter_raw(_integrity.READ_CHUNK):
                     local.write(chunk)
-        with Path(temp_path).open("rb") as local:  # noqa: ASYNC230 - disk-backed staging
-            size = local.seek(0, 2)
-            local.seek(0)
-            values: list[tuple[int, bytes]] = []
-            for index, start, end in ranges:
-                first, stop, _step = slice(start, end).indices(size)
-                local.seek(first)
-                values.append((index, local.read(max(0, stop - first))))
-            return values
-    finally:
-        staging.unlink_temp_path(temp_path)
 
-
-async def _download_to_path(
-    filesystem: VOSpaceFileSystem,
-    path: str,
-    temp_path: str,
-    *,
-    target_validated: bool,
-) -> None:
-    """Stream one whole-object GET into ``temp_path``."""
-    response = await open_read_stream(
-        filesystem, path, target_validated=target_validated
-    )
-    try:
-        with Path(temp_path).open("wb") as local:  # noqa: ASYNC230 - disk-backed staging
-            if response.status_code == transport.HTTP_NO_CONTENT:
-                return
-            async for chunk in response.aiter_raw(_integrity.READ_CHUNK):
-                local.write(chunk)
-    finally:
-        await response.aclose()
+    return await staging.read_ranges(download, ranges)
 
 
 # -- writing bytes -------------------------------------------------------

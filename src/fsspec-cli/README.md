@@ -55,7 +55,7 @@ local disk plus a remote VOSpace archive.
 
 `ls` · `ll` · `du` · `find` · `tree` · `size` · `test` · `info` · `stat` ·
 `head` · `tail` · `cat` · `cp` · `mv` · `mkdir` · `rmdir` · `unlink` · `rm` ·
-`basename` · `dirname`, plus the opt-in `sign` extension.
+`basename` · `dirname`.
 
 Recursive `cp -R` is on by default; recursive `rm -R` is **off** by default and
 must be enabled explicitly:
@@ -67,7 +67,7 @@ App({"data": data_source}, capabilities={"recursion": {"remove": True}})
 ## Public API
 
 `App`, `AppCapabilities`, `RecursionCapabilities`, `AsyncFilesystemSource`,
-`CommandCallback`, `CommandContext`, and `fsspec_cli.extensions.sign`.
+`CommandCallback`, and `CommandContext`.
 
 ## Documentation
 

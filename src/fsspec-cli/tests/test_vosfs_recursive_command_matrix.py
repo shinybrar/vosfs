@@ -14,23 +14,18 @@ from typer.testing import CliRunner
 from vosfs import VOSpaceFileSystem
 
 from ._matrix_support import (
-    _block_network,
     _exercise_recursive_rm_profile,
-    _invoke_rm,
+    _invoke,
     _ProbedSource,
 )
-from .test_vosfs_command_matrix import (
+from ._vosfs_matrix_support import (
     _AUTHORITY,
     _BASE_URL,
     _CAPABILITIES,
     _close_vosfs,
-    _CpMockTransport,
+    _vosfs_source,
 )
-
-
-@pytest.fixture(autouse=True)
-def _prohibit_unplanned_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    _block_network(monkeypatch)
+from .test_vosfs_command_matrix import _CpMockTransport
 
 
 class _RecursiveRmMockTransport(httpx.MockTransport):
@@ -157,22 +152,13 @@ class _RecursiveRmMockTransport(httpx.MockTransport):
 def _recursive_rm_vos_source(
     configure: Callable[[_RecursiveRmMockTransport], None] | None = None,
 ) -> tuple[_ProbedSource[VOSpaceFileSystem], list[_RecursiveRmMockTransport]]:
-    transports: list[_RecursiveRmMockTransport] = []
-
-    def make_filesystem() -> VOSpaceFileSystem:
+    def make_transport() -> _RecursiveRmMockTransport:
         transport = _RecursiveRmMockTransport()
         if configure is not None:
             configure(transport)
-        transports.append(transport)
-        return VOSpaceFileSystem(
-            _BASE_URL,
-            transport=transport,
-            asynchronous=True,
-            skip_instance_cache=True,
-            trust_env=False,
-        )
+        return transport
 
-    return _ProbedSource(make_filesystem, close=_close_vosfs), transports
+    return _vosfs_source(transport_factory=make_transport)
 
 
 def test_native_vosfs_recursive_rm_profile_uses_only_mocked_transport() -> None:
@@ -206,11 +192,12 @@ def test_native_vosfs_recursive_rm_rejects_link_or_special_before_delete(
 
     source, transports = _recursive_rm_vos_source(configure)
 
-    result = _invoke_rm(
+    result = _invoke(
         App(
             {"vos": source},
             capabilities={"recursion": {"remove": True}},
         ),
+        "rm",
         ["-R", "vos:/docs"],
     )
 
@@ -227,11 +214,12 @@ def test_native_vosfs_recursive_rm_reports_concurrent_disappearance() -> None:
 
     source, transports = _recursive_rm_vos_source(configure)
 
-    result = _invoke_rm(
+    result = _invoke(
         App(
             {"vos": source},
             capabilities={"recursion": {"remove": True}},
         ),
+        "rm",
         ["-R", "vos:/docs"],
     )
 
@@ -251,11 +239,12 @@ def test_native_vosfs_recursive_rm_reports_partial_delete_success() -> None:
 
     source, transports = _recursive_rm_vos_source(configure)
 
-    result = _invoke_rm(
+    result = _invoke(
         App(
             {"vos": source},
             capabilities={"recursion": {"remove": True}},
         ),
+        "rm",
         ["-R", "vos:/docs"],
     )
 
@@ -275,11 +264,12 @@ def test_native_vosfs_recursive_rm_reports_concurrent_addition() -> None:
 
     source, transports = _recursive_rm_vos_source(configure)
 
-    result = _invoke_rm(
+    result = _invoke(
         App(
             {"vos": source},
             capabilities={"recursion": {"remove": True}},
         ),
+        "rm",
         ["-R", "vos:/docs"],
     )
 
@@ -299,11 +289,12 @@ def test_native_vosfs_recursive_rm_drains_cancelled_delete() -> None:
     source, transports = _recursive_rm_vos_source(configure)
 
     with pytest.raises(asyncio.CancelledError):
-        _invoke_rm(
+        _invoke(
             App(
                 {"vos": source},
                 capabilities={"recursion": {"remove": True}},
             ),
+            "rm",
             ["-R", "vos:/docs"],
         )
 
@@ -313,20 +304,7 @@ def test_native_vosfs_recursive_rm_drains_cancelled_delete() -> None:
 
 
 def test_native_vosfs_recursive_cp_profile_uses_only_mocked_transport() -> None:
-    transports: list[_CpMockTransport] = []
-
-    def make_filesystem() -> VOSpaceFileSystem:
-        transport = _CpMockTransport()
-        transports.append(transport)
-        return VOSpaceFileSystem(
-            _BASE_URL,
-            transport=transport,
-            asynchronous=True,
-            skip_instance_cache=True,
-            trust_env=False,
-        )
-
-    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+    source, transports = _vosfs_source(transport_factory=_CpMockTransport)
 
     result = CliRunner().invoke(
         App({"vos": source}).typer_app,

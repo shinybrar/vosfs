@@ -7,7 +7,7 @@ import typer
 from fsspec_cli import App
 from typer.testing import CliRunner
 
-from ._support import _invoke_ls, _RecordingSource
+from ._support import _invoke, _RecordingSource
 
 
 def test_ls_processes_operands_in_order_then_renders_sorted_output_blocks() -> None:
@@ -26,7 +26,8 @@ def test_ls_processes_operands_in_order_then_renders_sorted_output_blocks() -> N
         },
     )
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         [
             "memory:/z-dir",
             "memory:/b.txt",
@@ -91,7 +92,8 @@ def test_ls_keeps_duplicates_and_successes_while_reporting_every_failure(
         },
     )
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         [
             "beta:/z-file",
             "alpha:/missing",
@@ -158,7 +160,7 @@ def test_ls_cleans_up_after_an_output_failure_and_reports_exit_failure(
         raise output_error
 
     monkeypatch.setattr(typer, "echo", fail_stdout)
-    result = _invoke_ls(["memory:/file"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/file"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -190,7 +192,7 @@ def test_ls_keeps_broken_pipe_silent_but_reports_an_exit_failure(
         raise broken_pipe
 
     monkeypatch.setattr(typer, "echo", break_stdout)
-    result = _invoke_ls(["memory:/file"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/file"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -225,7 +227,7 @@ def test_ls_cleans_up_then_propagates_stdout_control_flow(
 
     monkeypatch.setattr(typer, "echo", control_stdout)
     with pytest.raises(_OutputControl) as caught:
-        _invoke_ls(["memory:/file"], sources={"memory": source})
+        _invoke("ls", ["memory:/file"], sources={"memory": source})
 
     assert caught.value is control
     assert diagnostics == [
@@ -241,7 +243,7 @@ def test_ls_escapes_ansi_in_a_preflight_diagnostic() -> None:
     operand = "\x1b[31mbad\x1b[0m"
     escaped = "\\x1b[31mbad\\x1b[0m"
 
-    result = _invoke_ls([operand])
+    result = _invoke("ls", [operand])
 
     assert result.exit_code == 2
     assert result.stderr == (f"ls: {escaped}: invalid mapped filesystem operand\n")
@@ -254,7 +256,7 @@ def test_ls_escapes_ansi_in_a_backend_diagnostic() -> None:
     escaped_message = "\\x1b[32mfailed\\x1b[0m"
     source = _RecordingSource([], info_error=RuntimeError(message))
 
-    result = _invoke_ls([operand], sources={"memory": source})
+    result = _invoke("ls", [operand], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stderr == (
@@ -271,7 +273,7 @@ def test_ls_escapes_ansi_in_a_source_diagnostic() -> None:
     def broken_source() -> None:
         raise RuntimeError(message)
 
-    result = _invoke_ls([f"{name}:/file"], sources={name: broken_source})
+    result = _invoke("ls", [f"{name}:/file"], sources={name: broken_source})
 
     assert result.exit_code == 1
     assert result.stderr == (
@@ -308,7 +310,8 @@ def test_ls_sorts_repeated_directory_blocks_with_raw_string_ties(
         },
     )
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["memory:/z", "memory:/a", "memory:/z"],
         sources={"memory": source},
     )
@@ -345,7 +348,8 @@ def test_ls_finishes_presentation_before_writing_known_diagnostics(
         },
     )
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["memory:/missing", "memory:/file"],
         sources={"memory": source},
     )
@@ -385,7 +389,8 @@ def test_ls_passes_first_backend_error_to_cleanup_before_output_error(
         raise output_error
 
     monkeypatch.setattr(typer, "echo", fail_stdout)
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["memory:/missing", "memory:/file"],
         sources={"memory": source},
     )
@@ -410,7 +415,8 @@ def test_ls_writes_no_stdout_when_every_operand_fails() -> None:
         },
     )
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["memory:/missing", "memory:/denied"],
         sources={"memory": source},
     )
@@ -476,7 +482,8 @@ def test_ls_orders_backend_output_and_reverse_cleanup_diagnostics(
         raise output_error
 
     monkeypatch.setattr(typer, "echo", accept_prefix_then_fail)
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["alpha:/good", "beta:/missing"],
         sources={"alpha": alpha, "beta": beta},
     )
@@ -507,7 +514,8 @@ def test_ls_keeps_an_empty_directory_block_when_another_operand_fails() -> None:
         ls_by_path={"/empty": []},
     )
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["memory:/missing", "memory:/empty"],
         sources={"memory": source},
     )

@@ -3,7 +3,7 @@
 import asyncio
 import re
 from dataclasses import FrozenInstanceError, dataclass
-from typing import Annotated, NoReturn, cast
+from typing import Annotated, cast
 from unittest.mock import Mock
 
 import pytest
@@ -16,23 +16,10 @@ from fsspec_cli import (
     CommandContext,
     RecursionCapabilities,
 )
-from typer.testing import CliRunner, Result
+from typer.testing import CliRunner
 
 from ._ansi import strip_ansi
-
-
-def _source_must_not_run() -> NoReturn:
-    raise AssertionError
-
-
-def _invoke_ls(
-    arguments: list[str],
-    *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["ls", *arguments])
+from ._support import _invoke, _source_must_not_run
 
 
 def test_app_rejects_an_empty_source_mapping() -> None:
@@ -140,7 +127,7 @@ def test_app_snapshots_nested_capabilities_at_construction() -> None:
 
 
 def test_ls_rejects_a_missing_mapped_filesystem_operand() -> None:
-    result = _invoke_ls([])
+    result = _invoke("ls", [])
 
     assert (result.exit_code, result.stdout) == (2, "")
     diagnostic = strip_ansi(result.stderr)
@@ -154,7 +141,7 @@ def test_ls_refuses_an_active_same_thread_event_loop(monkeypatch) -> None:
 
     async def invoke() -> object:
         monkeypatch.setattr(asyncio, "run", recording_run)
-        return _invoke_ls(["memory:/docs"])
+        return _invoke("ls", ["memory:/docs"])
 
     result = real_run(invoke())
 
@@ -171,7 +158,7 @@ def test_ls_typer_failure_precedes_command_coroutine(
     recording_run = Mock(wraps=real_run)
 
     monkeypatch.setattr(asyncio, "run", recording_run)
-    result = _invoke_ls([])
+    result = _invoke("ls", [])
 
     assert result.exit_code == 2
     assert recording_run.call_count == 0
@@ -192,7 +179,7 @@ def test_typer_rejects_unsupported_ls_options(
     option: str,
     context: str,
 ) -> None:
-    result = _invoke_ls([option, "memory:/docs"])
+    result = _invoke("ls", [option, "memory:/docs"])
 
     assert (result.exit_code, result.stdout) == (2, "")
     assert context in strip_ansi(result.stderr)
@@ -216,7 +203,7 @@ def test_typer_rejects_unsupported_ls_options(
 def test_ls_accepts_repeated_grouped_and_interspersed_supported_options(
     supported_options: list[str],
 ) -> None:
-    result = _invoke_ls([*supported_options, "bad"])
+    result = _invoke("ls", [*supported_options, "bad"])
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -230,7 +217,7 @@ def test_ls_accepts_repeated_grouped_and_interspersed_supported_options(
 def test_ls_rejects_human_sizes_without_long_mode(
     arguments: list[str],
 ) -> None:
-    result = _invoke_ls(arguments)
+    result = _invoke("ls", arguments)
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         2,
@@ -258,7 +245,7 @@ def test_ls_rejects_malformed_mapped_filesystem_operands(
     arguments: list[str],
     rendered: str,
 ) -> None:
-    result = _invoke_ls(arguments)
+    result = _invoke("ls", arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -266,7 +253,8 @@ def test_ls_rejects_malformed_mapped_filesystem_operands(
 
 
 def test_ls_reports_unknown_names_with_locale_sorted_known_names() -> None:
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["other:/docs"],
         sources={
             "zeta": _source_must_not_run,
@@ -416,7 +404,8 @@ def test_app_instances_keep_extension_contexts_isolated() -> None:
 
 
 def test_ls_escapes_each_known_name_in_an_unknown_name_diagnostic() -> None:
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["other:/docs"],
         sources={"known\\name\r": _source_must_not_run},
     )
@@ -432,7 +421,7 @@ def test_ls_escapes_each_known_name_in_an_unknown_name_diagnostic() -> None:
 def test_ls_reports_a_missing_operand_after_supported_option_syntax(
     arguments: list[str],
 ) -> None:
-    result = _invoke_ls(arguments)
+    result = _invoke("ls", arguments)
 
     assert (result.exit_code, result.stdout) == (2, "")
     assert "Missing argument" in strip_ansi(result.stderr)
@@ -453,7 +442,7 @@ def test_ls_reports_only_the_first_preflight_error_in_argument_order(
     arguments: list[str],
     diagnostic: str,
 ) -> None:
-    result = _invoke_ls(arguments)
+    result = _invoke("ls", arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -462,7 +451,7 @@ def test_ls_reports_only_the_first_preflight_error_in_argument_order(
 
 @pytest.mark.parametrize("arguments", [["--help"], ["-l", "--help"]])
 def test_ls_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
-    result = _invoke_ls(arguments)
+    result = _invoke("ls", arguments)
 
     assert result.exit_code == 0
     assert "Usage:" in result.stdout
@@ -473,7 +462,7 @@ def test_ls_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
 def test_ls_treats_help_tokens_after_the_option_delimiter_as_operands(
     operand: str,
 ) -> None:
-    result = _invoke_ls(["--", operand])
+    result = _invoke("ls", ["--", operand])
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -500,7 +489,7 @@ def test_ls_preserves_typer_failures_when_mounted_below_a_parent_app() -> None:
 
 def test_typer_preflight_precedes_active_loop_refusal() -> None:
     async def invoke() -> object:
-        return _invoke_ls(["-l"])
+        return _invoke("ls", ["-l"])
 
     result = asyncio.run(invoke())
 
@@ -509,7 +498,7 @@ def test_typer_preflight_precedes_active_loop_refusal() -> None:
 
 
 def test_ls_renders_all_diagnostic_control_characters_in_order() -> None:
-    result = _invoke_ls(["memory:/bad\\\0\r\n"])
+    result = _invoke("ls", ["memory:/bad\\\0\r\n"])
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -530,7 +519,7 @@ def test_ls_renders_all_diagnostic_control_characters_in_order() -> None:
 def test_ls_accepts_locked_operand_grammar_before_a_later_error(
     valid_prefix: list[str],
 ) -> None:
-    result = _invoke_ls([*valid_prefix, "bad"])
+    result = _invoke("ls", [*valid_prefix, "bad"])
 
     assert result.exit_code == 2
     assert result.stdout == ""

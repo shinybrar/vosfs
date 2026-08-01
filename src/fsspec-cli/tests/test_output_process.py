@@ -1,18 +1,20 @@
 """Process-boundary evidence for plain ``ls`` output behavior."""
 
-import errno
 import os
-import pty
 import subprocess
 import sys
-import termios
-from contextlib import suppress
 from pathlib import Path
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_TIMEOUT = 5
+from ._process_support import (
+    _REPO_ROOT,
+    _TIMEOUT,
+    _environment,
+    _run_pty,
+    _run_redirected,
+)
+
 _NATIVE_NEWLINE = os.linesep.encode()
 _EXPECTED_TTY_STDOUT = b"\x1b[31mred\x1b[0m" + _NATIVE_NEWLINE
 _OUTPUT_ERROR = (
@@ -26,72 +28,6 @@ def _command(mode: str) -> list[str]:
     if mode == "runtime-and-fail":
         operands = ["memory:/missing", *operands]
     return [sys.executable, str(_CHILD_PATH), mode, "ls", *operands]
-
-
-def _environment() -> dict[str, str]:
-    environment = os.environ.copy()
-    environment.update(
-        {
-            "LANG": "C",
-            "LC_ALL": "C",
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "PYTHONUNBUFFERED": "1",
-        }
-    )
-    return environment
-
-
-def _run_redirected(mode: str) -> subprocess.CompletedProcess[bytes]:
-    return subprocess.run(  # noqa: S603 - fixed interpreter and child source.
-        _command(mode),
-        cwd=_REPO_ROOT,
-        env=_environment(),
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        timeout=_TIMEOUT,
-        check=False,
-    )
-
-
-def _run_pty(mode: str) -> tuple[int, bytes, bytes]:
-    command = _command(mode)
-    master_fd, slave_fd = pty.openpty()
-    try:
-        attributes = termios.tcgetattr(slave_fd)
-        attributes[1] &= ~termios.ONLCR
-        attributes[3] &= ~termios.ECHO
-        termios.tcsetattr(slave_fd, termios.TCSANOW, attributes)
-
-        result = subprocess.run(  # noqa: S603 - fixed child command.
-            command,
-            cwd=_REPO_ROOT,
-            env=_environment(),
-            stdin=subprocess.DEVNULL,
-            stdout=slave_fd,
-            stderr=subprocess.PIPE,
-            timeout=_TIMEOUT,
-            check=False,
-        )
-        chunks = [os.read(master_fd, 65536)]
-        os.close(slave_fd)
-        slave_fd = -1
-
-        while True:
-            try:
-                chunk = os.read(master_fd, 65536)
-            except OSError as error:
-                if error.errno == errno.EIO:
-                    break
-                raise
-            if not chunk:
-                break
-            chunks.append(chunk)
-        return result.returncode, b"".join(chunks), result.stderr
-    finally:
-        for descriptor in (master_fd, slave_fd):
-            if descriptor >= 0:
-                with suppress(OSError):
-                    os.close(descriptor)
 
 
 def test_public_seam_broken_pipe_is_silent_runtime_failure() -> None:
@@ -116,8 +52,8 @@ def test_public_seam_broken_pipe_is_silent_runtime_failure() -> None:
 
 
 def test_public_seam_tty_matches_redirected_output_verbatim() -> None:
-    redirected = _run_redirected("tty")
-    returncode, stdout, stderr = _run_pty("tty")
+    redirected = _run_redirected(_command("tty"))
+    returncode, stdout, stderr = _run_pty(_command("tty"))
 
     assert returncode == redirected.returncode == 0
     assert stdout == redirected.stdout == _EXPECTED_TTY_STDOUT
@@ -139,7 +75,7 @@ def test_public_seam_reports_other_stdout_failures(
     mode: str,
     expected_stdout: bytes,
 ) -> None:
-    result = _run_redirected(mode)
+    result = _run_redirected(_command(mode))
 
     assert result.returncode == 1
     assert result.stdout == expected_stdout
@@ -147,7 +83,7 @@ def test_public_seam_reports_other_stdout_failures(
 
 
 def test_output_failure_keeps_already_known_backend_diagnostics() -> None:
-    result = _run_redirected("runtime-and-fail")
+    result = _run_redirected(_command("runtime-and-fail"))
 
     assert result.returncode == 1
     assert result.stdout == b""

@@ -1,4 +1,8 @@
-"""Subprocess fixture for public-seam ``basename`` output tests."""
+"""Subprocess fixture for public-seam lexical command output tests.
+
+``argv[1]`` selects the command (``basename`` or ``dirname``); the remaining
+arguments are forwarded verbatim.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +16,7 @@ _TESTS_DIR = Path(__file__).resolve().parent
 if str(_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_TESTS_DIR))
 
-from _matrix_support import _block_network  # noqa: E402
+from _network_guard import _block_network  # noqa: E402
 
 
 class _ProcessMonkeyPatch:
@@ -26,11 +30,10 @@ def _source_must_not_run() -> NoReturn:
 
 def main() -> None:
     _block_network(_ProcessMonkeyPatch())
-    operand = sys.argv.pop(1)
-    arguments = ["basename", operand, *sys.argv[1:]]
+    command = sys.argv[1]
     App({"memory": _source_must_not_run}).typer_app(
-        prog_name="basename-process-child",
-        args=arguments,
+        prog_name=f"{command}-process-child",
+        args=sys.argv[1:],
         standalone_mode=False,
     )
 

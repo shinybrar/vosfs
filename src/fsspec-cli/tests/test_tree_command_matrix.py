@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import httpx
-import pytest
 from fsspec.asyn import AsyncFileSystem
 from fsspec.implementations.asyn_wrapper import AsyncFileSystemWrapper
 from fsspec.implementations.local import LocalFileSystem
@@ -17,96 +16,38 @@ from typer.testing import CliRunner
 
 from vosfs import VOSpaceFileSystem
 
-from ._matrix_support import _block_network
+from ._matrix_support import (
+    _memory_factory,
+)
+from ._vosfs_matrix_support import (
+    _BASE_URL,
+    _CAPABILITIES,
+    _close_vosfs,
+    _StrictMockTransport,
+    _vos_child,
+    _vos_container,
+)
+
+_DOCS = _vos_container(
+    "/docs",
+    _vos_child("DataNode", "/docs/a.txt", length=1)
+    + _vos_child("ContainerNode", "/docs/sub")
+    + _vos_child("ContainerNode", "/docs/empty"),
+)
+_SUB = _vos_container("/docs/sub", _vos_child("DataNode", "/docs/sub/b.txt", length=1))
+_EMPTY = _vos_container("/docs/empty")
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
     from pathlib import Path
     from types import TracebackType
 
-_BASE_URL = "https://example.test/arc"
-_NODES_URL = f"{_BASE_URL}/nodes"
-_AUTHORITY = "example.test!vault"
-_CAPABILITIES = f"""<?xml version="1.0" encoding="UTF-8"?>
-<vosi:capabilities xmlns:vosi="http://www.ivoa.net/xml/VOSICapabilities/v1.0"
-                   xmlns:vs="http://www.ivoa.net/xml/VODataService/v1.1"
-                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <capability standardID="ivo://ivoa.net/std/VOSpace/v2.0#nodes">
-    <interface xsi:type="vs:ParamHTTP" role="std">
-      <accessURL use="base">{_NODES_URL}</accessURL>
-    </interface>
-  </capability>
-</vosi:capabilities>
-""".encode()
-
-
-def _container(path: str, children: str = "") -> bytes:
-    return f"""<vos:node
-    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}{path}">
-  <vos:properties/>
-  <vos:nodes>{children}</vos:nodes>
-</vos:node>
-""".encode()
-
-
-def _data_child(path: str) -> str:
-    return f"""<vos:node xsi:type="vos:DataNode"
-      uri="vos://{_AUTHORITY}{path}">
-  <vos:properties>
-    <vos:property uri="ivo://ivoa.net/vospace/core#length">1</vos:property>
-  </vos:properties>
-</vos:node>"""
-
-
-def _directory_child(path: str) -> str:
-    return f"""<vos:node xsi:type="vos:ContainerNode"
-      uri="vos://{_AUTHORITY}{path}">
-  <vos:properties/>
-  <vos:nodes/>
-</vos:node>"""
-
-
-_DOCS = _container(
-    "/docs",
-    _data_child("/docs/a.txt")
-    + _directory_child("/docs/sub")
-    + _directory_child("/docs/empty"),
-)
-_SUB = _container("/docs/sub", _data_child("/docs/sub/b.txt"))
-_EMPTY = _container("/docs/empty")
 _RESPONSES: dict[tuple[str, str], httpx.Response] = {
     ("GET", "/arc/capabilities"): httpx.Response(200, content=_CAPABILITIES),
     ("GET", "/arc/nodes/docs"): httpx.Response(200, content=_DOCS),
     ("GET", "/arc/nodes/docs/sub"): httpx.Response(200, content=_SUB),
     ("GET", "/arc/nodes/docs/empty"): httpx.Response(200, content=_EMPTY),
 }
-
-
-@pytest.fixture(autouse=True)
-def _prohibit_unplanned_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    _block_network(monkeypatch)
-
-
-class _StrictTreeTransport(httpx.MockTransport):
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
-        self.closed = False
-        super().__init__(self._respond)
-
-    async def _respond(self, request: httpx.Request) -> httpx.Response:
-        call = (request.method, request.url.path)
-        self.calls.append(call)
-        response = _RESPONSES.get(call)
-        if response is None:
-            message = f"unplanned mocked request: {call!r}"
-            raise AssertionError(message)
-        return response
-
-    async def aclose(self) -> None:
-        self.closed = True
-        await super().aclose()
 
 
 @dataclass(frozen=True)
@@ -297,24 +238,15 @@ def test_adapted_local_tree_profile_uses_native_temporary_storage(
 
 
 def test_adapted_memory_tree_profile_has_isolated_state(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch,
 ) -> None:
-    monkeypatch.setattr(MemoryFileSystem, "store", {})
-    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
-    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
-
-    def make_filesystem() -> AsyncFileSystemWrapper:
-        MemoryFileSystem.store.clear()
-        MemoryFileSystem.pseudo_dirs[:] = [""]
-        MemoryFileSystem.clear_instance_cache()
-        filesystem = MemoryFileSystem()
-        filesystem.makedirs("/docs/sub")
-        filesystem.makedirs("/docs/empty")
-        filesystem.pipe_file("/docs/a.txt", b"a")
-        filesystem.pipe_file("/docs/sub/b.txt", b"b")
-        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
-
-    source = _TreeProfileSource(make_filesystem)
+    source = _TreeProfileSource(
+        _memory_factory(
+            monkeypatch,
+            {"/docs/a.txt": b"a", "/docs/sub/b.txt": b"b"},
+            directories=("/docs/sub", "/docs/empty"),
+        )
+    )
 
     _exercise_tree_profile("memory", source, "/docs")
 
@@ -325,18 +257,13 @@ def test_adapted_memory_tree_profile_has_isolated_state(
     assert all(isinstance(fs.sync_fs, MemoryFileSystem) for fs in adapted_filesystems)
 
 
-async def _close_vosfs(filesystem: AsyncFileSystem) -> None:
-    assert isinstance(filesystem, VOSpaceFileSystem)
-    await filesystem.aclose()
-
-
 def test_native_vosfs_tree_profile_uses_client_traversal_over_mocked_transport() -> (
     None
 ):
-    transports: list[_StrictTreeTransport] = []
+    transports: list[_StrictMockTransport] = []
 
     def make_filesystem() -> VOSpaceFileSystem:
-        transport = _StrictTreeTransport()
+        transport = _StrictMockTransport(_RESPONSES)
         transports.append(transport)
         return VOSpaceFileSystem(
             _BASE_URL,
@@ -355,13 +282,13 @@ def test_native_vosfs_tree_profile_uses_client_traversal_over_mocked_transport()
     ]
     assert vos_filesystems == source.filesystems
     assert all(filesystem._pool.closed is True for filesystem in vos_filesystems)
-    unbounded_paths = {path for _method, path in transports[0].calls}
+    unbounded_paths = {path for _method, path in transports[0].requests}
     assert {
         "/arc/nodes/docs",
         "/arc/nodes/docs/sub",
         "/arc/nodes/docs/empty",
     } <= unbounded_paths
-    direct_paths = {path for _method, path in transports[1].calls}
+    direct_paths = {path for _method, path in transports[1].requests}
     assert "/arc/nodes/docs" in direct_paths
     assert "/arc/nodes/docs/sub" not in direct_paths
     assert "/arc/nodes/docs/empty" not in direct_paths

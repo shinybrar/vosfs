@@ -55,10 +55,10 @@ def _runtime_probe(filesystem: VOSpaceFileSystem) -> dict[str, Any]:
         "token": tokenize(filesystem),
         "has_loop": filesystem._loop is not None,
         "clients": filesystem._pool._clients,
-        "client_lock": filesystem._pool._lock,
+        "client_lock": type(filesystem._pool._lock).__name__,
         "transport": filesystem._pool._injected,
         "bindings": filesystem._bindings,
-        "bindings_lock": filesystem._bindings_lock,
+        "bindings_lock": type(filesystem._bindings_lock).__name__,
         "authority": filesystem._authority,
         "cache": list(filesystem.dircache),
     }
@@ -134,10 +134,11 @@ async def test_pickle_and_json_reconstruct_only_constructor_state(
     for restored in (pickled, restored_json):
         assert restored._loop is None
         assert restored._pool._clients == {}
-        assert restored._pool._lock is None
+        # Reconstruction builds fresh, unbound locks alongside the fresh pool.
+        assert isinstance(restored._pool._lock, asyncio.Lock)
         assert restored._pool._injected is None
         assert restored._bindings is None
-        assert restored._bindings_lock is None
+        assert isinstance(restored._bindings_lock, asyncio.Lock)
         assert restored._authority is None
         assert list(restored.dircache) == []
     await asyncio.gather(filesystem.aclose(), pickled.aclose(), restored_json.aclose())
@@ -162,10 +163,10 @@ def test_spawn_reconstructs_fresh_runtime_with_stable_dask_token(
         "token": expected_token,
         "has_loop": has_loop,
         "clients": {},
-        "client_lock": None,
+        "client_lock": "Lock",
         "transport": None,
         "bindings": None,
-        "bindings_lock": None,
+        "bindings_lock": "Lock",
         "authority": None,
         "cache": [],
     }

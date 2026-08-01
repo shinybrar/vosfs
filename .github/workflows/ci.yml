@@ -15,27 +15,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  matrix:
-    name: Resolve test matrix
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      matrix: ${{ steps.resolve.outputs.matrix }}
-    steps:
-      - name: Resolve matrix for the triggering event
-        id: resolve
-        run: |
-          set -euo pipefail
-          matrix='{"include":[
-            {"os":"ubuntu-latest","python":"3.10"},
-            {"os":"ubuntu-latest","python":"3.11"},
-            {"os":"ubuntu-latest","python":"3.12"},
-            {"os":"ubuntu-latest","python":"3.13"},
-            {"os":"ubuntu-latest","python":"3.14"},
-            {"os":"macos-latest","python":"3.12"}
-          ]}'
-          echo "matrix=$(jq -c . <<<"$matrix")" >> "$GITHUB_OUTPUT"
-
   quality:
     name: Quality
     runs-on: ubuntu-latest
@@ -72,12 +51,18 @@ jobs:
 
   test:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python }})
-    needs: matrix
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.10" }
+          - { os: ubuntu-latest, python: "3.11" }
+          - { os: ubuntu-latest, python: "3.12" }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: ubuntu-latest, python: "3.14" }
+          - { os: macos-latest, python: "3.12" }
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -99,12 +84,18 @@ jobs:
 
   fsspec-cli-wheel:
     name: Installed fsspec-cli wheel (${{ matrix.os }}, Python ${{ matrix.python }})
-    needs: matrix
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.10" }
+          - { os: ubuntu-latest, python: "3.11" }
+          - { os: ubuntu-latest, python: "3.12" }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: ubuntu-latest, python: "3.14" }
+          - { os: macos-latest, python: "3.12" }
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -126,18 +117,17 @@ jobs:
   required:
     name: Required
     if: always()
-    needs: [matrix, quality, test, fsspec-cli-wheel]
+    needs: [quality, test, fsspec-cli-wheel]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Require every dependency to succeed
         env:
-          MATRIX_RESULT: ${{ needs.matrix.result }}
           QUALITY_RESULT: ${{ needs.quality.result }}
           TEST_RESULT: ${{ needs.test.result }}
           WHEEL_RESULT: ${{ needs.fsspec-cli-wheel.result }}
         run: |
-          for result in "$MATRIX_RESULT" "$QUALITY_RESULT" "$TEST_RESULT" "$WHEEL_RESULT"; do
+          for result in "$QUALITY_RESULT" "$TEST_RESULT" "$WHEEL_RESULT"; do
             if [[ "$result" != "success" ]]; then
               echo "Required CI dependency concluded: $result" >&2
               exit 1

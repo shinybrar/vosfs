@@ -114,7 +114,11 @@ class VOSpaceError(OSError):
         self.retry_after: float | None = retry_after
         self.completed: list[str] = completed if completed is not None else []
         self.failed: list[str] = failed if failed is not None else []
-        super().__init__(redact(_describe(message, status, fault)))
+        if status is not None:
+            message += f" (HTTP {status})"
+        if fault is not None:
+            message += f" [{fault}]"
+        super().__init__(redact(message))
 
     def __repr__(self) -> str:
         """Return a redacted representation carrying the diagnostic context."""
@@ -122,38 +126,6 @@ class VOSpaceError(OSError):
             f"{type(self).__name__}({self.args[0]!r}, status={self.status!r}, "
             f"fault={self.fault!r}, retry_after={self.retry_after!r})"
         )
-
-
-def _describe(message: str, status: int | None, fault: str | None) -> str:
-    """Return the message annotated with the status and fault when present.
-
-    Args:
-        message: The base failure description.
-        status: The HTTP status to append, if any.
-        fault: The symbolic fault name to append, if any.
-
-    Returns:
-        The message with ``(HTTP <status>)`` and ``[<fault>]`` appended when
-        those values are available.
-    """
-    parts = [message]
-    if status is not None:
-        parts.append(f"(HTTP {status})")
-    if fault is not None:
-        parts.append(f"[{fault}]")
-    return " ".join(parts)
-
-
-def _is_quota_fault(fault: str | None) -> bool:
-    """Return whether a symbolic fault name denotes quota exhaustion.
-
-    Args:
-        fault: The symbolic OpenCADC fault name, if any.
-
-    Returns:
-        ``True`` when the fault names a quota condition, otherwise ``False``.
-    """
-    return fault is not None and "quota" in fault.lower()
 
 
 # Symbolic VOSpace/OpenCADC fault names recognised in a response body. The set
@@ -262,8 +234,8 @@ def http_exception(
     The returned exception is not raised. Authentication and authorization
     (401, 403) map to :class:`PermissionError`; a missing node (404) to
     :class:`FileNotFoundError`; a conflict (409) to :class:`FileExistsError`; a
-    locked node (423) to :class:`BlockingIOError`; quota exhaustion (413, a
-    recognised quota fault, or a body that mentions ``quota`` in prose) to
+    locked node (423) to :class:`BlockingIOError`; quota exhaustion (413, or a
+    body that mentions ``quota`` in prose) to
     ``OSError`` with :data:`errno.ENOSPC`. Every other status,
     including 5xx, 412, and an ambiguous 400, becomes a :class:`VOSpaceError`
     carrying the status, fault, and retry guidance.
@@ -284,11 +256,7 @@ def http_exception(
     detail = f": {snippet}" if snippet else ""
     base = f"VOSpace request failed{location}{detail}"
 
-    if (
-        status == _STATUS_PAYLOAD_TOO_LARGE
-        or _is_quota_fault(fault)
-        or "quota" in body.lower()
-    ):
+    if status == _STATUS_PAYLOAD_TOO_LARGE or "quota" in body.lower():
         return OSError(errno.ENOSPC, f"{base} (HTTP {status})")
 
     factory = _STATUS_EXCEPTIONS.get(status)

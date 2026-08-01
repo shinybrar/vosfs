@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import contextvars
 from functools import partial
-from typing import TYPE_CHECKING, Any, cast, overload
+from typing import TYPE_CHECKING, Any, overload
 from urllib.parse import unquote_to_bytes
 
 from fsspec.asyn import AsyncFileSystem
@@ -15,7 +15,7 @@ from fsspec.utils import other_paths
 from vosfs import paths
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Mapping
+    from collections.abc import AsyncIterator, Awaitable, Callable, Generator
 
     from fsspec.callbacks import Callback
 
@@ -140,23 +140,27 @@ class _DeferredAwaitable:
         return self._factory().__await__()
 
 
-class _DeferredBranchCallback:
+class DeferredBranchCallback:
     """Delegate progress while making each callback prelude task-owned."""
 
     def __init__(self, callback: Callback, owner: object) -> None:
+        """Wrap ``callback`` on behalf of one bulk write owned by ``owner``."""
         self._callback = callback
         self._owner = owner
 
     def set_size(self, size: int) -> None:
+        """Forward the total size to the wrapped callback."""
         self._callback.set_size(size)
 
     def relative_update(self, inc: int = 1) -> None:
+        """Forward a progress increment to the wrapped callback."""
         self._callback.relative_update(inc)
 
     def branch_coro(
         self,
         function: Callable[..., Awaitable[Any]],
     ) -> Callable[..., _DeferredAwaitable]:
+        """Branch ``function`` while deferring its coroutine to its own task."""
         wrapped = self._callback.branch_coro(function)
 
         def deferred(
@@ -172,7 +176,8 @@ class _DeferredBranchCallback:
         return deferred
 
 
-def _normalize(path: str) -> str:
+def normalize_hook_path(path: str) -> str:
+    """Normalize one hook-entry path, preserving a trailing slash."""
     normalized = normalize_path(path)
     if path.endswith("/") and normalized != "/":
         return f"{normalized}/"
@@ -180,17 +185,18 @@ def _normalize(path: str) -> str:
 
 
 @overload
-def _normalize_paths(value: str) -> str: ...
+def normalize_hook_paths(value: str) -> str: ...
 
 
 @overload
-def _normalize_paths(value: list[str]) -> list[str]: ...
+def normalize_hook_paths(value: list[str]) -> list[str]: ...
 
 
-def _normalize_paths(value: str | list[str]) -> str | list[str]:
+def normalize_hook_paths(value: str | list[str]) -> str | list[str]:
+    """Normalize one hook-entry path, or each path in a list."""
     if isinstance(value, list):
-        return [_normalize(path) for path in value]
-    return _normalize(value)
+        return [normalize_hook_path(path) for path in value]
+    return normalize_hook_path(value)
 
 
 def _forward(path: str) -> str:
@@ -198,7 +204,8 @@ def _forward(path: str) -> str:
     return paths.encode_url_path(path) or "/"
 
 
-def _canonical_info(info: dict[str, Any]) -> dict[str, Any]:
+def canonical_info(info: dict[str, Any]) -> dict[str, Any]:
+    """Copy one info dict, retaining canonical-path provenance on its name."""
     result = dict(info)
     name = result.get("name")
     if isinstance(name, str):
@@ -206,7 +213,15 @@ def _canonical_info(info: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-class _FsspecAdapter:
+def remap(source_paths: list[str], destination: str) -> list[str]:
+    """Map canonical source paths beneath one canonical destination."""
+    return [
+        canonical_path(path)
+        for path in other_paths(source_paths, normalize_hook_path(destination))
+    ]
+
+
+class FsspecAdapter:
     """Run inherited coordinators with canonical paths inside their seam."""
 
     _expand_path = AsyncFileSystem._expand_path  # noqa: SLF001 - inherited seam
@@ -218,9 +233,11 @@ class _FsspecAdapter:
     _walk = AsyncFileSystem._walk  # noqa: SLF001 - inherited seam
 
     def __init__(self, filesystem: AsyncFileSystem) -> None:
+        """Bind the adapter to the filesystem whose hooks it forwards to."""
         self._filesystem = filesystem
 
     def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - fsspec hook surface
+        """Delegate every unpinned attribute to the wrapped filesystem."""
         return getattr(self._filesystem, name)
 
     @overload
@@ -331,239 +348,3 @@ class _FsspecAdapter:
             _forward(path2),
             **kwargs,
         )
-
-
-class FsspecCoordinator:
-    """Own inherited scheduling, remapping, and canonical path provenance."""
-
-    def __init__(self, filesystem: AsyncFileSystem) -> None:
-        """Bind one filesystem to its internal fsspec adapter."""
-        self._filesystem = filesystem
-        self._adapter = cast("AsyncFileSystem", _FsspecAdapter(filesystem))
-
-    async def expand_path(
-        self,
-        path: str | list[str],
-        *,
-        recursive: bool,
-        maxdepth: int | None,
-        assume_literal: bool,
-    ) -> list[str]:
-        """Expand raw paths while retaining canonical coordinator results."""
-        expanded = await AsyncFileSystem._expand_path(  # noqa: SLF001
-            self._adapter,
-            _normalize_paths(path),
-            recursive=recursive,
-            maxdepth=maxdepth,
-            assume_literal=assume_literal,
-        )
-        return [canonical_path(item) for item in expanded]
-
-    async def find(
-        self,
-        path: str,
-        *,
-        maxdepth: int | None,
-        withdirs: bool,
-        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
-    ) -> list[str] | dict[str, dict[str, Any]]:
-        """Find entries without re-normalizing traversal results."""
-        result = await AsyncFileSystem._find(  # noqa: SLF001
-            self._adapter,
-            _normalize(path),
-            maxdepth=maxdepth,
-            withdirs=withdirs,
-            **kwargs,
-        )
-        if isinstance(result, dict):
-            return {
-                canonical_path(key): _canonical_info(info)
-                for key, info in result.items()
-            }
-        return [canonical_path(item) for item in result]
-
-    async def glob(
-        self,
-        path: str,
-        *,
-        maxdepth: int | None,
-        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
-    ) -> list[str] | dict[str, dict[str, Any]]:
-        """Expand a raw glob while retaining canonical matches."""
-        result = await AsyncFileSystem._glob(  # noqa: SLF001
-            self._adapter,
-            _normalize(path),
-            maxdepth=maxdepth,
-            **kwargs,
-        )
-        if isinstance(result, dict):
-            return {
-                canonical_path(key): _canonical_info(info)
-                for key, info in result.items()
-            }
-        return [canonical_path(item) for item in result]
-
-    async def walk(
-        self,
-        path: str,
-        *,
-        maxdepth: int | None,
-        on_error: str | Callable[[OSError], None],
-        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
-    ) -> AsyncIterator[Any]:
-        """Walk a raw path while retaining canonical descendants."""
-        async for item in self._adapter._walk(  # noqa: SLF001
-            _normalize(path),
-            maxdepth=maxdepth,
-            on_error=on_error,
-            **kwargs,
-        ):
-            root, directories, files = item
-            if isinstance(directories, dict):
-                directories = {
-                    name: _canonical_info(info) for name, info in directories.items()
-                }
-                files = {name: _canonical_info(info) for name, info in files.items()}
-            yield canonical_path(root), directories, files
-
-    async def cat(
-        self,
-        path: str | list[str],
-        *,
-        recursive: bool,
-        on_error: str,
-        batch_size: int | None,
-        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
-    ) -> bytes | dict[str, bytes | BaseException]:
-        """Read scalar or expanded paths through canonical hook forwarding."""
-        result = await AsyncFileSystem._cat(  # noqa: SLF001
-            self._adapter,
-            _normalize_paths(path),
-            recursive=recursive,
-            on_error=on_error,
-            batch_size=batch_size,
-            **kwargs,
-        )
-        if isinstance(result, dict):
-            return {canonical_path(key): value for key, value in result.items()}
-        return result
-
-    async def du(
-        self,
-        path: str,
-        *,
-        total: bool,
-        maxdepth: int | None,
-        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
-    ) -> int | dict[str, int]:
-        """Measure a tree through canonical find and info calls."""
-        result = await AsyncFileSystem._du(  # noqa: SLF001
-            self._adapter,
-            _normalize(path),
-            total=total,
-            maxdepth=maxdepth,
-            **kwargs,
-        )
-        if isinstance(result, dict):
-            return {canonical_path(key): value for key, value in result.items()}
-        return result
-
-    async def get(
-        self,
-        rpath: str | list[str],
-        lpath: str | list[str],
-        *,
-        recursive: bool,
-        callback: Callback,
-        maxdepth: int | None,
-        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
-    ) -> list[Any] | None:
-        """Download paths through canonical traversal and file hooks."""
-        return await AsyncFileSystem._get(  # noqa: SLF001
-            self._adapter,
-            _normalize_paths(rpath),
-            lpath,
-            recursive=recursive,
-            callback=callback,
-            maxdepth=maxdepth,
-            **kwargs,
-        )
-
-    async def put(  # noqa: PLR0913 - inherited fsspec hook signature
-        self,
-        lpath: str | list[str],
-        rpath: str | list[str],
-        *,
-        recursive: bool,
-        callback: Callback,
-        batch_size: int | None,
-        maxdepth: int | None,
-        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
-    ) -> list[Any] | None:
-        """Upload paths within one owned write scope."""
-        async with write_scope(self._filesystem):
-            return await AsyncFileSystem._put(  # noqa: SLF001
-                self._adapter,
-                lpath,
-                _normalize_paths(rpath),
-                recursive=recursive,
-                callback=cast(
-                    "Callback", _DeferredBranchCallback(callback, self._filesystem)
-                ),
-                batch_size=batch_size,
-                maxdepth=maxdepth,
-                **kwargs,
-            )
-
-    async def pipe(
-        self,
-        path: str | Mapping[str, bytes],
-        value: bytes | None,
-        *,
-        batch_size: int | None,
-        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
-    ) -> list[Any] | None:
-        """Write byte values within one owned write scope."""
-        normalized: str | dict[str, bytes]
-        if isinstance(path, str):
-            normalized = _normalize(path)
-        else:
-            normalized = {_normalize(key): item for key, item in path.items()}
-        async with write_scope(self._filesystem):
-            return await AsyncFileSystem._pipe(  # noqa: SLF001
-                self._adapter,
-                normalized,
-                value=value,
-                batch_size=batch_size,
-                **kwargs,
-            )
-
-    async def copy(  # noqa: PLR0913 - inherited fsspec hook signature
-        self,
-        path1: str | list[str],
-        path2: str | list[str],
-        *,
-        recursive: bool,
-        on_error: str | None,
-        maxdepth: int | None,
-        batch_size: int | None,
-        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
-    ) -> None:
-        """Copy paths through canonical traversal and copy hooks."""
-        await AsyncFileSystem._copy(  # noqa: SLF001
-            self._adapter,
-            _normalize_paths(path1),
-            _normalize_paths(path2),
-            recursive=recursive,
-            on_error=on_error,
-            maxdepth=maxdepth,
-            batch_size=batch_size,
-            **kwargs,
-        )
-
-    def remap(self, source_paths: list[str], destination: str) -> list[str]:
-        """Map canonical source paths beneath one canonical destination."""
-        return [
-            canonical_path(path)
-            for path in other_paths(source_paths, _normalize(destination))
-        ]

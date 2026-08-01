@@ -108,21 +108,3 @@ async def _run_byte_range(
             raise _CommandFailureError(error=error) from error
 
     await _run_mapped_command(command, (operand,), sources, execute)
-
-
-async def _run_head(
-    command: str,
-    count: int,
-    operand: _MappedOperand,
-    sources: Mapping[str, AsyncFilesystemSource],
-) -> None:
-    await _run_byte_range(command, count, operand, sources, _read_head)
-
-
-async def _run_tail(
-    command: str,
-    count: int,
-    operand: _MappedOperand,
-    sources: Mapping[str, AsyncFilesystemSource],
-) -> None:
-    await _run_byte_range(command, count, operand, sources, _read_tail)

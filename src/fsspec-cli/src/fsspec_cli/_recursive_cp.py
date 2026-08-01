@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, cast
 
 from ._command import (
     _backend_category,
+    _call,
     _CommandFailureError,
     _MappedOperand,
     _render_operand_diagnostic,
@@ -20,13 +21,13 @@ from ._command import (
 from ._diagnostics import _render_diagnostic_value
 from ._manifest import (
     _MAX_ENTRIES,
-    _call,
     _entry,
     _EntryLimitError,
     _IncompatibleResultError,
     _Manifest,
     _manifest,
     _ManifestEntry,
+    _shared_tokens_match,
     _UnsupportedEntryError,
 )
 from ._path import (
@@ -107,18 +108,10 @@ def _classify_source_info(
     operand: _MappedOperand,
     info: object,
 ) -> _RecursiveCpFailure | None:
-    if not isinstance(info, Mapping):
-        return _RecursiveCpFailure(operand, "incompatible result")
-    typed_info = cast("Mapping[object, object]", info)
-    kind = typed_info.get("type")
-    if type(kind) is not str:
-        return _RecursiveCpFailure(operand, "incompatible result")
-    islink = typed_info.get("islink", False)
-    if type(islink) is not bool:
-        return _RecursiveCpFailure(operand, "incompatible result")
-    if islink or kind not in {"directory", "file"}:
-        return _RecursiveCpFailure(operand, "unsupported entry type")
-    if kind == "file":
+    entry = _classify_existing(operand, operand.path, info, require_name=False)
+    if isinstance(entry, _RecursiveCpFailure):
+        return entry
+    if entry.kind == "file":
         return _RecursiveCpFailure(operand, "not a directory")
     return None
 
@@ -181,18 +174,6 @@ def _cleanup_staging(
 def _cleanup_under_control(command: str, source: _MappedOperand, path: str) -> None:
     with suppress(BaseException):  # Original control flow wins.
         _cleanup_staging(command, source, path)
-
-
-def _shared_tokens_match(
-    source_tokens: tuple[tuple[str, str | bytes], ...],
-    destination_tokens: tuple[tuple[str, str | bytes], ...],
-) -> bool:
-    destination = dict(destination_tokens)
-    return all(
-        destination[name] == value
-        for name, value in source_tokens
-        if name in destination
-    )
 
 
 @dataclass(frozen=True)
@@ -296,7 +277,7 @@ class _RecursiveCopy:
         manifest: _Manifest,
     ) -> tuple[tuple[_ManifestEntry, ...], _RecursiveCpFailure | None]:
         missing: list[_ManifestEntry] = []
-        for entry in manifest.entries:
+        for entry in manifest:
             path = _destination_path(root, entry.relative)
             info, error = await _optional_info(self.destination_filesystem, path)
             if error is not None:
@@ -426,7 +407,7 @@ class _RecursiveCopy:
                     residue=True,
                 )
 
-        for entry in manifest.entries:
+        for entry in manifest:
             if entry.kind != "file":
                 continue
             failure = await self._transfer(
@@ -466,7 +447,7 @@ class _RecursiveCopy:
         manifest: _Manifest,
     ) -> _RecursiveCpFailure | None:
         try:
-            for source_entry in manifest.entries:
+            for source_entry in manifest:
                 path = _destination_path(root, source_entry.relative)
                 info = await _call(self.destination_filesystem, "_info", path)
                 destination_entry = _entry(
@@ -479,7 +460,7 @@ class _RecursiveCopy:
                     destination_entry.size != source_entry.size
                     or not _shared_tokens_match(
                         source_entry.tokens,
-                        destination_entry.tokens,
+                        dict(destination_entry.tokens),
                     )
                 ):
                     return _RecursiveCpFailure(
