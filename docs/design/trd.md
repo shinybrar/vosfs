@@ -189,7 +189,7 @@ fetches it again.
 | Resource | v0.3.0 class | Supported use |
 | --- | --- | --- |
 | `/capabilities` | Native | Discover the node and synchronous-transfer bindings and their security methods. |
-| `/nodes/*` | Native | GET node metadata/listing, PUT node creation, one private POST node-update primitive, and DELETE one file or empty container. v0.3.0 exposes no generic public property-write API. |
+| `/nodes/*` | Native | GET node metadata/listing, PUT node creation, and DELETE one file or empty container. No property-write API is exposed. |
 | `/synctrans` | Native | Synchronous `pullFromVoSpace` and `pushToVoSpace` negotiation only. |
 | Negotiated `/files/*` endpoint | Native | HEAD/GET whole bytes and PUT create-or-truncate bytes. The URL is consumed only when returned by negotiation. |
 
@@ -266,13 +266,8 @@ Client-derived move of any LinkNode is unsupported and **MUST** raise
 `NotImplementedError` before copy or delete mutation.
 
 Generic property writes, permission mutation, public link creation, `chmod`,
-and `chown` are unsupported.
-
-The implementation retains one private node-update primitive that POSTs an
-explicitly supplied set of mutable, non-administrative properties for protocol
-conformance and internal workflows. It **MUST NOT** accept owner, group,
-permission, quota, length, checksum, creator, or node-type changes, and no
-public fsspec method exposes it in v0.3.0.
+and `chown` are unsupported. The implementation carries no node-update
+primitive: property writes of any kind are outside the capability contract.
 
 ## 7. Synchronous byte negotiation
 

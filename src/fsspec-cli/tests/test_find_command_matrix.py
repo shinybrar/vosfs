@@ -14,94 +14,32 @@ from typer.testing import CliRunner
 
 from vosfs import VOSpaceFileSystem
 
-from ._matrix_support import _block_network, _ProbedSource
+from ._matrix_support import (
+    _memory_source,
+    _ProbedSource,
+)
+from ._vosfs_matrix_support import (
+    _CAPABILITIES,
+    _vos_child,
+    _vos_container,
+    _vosfs_source,
+)
 
 _FilesystemT = TypeVar("_FilesystemT", bound=AsyncFileSystem)
-_BASE_URL = "https://example.test/arc"
-_NODES_URL = f"{_BASE_URL}/nodes"
-_AUTHORITY = "example.test!vault"
-_CAPABILITIES = f"""<?xml version="1.0" encoding="UTF-8"?>
-<vosi:capabilities xmlns:vosi="http://www.ivoa.net/xml/VOSICapabilities/v1.0"
-                   xmlns:vs="http://www.ivoa.net/xml/VODataService/v1.1"
-                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <capability standardID="ivo://ivoa.net/std/VOSpace/v2.0#nodes">
-    <interface xsi:type="vs:ParamHTTP" role="std">
-      <accessURL use="base">{_NODES_URL}</accessURL>
-    </interface>
-  </capability>
-</vosi:capabilities>
-""".encode()
-
-
-def _container(path: str, children: str = "") -> bytes:
-    return f"""<vos:node
-    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}{path}">
-  <vos:properties/>
-  <vos:nodes>{children}</vos:nodes>
-</vos:node>
-""".encode()
-
-
-def _data_child(path: str) -> str:
-    return f"""<vos:node xsi:type="vos:DataNode"
-      uri="vos://{_AUTHORITY}{path}">
-  <vos:properties>
-    <vos:property uri="ivo://ivoa.net/vospace/core#length">1</vos:property>
-  </vos:properties>
-</vos:node>"""
-
-
-def _directory_child(path: str) -> str:
-    return f"""<vos:node xsi:type="vos:ContainerNode"
-      uri="vos://{_AUTHORITY}{path}">
-  <vos:properties/>
-  <vos:nodes/>
-</vos:node>"""
-
-
-_DOCS = _container(
+_DOCS = _vos_container(
     "/docs",
-    _data_child("/docs/a.txt")
-    + _directory_child("/docs/sub")
-    + _directory_child("/docs/empty"),
+    _vos_child("DataNode", "/docs/a.txt", length=1)
+    + _vos_child("ContainerNode", "/docs/sub")
+    + _vos_child("ContainerNode", "/docs/empty"),
 )
-_SUB = _container("/docs/sub", _data_child("/docs/sub/b.txt"))
-_EMPTY = _container("/docs/empty")
+_SUB = _vos_container("/docs/sub", _vos_child("DataNode", "/docs/sub/b.txt", length=1))
+_EMPTY = _vos_container("/docs/empty")
 _RESPONSES: dict[tuple[str, str], httpx.Response] = {
     ("GET", "/arc/capabilities"): httpx.Response(200, content=_CAPABILITIES),
     ("GET", "/arc/nodes/docs"): httpx.Response(200, content=_DOCS),
     ("GET", "/arc/nodes/docs/sub"): httpx.Response(200, content=_SUB),
     ("GET", "/arc/nodes/docs/empty"): httpx.Response(200, content=_EMPTY),
 }
-
-
-@pytest.fixture(autouse=True)
-def _prohibit_unplanned_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    _block_network(monkeypatch)
-
-
-class _StrictFindTransport(httpx.MockTransport):
-    def __init__(self) -> None:
-        self.closed = False
-        super().__init__(self._respond)
-
-    async def _respond(self, request: httpx.Request) -> httpx.Response:
-        call = (request.method, request.url.path)
-        response = _RESPONSES.get(call)
-        if response is None:
-            message = f"unplanned mocked request: {call!r}"
-            raise AssertionError(message)
-        return response
-
-    async def aclose(self) -> None:
-        self.closed = True
-        await super().aclose()
-
-
-async def _close_vosfs(filesystem: VOSpaceFileSystem) -> None:
-    await filesystem.aclose()
 
 
 def _exercise_find_profile(  # noqa: PLR0913 - matrix golden expectations.
@@ -191,22 +129,11 @@ def test_adapted_local_find_profile_uses_native_temporary_storage(
 def test_adapted_memory_find_profile_has_isolated_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(MemoryFileSystem, "store", {})
-    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
-    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
-
-    def make_filesystem() -> AsyncFileSystemWrapper:
-        MemoryFileSystem.store.clear()
-        MemoryFileSystem.pseudo_dirs[:] = [""]
-        MemoryFileSystem.clear_instance_cache()
-        filesystem = MemoryFileSystem()
-        filesystem.makedirs("/docs/sub")
-        filesystem.makedirs("/docs/empty")
-        filesystem.pipe_file("/docs/a.txt", b"a")
-        filesystem.pipe_file("/docs/sub/b.txt", b"b")
-        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
-
-    source = _ProbedSource(make_filesystem)
+    source = _memory_source(
+        monkeypatch,
+        {"/docs/a.txt": b"a", "/docs/sub/b.txt": b"b"},
+        directories=("/docs/sub", "/docs/empty"),
+    )
 
     _exercise_find_profile(
         "memory",
@@ -223,20 +150,7 @@ def test_adapted_memory_find_profile_has_isolated_state(
 
 
 def test_native_vosfs_find_profile_uses_only_mocked_transport() -> None:
-    transports: list[_StrictFindTransport] = []
-
-    def make_filesystem() -> VOSpaceFileSystem:
-        transport = _StrictFindTransport()
-        transports.append(transport)
-        return VOSpaceFileSystem(
-            _BASE_URL,
-            transport=transport,
-            asynchronous=True,
-            skip_instance_cache=True,
-            trust_env=False,
-        )
-
-    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+    source, transports = _vosfs_source(_RESPONSES)
 
     _exercise_find_profile(
         "vos",

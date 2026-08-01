@@ -8,7 +8,7 @@ from collections.abc import Callable, Coroutine
 import pytest
 import typer
 
-from ._support import _invoke_ls, _RecordingFileSystem, _RecordingSource
+from ._support import _invoke, _RecordingFileSystem, _RecordingSource
 
 
 def test_ls_lists_one_directory_through_names_only_async_operations() -> None:
@@ -19,7 +19,7 @@ def test_ls_lists_one_directory_through_names_only_async_operations() -> None:
         ls_result=["/docs/notes.txt", "/docs/guide.md"],
     )
 
-    result = _invoke_ls(["memory:/docs"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/docs"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == "guide.md\nnotes.txt\n"
@@ -40,7 +40,7 @@ def test_ls_writes_nothing_for_an_empty_directory() -> None:
         ls_result=[],
     )
 
-    result = _invoke_ls(["memory:/empty"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/empty"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -65,7 +65,7 @@ def test_ls_rejects_non_concrete_names_lists(listing: object) -> None:
         ls_result=listing,
     )
 
-    result = _invoke_ls(["memory:/docs"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/docs"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -90,7 +90,7 @@ def test_ls_rejects_non_immediate_lexical_children(child: str) -> None:
         ls_result=[child],
     )
 
-    result = _invoke_ls(["memory:/docs"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/docs"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -117,7 +117,7 @@ def test_ls_validates_root_and_trailing_slash_children(
         ls_result=listing,
     )
 
-    result = _invoke_ls([f"memory:{path}"], sources={"memory": source})
+    result = _invoke("ls", [f"memory:{path}"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == stdout
@@ -140,7 +140,7 @@ def test_ls_omits_dot_prefixed_directory_children_by_default() -> None:
         ],
     )
 
-    result = _invoke_ls(["memory:/docs"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/docs"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == "visible\n"
@@ -159,7 +159,7 @@ def test_ls_almost_all_includes_hidden_children_but_not_dot_entries() -> None:
         ],
     )
 
-    result = _invoke_ls(["-A", "memory:/docs"], sources={"memory": source})
+    result = _invoke("ls", ["-A", "memory:/docs"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == ".hidden\nvisible\n"
@@ -173,7 +173,7 @@ def test_ls_preserves_duplicate_directory_children() -> None:
         ls_result=["/docs/guide.md", "/docs/guide.md"],
     )
 
-    result = _invoke_ls(["memory:/docs"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/docs"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == "guide.md\nguide.md\n"
@@ -187,7 +187,7 @@ def test_ls_validates_hidden_children_before_filtering() -> None:
         ls_result=["/docs/visible", "/docs/.nested/bad"],
     )
 
-    result = _invoke_ls(["memory:/docs"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/docs"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -197,7 +197,7 @@ def test_ls_validates_hidden_children_before_filtering() -> None:
 def test_ls_keeps_an_explicitly_named_dot_prefixed_file_operand() -> None:
     source = _RecordingSource([], {"type": "file"})
 
-    result = _invoke_ls(["memory:/.hidden"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/.hidden"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == "memory:/.hidden\n"
@@ -213,7 +213,7 @@ def test_ls_uses_current_collation_with_raw_string_ties(monkeypatch) -> None:
         ls_result=["/docs/beta", "/docs/zeta", "/docs/alpha"],
     )
 
-    result = _invoke_ls(["memory:/docs"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/docs"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == "zeta\nalpha\nbeta\n"
@@ -235,7 +235,7 @@ def test_ls_preserves_a_collation_failure_without_a_backend_diagnostic(
         ls_result=["/docs/guide.md"],
     )
 
-    result = _invoke_ls(["memory:/docs"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/docs"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.exception is collation_error
@@ -276,7 +276,7 @@ def test_ls_maps_runtime_failures_to_locked_categories(
         ls_error=error if stage == "ls" else None,
     )
 
-    result = _invoke_ls(["memory:/docs"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/docs"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -306,7 +306,7 @@ def test_ls_preserves_backend_error_when_its_diagnostic_write_fails(
 
     monkeypatch.setattr(typer, "echo", fail_diagnostic)
 
-    result = _invoke_ls(["memory:/file"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/file"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.exception is renderer_error
@@ -325,7 +325,7 @@ def test_ls_buffers_a_whole_directory_before_writing_stdout() -> None:
         ls_result=["/docs/accepted.txt", "/docs/nested/rejected.txt"],
     )
 
-    result = _invoke_ls(["memory:/docs"], sources={"memory": source})
+    result = _invoke("ls", ["memory:/docs"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -350,7 +350,7 @@ def test_ls_preserves_directory_listing_control_flow_unchanged(
     )
 
     with pytest.raises(type(control)) as caught:
-        _invoke_ls(["memory:/docs"], sources={"memory": source})
+        _invoke("ls", ["memory:/docs"], sources={"memory": source})
 
     assert type(caught.value) is type(control)
     if not isinstance(control, asyncio.CancelledError):
@@ -399,7 +399,8 @@ def test_ls_drains_current_operation_then_stops_on_cancellation(
     monkeypatch.setattr(asyncio, "run", cancelling_run)
 
     with pytest.raises(asyncio.CancelledError):
-        _invoke_ls(
+        _invoke(
+            "ls",
             ["alpha:/one", "beta:/two"],
             sources={"alpha": alpha, "beta": beta},
         )

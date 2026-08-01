@@ -20,7 +20,7 @@ import inspect
 from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypeAlias, cast
 
 from ._command import _drain_current_operation
 from ._path import (
@@ -65,9 +65,7 @@ class _ManifestEntry:
     tokens: tuple[tuple[str, str | bytes], ...]
 
 
-@dataclass(frozen=True)
-class _Manifest:
-    entries: tuple[_ManifestEntry, ...]
+_Manifest: TypeAlias = tuple[_ManifestEntry, ...]
 
 
 @dataclass(frozen=True)
@@ -75,16 +73,6 @@ class _WalkRow:
     root: str
     entries: tuple[_ManifestEntry, ...]
     directory_paths: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class _Rows:
-    values: tuple[_WalkRow, ...]
-
-
-@dataclass(frozen=True)
-class _WorkerError:
-    error: BaseException
 
 
 def _close_sync_iterator(iterator: Iterator[object]) -> None:
@@ -117,19 +105,16 @@ async def _resolve_sync_iterator(
     return resolved
 
 
-async def _call(
-    filesystem: AsyncFileSystem,
-    operation: str,
-    *args: object,
-    **kwargs: object,
-) -> object:
-    method = getattr(filesystem, operation, None)
-    if not callable(method):
-        raise NotImplementedError
-    result = method(*args, **kwargs)
-    if not inspect.isawaitable(result):
-        raise NotImplementedError
-    return await _drain_current_operation(result)
+def _shared_tokens_match(
+    source_tokens: tuple[tuple[str, object], ...],
+    destination_tokens: Mapping[str, object],
+) -> bool:
+    """Check that every verification token present on both sides agrees."""
+    return all(
+        destination_tokens[name] == value
+        for name, value in source_tokens
+        if name in destination_tokens
+    )
 
 
 def _tokens(info: Mapping[object, object]) -> tuple[tuple[str, str | bytes], ...]:
@@ -254,13 +239,12 @@ def _accept_walk_row(
 def _materialize_sync(
     iterator: Iterator[object],
     source_path: str,
-) -> _Rows | _WorkerError:
+) -> tuple[_WalkRow, ...]:
     values: list[_WalkRow] = []
     count = 1
     seen_roots: set[str] = set()
     expected_roots = {source_path}
     seen_relatives = {""}
-    error: BaseException | None = None
     try:
         for value in iterator:
             row = _walk_row(
@@ -276,28 +260,21 @@ def _materialize_sync(
                 seen_relatives=seen_relatives,
             )
             count += len(row.entries)
-    except BaseException as caught:  # noqa: BLE001 - return across task as data.
-        error = caught
-    close = getattr(iterator, "close", None)
-    if callable(close):
-        try:
-            close()
-        except BaseException as caught:  # noqa: BLE001 - return across task as data.
-            if error is None:
-                error = caught
-    return _WorkerError(error) if error is not None else _Rows(tuple(values))
+    except BaseException:
+        with suppress(BaseException):
+            _close_sync_iterator(iterator)
+        raise
+    _close_sync_iterator(iterator)
+    return tuple(values)
 
 
 async def _sync_rows(
     iterator: Iterator[object],
     source_path: str,
 ) -> tuple[_WalkRow, ...]:
-    outcome = await _drain_current_operation(
+    return await _drain_current_operation(
         asyncio.to_thread(_materialize_sync, iterator, source_path)
     )
-    if isinstance(outcome, _WorkerError):
-        raise outcome.error
-    return outcome.values
 
 
 async def _close_async_iterator(iterator: AsyncIterator[object]) -> None:
@@ -388,7 +365,7 @@ def _manifest_from_rows(
         expected_roots.update(row.directory_paths)
     if set(rows) != expected_roots:
         raise _IncompatibleResultError
-    return _Manifest(tuple(sorted(entries.values(), key=lambda item: item.relative)))
+    return tuple(sorted(entries.values(), key=lambda item: item.relative))
 
 
 async def _manifest(

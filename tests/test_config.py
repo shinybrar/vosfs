@@ -66,7 +66,7 @@ def test_multiple_environment_sources_rejected() -> None:
 
 def test_no_credential_is_anonymous() -> None:
     cred = resolve_credential(token=None, tokenfile=None, certfile=None, environ={})
-    assert cred.is_anonymous
+    assert cred.method == "anonymous"
 
 
 # --- rereading token material ---------------------------------------------------

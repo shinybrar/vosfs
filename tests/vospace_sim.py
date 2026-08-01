@@ -21,6 +21,8 @@ from conftest import (
     NODES_URL,
     SYNC_URL,
     mock_capabilities,
+    stream_body,
+    target_path,
     transfer_details,
 )
 from defusedxml import ElementTree
@@ -28,8 +30,6 @@ from defusedxml import ElementTree
 from vosfs import paths
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     import respx
 
 _NODES_PREFIX = urlsplit(NODES_URL).path
@@ -236,7 +236,7 @@ class VOSpaceSim:
     # -- byte transfer -------------------------------------------------------
 
     def _negotiate(self, request: httpx.Request) -> httpx.Response:
-        target = _target_path(request.content)
+        target = target_path(request.content)
         location = f"{BASE_URL}/details?t={quote(target)}"
         return httpx.Response(303, headers={"Location": location})
 
@@ -264,19 +264,7 @@ class VOSpaceSim:
             return httpx.Response(404)
         if content == b"":
             return httpx.Response(204)
-        return httpx.Response(200, content=_stream(content))
-
-
-async def _stream(data: bytes) -> AsyncIterator[bytes]:
-    yield data
-
-
-def _target_path(content: bytes | None) -> str:
-    match = re.search(r"<[^>]*target[^>]*>([^<]+)</", (content or b"").decode())
-    if match is None:
-        return "/"
-    prefix = f"vos://{AUTHORITY}"
-    return match.group(1).strip()[len(prefix) :] or "/"
+        return httpx.Response(200, content=stream_body(content))
 
 
 def _properties(content: bytes | None) -> dict[str, str]:

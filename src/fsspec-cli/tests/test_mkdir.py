@@ -8,14 +8,14 @@ from unittest.mock import Mock
 import pytest
 import typer
 
-from ._support import _invoke_mkdir, _RecordingSource, _source_must_not_run
+from ._support import _invoke, _RecordingSource, _source_must_not_run
 
 
 def test_mkdir_creates_one_directory_without_stdout() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_mkdir(["memory:/docs/new"], sources={"memory": source})
+    result = _invoke("mkdir", ["memory:/docs/new"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -33,7 +33,8 @@ def test_mkdir_passes_literal_separator_and_dot_spelling_to_backend() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_mkdir(
+    result = _invoke(
+        "mkdir",
         ["memory:/docs//./new/"],
         sources={"memory": source},
     )
@@ -49,7 +50,8 @@ def test_mkdir_acquires_distinct_sources_before_reusing_them() -> None:
     events: list[tuple[object, ...]] = []
     shared_source = _RecordingSource(events)
 
-    result = _invoke_mkdir(
+    result = _invoke(
+        "mkdir",
         ["alpha:/one", "beta:/two", "alpha:/three"],
         sources={
             "beta": shared_source,
@@ -84,7 +86,8 @@ def test_mkdir_continues_after_an_earlier_success() -> None:
         mkdir_by_path={"/docs/bad": FileNotFoundError("missing parent")},
     )
 
-    result = _invoke_mkdir(
+    result = _invoke(
+        "mkdir",
         ["memory:/docs/good", "memory:/docs/bad"],
         sources={"memory": source},
     )
@@ -105,7 +108,8 @@ def test_mkdir_continues_after_an_earlier_failure() -> None:
         mkdir_by_path={"/docs/bad": FileNotFoundError("missing parent")},
     )
 
-    result = _invoke_mkdir(
+    result = _invoke(
+        "mkdir",
         ["memory:/docs/bad", "memory:/docs/good"],
         sources={"memory": source},
     )
@@ -129,7 +133,7 @@ def test_mkdir_rejects_root_operand_when_it_already_exists() -> None:
         mkdir_by_path={"/": FileExistsError("/")},
     )
 
-    result = _invoke_mkdir(["memory:/"], sources={"memory": source})
+    result = _invoke("mkdir", ["memory:/"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -142,7 +146,8 @@ def test_mkdir_rejects_duplicate_operands_on_the_second_attempt() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_mkdir(
+    result = _invoke(
+        "mkdir",
         ["memory:/docs/new", "memory:/docs/new"],
         sources={"memory": source},
     )
@@ -157,7 +162,7 @@ def test_mkdir_asserts_create_parents_false_at_the_operation_boundary() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_mkdir(["memory:/docs/new"], sources={"memory": source})
+    result = _invoke("mkdir", ["memory:/docs/new"], sources={"memory": source})
 
     assert result.exit_code == 0
     mkdir_events = [event for event in events if event[0] == "mkdir"]
@@ -180,7 +185,7 @@ def test_mkdir_rejects_malformed_post_verify_state(
 ) -> None:
     source = _RecordingSource([], post_info_result=post_info)
 
-    result = _invoke_mkdir(["memory:/docs/new"], sources={"memory": source})
+    result = _invoke("mkdir", ["memory:/docs/new"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -190,7 +195,7 @@ def test_mkdir_rejects_malformed_post_verify_state(
 def test_mkdir_rejects_missing_post_verify_result() -> None:
     source = _RecordingSource([], post_info_result=None)
 
-    result = _invoke_mkdir(["memory:/docs/new"], sources={"memory": source})
+    result = _invoke("mkdir", ["memory:/docs/new"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -221,7 +226,7 @@ def test_mkdir_maps_confirmed_mkdir_failures_to_locked_categories(
     error = error_factory()
     source = _RecordingSource([], mkdir_error=error)
 
-    result = _invoke_mkdir(["memory:/docs/new"], sources={"memory": source})
+    result = _invoke("mkdir", ["memory:/docs/new"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -254,7 +259,7 @@ def test_mkdir_maps_post_success_verify_failures_to_uncertain_state(
         post_info_by_path={"/docs/new": error},
     )
 
-    result = _invoke_mkdir(["memory:/docs/new"], sources={"memory": source})
+    result = _invoke("mkdir", ["memory:/docs/new"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -262,7 +267,7 @@ def test_mkdir_maps_post_success_verify_failures_to_uncertain_state(
 
 
 def test_mkdir_help_discloses_source_default_mode_divergence() -> None:
-    result = _invoke_mkdir(["--help"])
+    result = _invoke("mkdir", ["--help"])
 
     assert result.exit_code == 0
     assert "Create directories" in result.stdout
@@ -270,7 +275,7 @@ def test_mkdir_help_discloses_source_default_mode_divergence() -> None:
 
 
 def test_mkdir_rejects_a_missing_mapped_filesystem_operand() -> None:
-    result = _invoke_mkdir([])
+    result = _invoke("mkdir", [])
 
     assert (result.exit_code, result.stdout) == (2, "")
     assert "Missing argument" in result.stderr
@@ -292,7 +297,7 @@ def test_mkdir_rejects_unsupported_options_without_entering_sources(
     option: str,
     context: str,
 ) -> None:
-    result = _invoke_mkdir([option, "memory:/docs/new"])
+    result = _invoke("mkdir", [option, "memory:/docs/new"])
 
     assert (result.exit_code, result.stdout) == (2, "")
     assert context in result.stderr
@@ -316,7 +321,7 @@ def test_mkdir_rejects_malformed_mapped_filesystem_operands(
     arguments: list[str],
     rendered: str,
 ) -> None:
-    result = _invoke_mkdir(arguments)
+    result = _invoke("mkdir", arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -324,7 +329,8 @@ def test_mkdir_rejects_malformed_mapped_filesystem_operands(
 
 
 def test_mkdir_reports_unknown_names_with_locale_sorted_known_names() -> None:
-    result = _invoke_mkdir(
+    result = _invoke(
+        "mkdir",
         ["other:/docs/new"],
         sources={
             "zeta": _source_must_not_run,
@@ -345,7 +351,7 @@ def test_mkdir_refuses_an_active_same_thread_event_loop(monkeypatch) -> None:
 
     async def invoke() -> object:
         monkeypatch.setattr(asyncio, "run", recording_run)
-        return _invoke_mkdir(["memory:/docs/new"])
+        return _invoke("mkdir", ["memory:/docs/new"])
 
     result = real_run(invoke())
 
@@ -367,7 +373,7 @@ def test_mkdir_preserves_control_flow_unchanged(control: BaseException) -> None:
     source = _RecordingSource([], mkdir_error=control)
 
     with pytest.raises(type(control)) as caught:
-        _invoke_mkdir(["memory:/docs/new"], sources={"memory": source})
+        _invoke("mkdir", ["memory:/docs/new"], sources={"memory": source})
 
     assert type(caught.value) is type(control)
     if not isinstance(control, asyncio.CancelledError):
@@ -397,7 +403,7 @@ def test_mkdir_preserves_backend_error_when_its_diagnostic_write_fails(
 
     monkeypatch.setattr(typer, "echo", fail_diagnostic)
 
-    result = _invoke_mkdir(["memory:/docs/new"], sources={"memory": source})
+    result = _invoke("mkdir", ["memory:/docs/new"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.exception is renderer_error
@@ -427,7 +433,7 @@ def test_mkdir_keeps_diagnostic_control_flow_active_during_cleanup(
     monkeypatch.setattr(typer, "echo", fail_diagnostic)
 
     with pytest.raises(_ControlFlow) as caught:
-        _invoke_mkdir(["memory:/docs/new"], sources={"memory": source})
+        _invoke("mkdir", ["memory:/docs/new"], sources={"memory": source})
 
     assert caught.value is control
     exception_type, exception, traceback = source.exit_calls[0]
@@ -444,7 +450,8 @@ def test_mkdir_stops_acquisition_after_a_source_factory_failure() -> None:
     def broken_source() -> NoReturn:
         raise factory_error
 
-    result = _invoke_mkdir(
+    result = _invoke(
+        "mkdir",
         ["first:/one", "broken:/two", "later:/three"],
         sources={
             "first": first,
@@ -466,7 +473,8 @@ def test_mkdir_reports_source_exit_failures_in_reverse_order() -> None:
     alpha = _RecordingSource(events, exit_error=OSError("alpha exit"))
     beta = _RecordingSource(events, exit_error=RuntimeError("beta exit"))
 
-    result = _invoke_mkdir(
+    result = _invoke(
+        "mkdir",
         ["alpha:/one", "beta:/two"],
         sources={"alpha": alpha, "beta": beta},
     )
@@ -483,7 +491,7 @@ def test_mkdir_p_delegates_one_makedirs_call_for_deep_parents() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_mkdir(["-p", "memory:/a/b/c/new"], sources={"memory": source})
+    result = _invoke("mkdir", ["-p", "memory:/a/b/c/new"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -501,8 +509,12 @@ def test_mkdir_p_treats_existing_directory_as_success() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    first = _invoke_mkdir(["-p", "memory:/docs/existing"], sources={"memory": source})
-    second = _invoke_mkdir(["-p", "memory:/docs/existing"], sources={"memory": source})
+    first = _invoke(
+        "mkdir", ["-p", "memory:/docs/existing"], sources={"memory": source}
+    )
+    second = _invoke(
+        "mkdir", ["-p", "memory:/docs/existing"], sources={"memory": source}
+    )
 
     assert first.exit_code == 0
     assert second.exit_code == 0
@@ -518,7 +530,9 @@ def test_mkdir_p_rejects_existing_leaf_file() -> None:
         makedirs_by_path={"/docs/notes.txt": FileExistsError("/docs/notes.txt")},
     )
 
-    result = _invoke_mkdir(["-p", "memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke(
+        "mkdir", ["-p", "memory:/docs/notes.txt"], sources={"memory": source}
+    )
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -534,7 +548,8 @@ def test_mkdir_p_rejects_intermediate_file_parent() -> None:
         },
     )
 
-    result = _invoke_mkdir(
+    result = _invoke(
+        "mkdir",
         ["-p", "memory:/docs/notes.txt/child"],
         sources={"memory": source},
     )
@@ -548,7 +563,7 @@ def test_mkdir_p_succeeds_when_root_already_exists() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_mkdir(["-p", "memory:/"], sources={"memory": source})
+    result = _invoke("mkdir", ["-p", "memory:/"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -570,7 +585,7 @@ def test_mkdir_p_accepts_grouped_and_repeated_parent_options(
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_mkdir(arguments, sources={"memory": source})
+    result = _invoke("mkdir", arguments, sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -582,7 +597,8 @@ def test_mkdir_p_accepts_parent_option_after_first_operand() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_mkdir(
+    result = _invoke(
+        "mkdir",
         ["memory:/docs/a", "-p", "memory:/docs/b"],
         sources={"memory": source},
     )
@@ -595,7 +611,8 @@ def test_mkdir_p_acquires_distinct_sources_before_reusing_them() -> None:
     events: list[tuple[object, ...]] = []
     shared_source = _RecordingSource(events)
 
-    result = _invoke_mkdir(
+    result = _invoke(
+        "mkdir",
         ["-p", "alpha:/one", "beta:/two", "alpha:/three"],
         sources={
             "beta": shared_source,
@@ -627,7 +644,8 @@ def test_mkdir_p_treats_repeated_operands_as_idempotent_success() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_mkdir(
+    result = _invoke(
+        "mkdir",
         ["-p", "memory:/docs/new", "memory:/docs/new"],
         sources={"memory": source},
     )
@@ -646,7 +664,7 @@ def test_mkdir_p_preserves_control_flow_unchanged(control: BaseException) -> Non
     source = _RecordingSource([], makedirs_error=control)
 
     with pytest.raises(type(control)) as caught:
-        _invoke_mkdir(["-p", "memory:/docs/new"], sources={"memory": source})
+        _invoke("mkdir", ["-p", "memory:/docs/new"], sources={"memory": source})
 
     assert type(caught.value) is type(control)
     if not isinstance(control, asyncio.CancelledError):
@@ -662,7 +680,8 @@ def test_mkdir_p_reports_source_exit_failures_in_reverse_order() -> None:
     alpha = _RecordingSource(events, exit_error=OSError("alpha exit"))
     beta = _RecordingSource(events, exit_error=RuntimeError("beta exit"))
 
-    result = _invoke_mkdir(
+    result = _invoke(
+        "mkdir",
         ["-p", "alpha:/one", "beta:/two"],
         sources={"alpha": alpha, "beta": beta},
     )
@@ -682,7 +701,8 @@ def test_mkdir_p_continues_after_partial_success() -> None:
         makedirs_by_path={"/docs/bad": PermissionError("denied")},
     )
 
-    result = _invoke_mkdir(
+    result = _invoke(
+        "mkdir",
         ["-p", "memory:/docs/good", "memory:/docs/bad", "memory:/docs/also-good"],
         sources={"memory": source},
     )
@@ -712,7 +732,7 @@ def test_mkdir_p_rejects_malformed_post_verify_state(
 ) -> None:
     source = _RecordingSource([], post_info_result=post_info)
 
-    result = _invoke_mkdir(["-p", "memory:/docs/new"], sources={"memory": source})
+    result = _invoke("mkdir", ["-p", "memory:/docs/new"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -737,7 +757,7 @@ def test_mkdir_p_maps_confirmed_makedirs_failures_to_locked_categories(
     error = error_factory()
     source = _RecordingSource([], makedirs_error=error)
 
-    result = _invoke_mkdir(["-p", "memory:/docs/new"], sources={"memory": source})
+    result = _invoke("mkdir", ["-p", "memory:/docs/new"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -748,7 +768,7 @@ def test_mkdir_p_asserts_exist_ok_true_at_the_operation_boundary() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_mkdir(["-p", "memory:/docs/new"], sources={"memory": source})
+    result = _invoke("mkdir", ["-p", "memory:/docs/new"], sources={"memory": source})
 
     assert result.exit_code == 0
     makedirs_events = [event for event in events if event[0] == "makedirs"]
@@ -757,7 +777,7 @@ def test_mkdir_p_asserts_exist_ok_true_at_the_operation_boundary() -> None:
 
 
 def test_mkdir_p_help_discloses_source_default_mode_divergence() -> None:
-    result = _invoke_mkdir(["--help"])
+    result = _invoke("mkdir", ["--help"])
 
     assert result.exit_code == 0
     assert "Create directories" in result.stdout
@@ -770,7 +790,7 @@ def test_mkdir_without_p_still_rejects_missing_parent() -> None:
         mkdir_by_path={"/docs/absent/child": FileNotFoundError("missing parent")},
     )
 
-    result = _invoke_mkdir(["memory:/docs/absent/child"], sources={"memory": source})
+    result = _invoke("mkdir", ["memory:/docs/absent/child"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stderr == "mkdir: memory:/docs/absent/child: not found\n"

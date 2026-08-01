@@ -453,7 +453,7 @@ def test_cat_head_tail(router: respx.Router) -> None:
 def test_literal_percent_targets_survive_scalar_list_and_bulk_coordinators(
     router: respx.Router,
 ) -> None:
-    from conftest import BASE_URL, SYNC_URL, target_path
+    from conftest import BASE_URL, SYNC_URL, call_urls, target_path
 
     internal = "/authority/dir/100%41"
     mock_transfers(router, {internal: b"literal-percent"})
@@ -474,30 +474,30 @@ def test_literal_percent_targets_survive_scalar_list_and_bulk_coordinators(
         if call.request.method == "GET"
         and str(call.request.url).startswith(f"{BASE_URL}/files")
     ] == [internal, internal, internal]
-    assert [
-        str(call.request.url)
-        for call in router.calls
-        if call.request.method == "GET"
-        and str(call.request.url).startswith(f"{BASE_URL}/files")
-    ] == [f"{BASE_URL}/files?p=/authority/dir/100%2541"] * 3
+    assert (
+        call_urls(router, "GET", f"{BASE_URL}/files")
+        == [f"{BASE_URL}/files?p=/authority/dir/100%2541"] * 3
+    )
     fs.close()
 
 
 def test_literal_percent_target_survives_wildcard_expansion(
     router: respx.Router,
 ) -> None:
-    from conftest import AUTHORITY, BASE_URL, NODES_URL
+    from conftest import (
+        AUTHORITY,
+        BASE_URL,
+        NODES_URL,
+        call_urls,
+        container_xml,
+        data_child,
+    )
 
     internal = "/authority/dir/100%41"
-    listing = (
-        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
-        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/authority/dir">'
-        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:DataNode" '
-        f'uri="vos://{AUTHORITY}/authority/dir/100%2541">'
-        f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
-        f"15</vos:property></vos:properties></vos:node></vos:nodes></vos:node>"
-    ).encode()
+    listing = container_xml(
+        f"vos://{AUTHORITY}/authority/dir",
+        data_child(f"vos://{AUTHORITY}/authority/dir/100%2541", 15),
+    )
     router.get(f"{NODES_URL}/authority/dir").mock(
         return_value=httpx.Response(200, content=listing)
     )
@@ -509,12 +509,7 @@ def test_literal_percent_target_survives_wildcard_expansion(
     assert isinstance(matches[0], str)
     assert fs.cat("vos://authority/dir/*") == {internal: b"literal-percent"}
     assert fs.cat(matches[0]) == b"literal-percent"
-    byte_urls = [
-        str(call.request.url)
-        for call in router.calls
-        if call.request.method == "GET"
-        and str(call.request.url).startswith(f"{BASE_URL}/files")
-    ]
+    byte_urls = call_urls(router, "GET", f"{BASE_URL}/files")
     assert byte_urls == [f"{BASE_URL}/files?p=/authority/dir/100%2541"] * 2
     fs.close()
 
@@ -523,25 +518,22 @@ def test_literal_percent_target_survives_recursive_wildcard_get(
     router: respx.Router,
     tmp_path: Path,
 ) -> None:
-    from conftest import AUTHORITY, BASE_URL, NODES_URL
+    from conftest import (
+        AUTHORITY,
+        BASE_URL,
+        NODES_URL,
+        call_urls,
+        container_xml,
+        data_child,
+        data_xml,
+    )
 
     internal = "/authority/dir/100%41"
-    listing = (
-        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
-        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/authority/dir">'
-        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:DataNode" '
-        f'uri="vos://{AUTHORITY}/authority/dir/100%2541">'
-        f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
-        f"15</vos:property></vos:properties></vos:node></vos:nodes></vos:node>"
-    ).encode()
-    child = (
-        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
-        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-        f'xsi:type="vos:DataNode" uri="vos://{AUTHORITY}/authority/dir/100%2541">'
-        f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
-        f"15</vos:property></vos:properties></vos:node>"
-    ).encode()
+    listing = container_xml(
+        f"vos://{AUTHORITY}/authority/dir",
+        data_child(f"vos://{AUTHORITY}/authority/dir/100%2541", 15),
+    )
+    child = data_xml(f"vos://{AUTHORITY}/authority/dir/100%2541", 15)
     router.get(f"{NODES_URL}/authority/dir").mock(
         return_value=httpx.Response(200, content=listing)
     )
@@ -559,12 +551,7 @@ def test_literal_percent_target_survives_recursive_wildcard_get(
     assert (tmp_path / "100%41").read_bytes() == b"literal-percent"
     assert correct_node.called
     assert not wrong_node.called
-    byte_urls = [
-        str(call.request.url)
-        for call in router.calls
-        if call.request.method == "GET"
-        and str(call.request.url).startswith(f"{BASE_URL}/files")
-    ]
+    byte_urls = call_urls(router, "GET", f"{BASE_URL}/files")
     assert byte_urls == [f"{BASE_URL}/files?p=/authority/dir/100%2541"]
     fs.close()
 
@@ -573,32 +560,26 @@ def test_literal_percent_directory_survives_recursive_get(
     router: respx.Router,
     tmp_path: Path,
 ) -> None:
-    from conftest import AUTHORITY, BASE_URL, NODES_URL
+    from conftest import (
+        AUTHORITY,
+        BASE_URL,
+        NODES_URL,
+        call_urls,
+        container_child,
+        container_xml,
+        data_child,
+        data_xml,
+    )
 
-    root_listing = (
-        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
-        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/root">'
-        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:ContainerNode" '
-        f'uri="vos://{AUTHORITY}/root/100%2541"><vos:properties/>'
-        f"</vos:node></vos:nodes></vos:node>"
-    ).encode()
-    percent_listing = (
-        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
-        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/root/100%2541">'
-        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:DataNode" '
-        f'uri="vos://{AUTHORITY}/root/100%2541/child">'
-        f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
-        f"5</vos:property></vos:properties></vos:node></vos:nodes></vos:node>"
-    ).encode()
-    child = (
-        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
-        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-        f'xsi:type="vos:DataNode" uri="vos://{AUTHORITY}/root/100%2541/child">'
-        f'<vos:properties><vos:property uri="ivo://ivoa.net/vospace/core#length">'
-        f"5</vos:property></vos:properties></vos:node>"
-    ).encode()
+    root_listing = container_xml(
+        f"vos://{AUTHORITY}/root",
+        container_child(f"vos://{AUTHORITY}/root/100%2541"),
+    )
+    percent_listing = container_xml(
+        f"vos://{AUTHORITY}/root/100%2541",
+        data_child(f"vos://{AUTHORITY}/root/100%2541/child", 5),
+    )
+    child = data_xml(f"vos://{AUTHORITY}/root/100%2541/child", 5)
     router.get(f"{NODES_URL}/root").mock(
         return_value=httpx.Response(200, content=root_listing)
     )
@@ -632,12 +613,7 @@ def test_literal_percent_directory_survives_recursive_get(
     assert (target / "100%41" / "child").read_bytes() == b"child"
     assert correct_dir.called
     assert not wrong_dir.called
-    byte_urls = [
-        str(call.request.url)
-        for call in router.calls
-        if call.request.method == "GET"
-        and str(call.request.url).startswith(f"{BASE_URL}/files")
-    ]
+    byte_urls = call_urls(router, "GET", f"{BASE_URL}/files")
     assert byte_urls == [f"{BASE_URL}/files?p=/root/100%2541/child"]
     fs.close()
 
@@ -650,21 +626,14 @@ def test_direct_byte_endpoint_303_is_consumed_once_without_credentials(
         NODES_URL,
         ROOT_CONTAINER,
         SYNC_URL,
+        data_xml,
         mock_capabilities,
     )
 
     mock_capabilities(router)
     router.get(NODES_URL).mock(return_value=httpx.Response(200, content=ROOT_CONTAINER))
     router.get(f"{NODES_URL}/d.bin").mock(
-        return_value=httpx.Response(
-            200,
-            content=(
-                f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
-                f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-                f'xsi:type="vos:DataNode" uri="vos://{AUTHORITY}/d.bin">'
-                "<vos:properties/></vos:node>"
-            ).encode(),
-        )
+        return_value=httpx.Response(200, content=data_xml(f"vos://{AUTHORITY}/d.bin"))
     )
     endpoint = "http://download.test/files/preauth:TESTTOKEN/d.bin"
     post = router.post(SYNC_URL).mock(

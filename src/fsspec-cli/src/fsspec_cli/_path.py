@@ -1,16 +1,12 @@
 """Pure lexical path helpers."""
 
 
-def _strip_trailing_slashes(path: str) -> str:
-    return path.rstrip("/")
-
-
 def _is_root(path: str) -> bool:
-    return bool(path) and not _strip_trailing_slashes(path)
+    return bool(path) and not path.rstrip("/")
 
 
 def _lexical_root(path: str) -> str:
-    return _strip_trailing_slashes(path) or "/"
+    return path.rstrip("/") or "/"
 
 
 def _has_dot_segment(path: str) -> bool:
@@ -40,7 +36,7 @@ def _lexical_relative(parent: str, candidate: str) -> str | None:
 def _lexical_basename(path: str) -> str:
     if _is_root(path):
         return "/"
-    path = _strip_trailing_slashes(path)
+    path = path.rstrip("/")
     return path.rsplit("/", 1)[-1]
 
 
@@ -51,7 +47,7 @@ def _has_final_dot_segment(path: str) -> bool:
 def _lexical_parent(path: str) -> str:
     if _is_root(path):
         return "/"
-    path = _strip_trailing_slashes(path)
+    path = path.rstrip("/")
     if "/" not in path:
         return "."
     parent = path.rpartition("/")[0]
@@ -59,7 +55,7 @@ def _lexical_parent(path: str) -> str:
 
 
 def _lexical_join(parent: str, child: str) -> str:
-    parent = _strip_trailing_slashes(parent)
+    parent = parent.rstrip("/")
     child = "" if child == "/" else child
     if parent in {"", "/"}:
         return f"/{child}"

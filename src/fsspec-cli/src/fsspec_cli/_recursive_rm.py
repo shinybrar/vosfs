@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from ._command import (
     _backend_category,
-    _drain_current_operation,
+    _call,
     _render_operand_diagnostic,
 )
 from ._path import (
     _has_dot_segment,
     _lexical_parent,
-    _strip_trailing_slashes,
 )
 
 if TYPE_CHECKING:
@@ -54,21 +52,6 @@ class _RecursiveRmFailure:
     root_missing: bool = False
 
 
-async def _call(
-    filesystem: AsyncFileSystem,
-    operation: str,
-    *args: object,
-    **kwargs: object,
-) -> object:
-    method = getattr(filesystem, operation, None)
-    if not callable(method):
-        raise NotImplementedError
-    result = method(*args, **kwargs)
-    if not inspect.isawaitable(result):
-        raise NotImplementedError
-    return await _drain_current_operation(result)
-
-
 def _has_required_hooks(filesystem: AsyncFileSystem) -> bool:
     return all(callable(getattr(filesystem, name, None)) for name in _REQUIRED_HOOKS)
 
@@ -86,25 +69,7 @@ def _freeze_mapping(value: object) -> Mapping[object, object]:
         raise _IncompatibleManifestError from error
 
 
-def _root_entry(path: str, value: object) -> _ManifestEntry:
-    info = _freeze_mapping(value)
-    name = info.get("name")
-    if type(name) is not str or _strip_trailing_slashes(name) != path:
-        raise _IncompatibleManifestError
-    islink = info.get("islink", False)
-    if type(islink) is not bool:
-        raise _IncompatibleManifestError
-    if islink:
-        raise _UnsupportedEntryError
-    kind = info.get("type")
-    if type(kind) is not str:
-        raise _IncompatibleManifestError
-    if kind != "directory":
-        raise NotADirectoryError(path)
-    return _ManifestEntry(path, kind)
-
-
-def _listed_entry(parent: str, root: str, value: object) -> _ManifestEntry:
+def _entry_fields(value: object) -> tuple[str, str]:
     info = _freeze_mapping(value)
     name = info.get("name")
     if type(name) is not str:
@@ -117,11 +82,25 @@ def _listed_entry(parent: str, root: str, value: object) -> _ManifestEntry:
     kind = info.get("type")
     if type(kind) is not str:
         raise _IncompatibleManifestError
+    return name, kind
+
+
+def _root_entry(path: str, value: object) -> _ManifestEntry:
+    name, kind = _entry_fields(value)
+    if name.rstrip("/") != path:
+        raise _IncompatibleManifestError
+    if kind != "directory":
+        raise NotADirectoryError(path)
+    return _ManifestEntry(path, kind)
+
+
+def _listed_entry(parent: str, root: str, value: object) -> _ManifestEntry:
+    name, kind = _entry_fields(value)
     if kind not in {"file", "directory"}:
         raise _UnsupportedEntryError
     if (
         not name
-        or _strip_trailing_slashes(name) != name
+        or name.rstrip("/") != name
         or "\0" in name
         or "\n" in name
         or "\r" in name
@@ -221,7 +200,7 @@ async def _plan(
 ) -> _Manifest | _RecursiveRmFailure:
     if not _has_required_hooks(filesystem):
         return _RecursiveRmFailure(operand, "unsupported operation")
-    root = _strip_trailing_slashes(operand.path)
+    root = operand.path.rstrip("/")
     try:
         root_info = await _call(filesystem, "_info", root)
     except Exception as error:  # noqa: BLE001 - classify read boundary.

@@ -125,7 +125,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         )
         self.endpoint_url = config.validate_endpoint(
             endpoint_url,
-            has_credential=not self._credential.is_anonymous,
+            has_credential=self._credential.method != "anonymous",
         )
         self.timeouts = config.resolve_timeouts(timeouts)
         self.trust_env = trust_env
@@ -136,9 +136,9 @@ class VOSpaceFileSystem(AsyncFileSystem):
             injected_transport=transport,
         )
         self._bindings: ServiceBindings | None = None
-        self._bindings_lock: asyncio.Lock | None = None
+        self._bindings_lock = asyncio.Lock()
         self._authority: str | None = None
-        self._coordinator = coordination.FsspecCoordinator(self)
+        self._adapter = cast("AsyncFileSystem", coordination.FsspecAdapter(self))
 
     def _ensure_usable(self) -> None:
         """Reject closed or fork-inherited runtime state before using it."""
@@ -201,8 +201,6 @@ class VOSpaceFileSystem(AsyncFileSystem):
         self._ensure_usable()
         if self._bindings is not None:
             return self._bindings
-        if self._bindings_lock is None:
-            self._bindings_lock = asyncio.Lock()
         async with self._bindings_lock:
             if self._bindings is None:
                 self._bindings = await self._discover_bindings()
@@ -406,8 +404,9 @@ class VOSpaceFileSystem(AsyncFileSystem):
     ) -> list[Any] | None:
         """Use fsspec's coordinator while marking entries for container handling."""
         kwargs[_GET_CONTAINER_MARKER] = True
-        return await self._coordinator.get(
-            rpath,
+        return await AsyncFileSystem._get(  # noqa: SLF001 - inherited seam
+            self._adapter,
+            coordination.normalize_hook_paths(rpath),
             lpath,
             recursive=recursive,
             callback=callback,
@@ -423,12 +422,14 @@ class VOSpaceFileSystem(AsyncFileSystem):
         assume_literal: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
     ) -> list[str]:
         """Expand paths inside the inherited-fsspec coordinator seam."""
-        return await self._coordinator.expand_path(
-            path,
+        expanded = await AsyncFileSystem._expand_path(  # noqa: SLF001 - inherited seam
+            self._adapter,
+            coordination.normalize_hook_paths(path),
             recursive=recursive,
             maxdepth=maxdepth,
             assume_literal=assume_literal,
         )
+        return [coordination.canonical_path(item) for item in expanded]
 
     async def _find(
         self,
@@ -438,12 +439,14 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[str] | dict[str, dict[str, Any]]:
         """Find paths inside the inherited-fsspec coordinator seam."""
-        return await self._coordinator.find(
-            path,
+        result = await AsyncFileSystem._find(  # noqa: SLF001 - inherited seam
+            self._adapter,
+            coordination.normalize_hook_path(path),
             maxdepth=maxdepth,
             withdirs=withdirs,
             **kwargs,
         )
+        return _canonical_result(result)
 
     async def _glob(
         self,
@@ -452,7 +455,13 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[str] | dict[str, dict[str, Any]]:
         """Expand glob patterns inside the inherited-fsspec coordinator seam."""
-        return await self._coordinator.glob(path, maxdepth=maxdepth, **kwargs)
+        result = await AsyncFileSystem._glob(  # noqa: SLF001 - inherited seam
+            self._adapter,
+            coordination.normalize_hook_path(path),
+            maxdepth=maxdepth,
+            **kwargs,
+        )
+        return _canonical_result(result)
 
     async def _walk(
         self,
@@ -462,13 +471,23 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> AsyncIterator[Any]:
         """Walk paths inside the inherited-fsspec coordinator seam."""
-        async for item in self._coordinator.walk(
-            path,
+        async for item in self._adapter._walk(  # noqa: SLF001 - inherited seam
+            coordination.normalize_hook_path(path),
             maxdepth=maxdepth,
             on_error=on_error,
             **kwargs,
         ):
-            yield item
+            root, directories, files = item
+            if isinstance(directories, dict):
+                directories = {
+                    name: coordination.canonical_info(info)
+                    for name, info in directories.items()
+                }
+                files = {
+                    name: coordination.canonical_info(info)
+                    for name, info in files.items()
+                }
+            yield coordination.canonical_path(root), directories, files
 
     async def _cat(
         self,
@@ -479,13 +498,19 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> bytes | dict[str, bytes | BaseException]:
         """Read paths inside the inherited-fsspec coordinator seam."""
-        return await self._coordinator.cat(
-            path,
+        result = await AsyncFileSystem._cat(  # noqa: SLF001 - inherited seam
+            self._adapter,
+            coordination.normalize_hook_paths(path),
             recursive=recursive,
             on_error=on_error,
             batch_size=batch_size,
             **kwargs,
         )
+        if isinstance(result, dict):
+            return {
+                coordination.canonical_path(key): value for key, value in result.items()
+            }
+        return result
 
     async def _du(
         self,
@@ -495,12 +520,18 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> int | dict[str, int]:
         """Measure paths inside the inherited-fsspec coordinator seam."""
-        return await self._coordinator.du(
-            path,
+        result = await AsyncFileSystem._du(  # noqa: SLF001 - inherited seam
+            self._adapter,
+            coordination.normalize_hook_path(path),
             total=total,
             maxdepth=maxdepth,
             **kwargs,
         )
+        if isinstance(result, dict):
+            return {
+                coordination.canonical_path(key): value for key, value in result.items()
+            }
+        return result
 
     async def _get_file(
         self,
@@ -602,7 +633,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
             "list[list[tuple[int, bytes]] | BaseException]",
             await _run_coros_in_chunks(
                 [
-                    self._read_staged_ranges(path, ranges)
+                    _transfer.read_grouped_ranges(self, path, ranges)
                     for path, ranges in grouped_items
                 ],
                 batch_size=effective_batch_size,
@@ -618,14 +649,6 @@ class VOSpaceFileSystem(AsyncFileSystem):
                 for index, value in outcome:
                     results[index] = value
         return results
-
-    async def _read_staged_ranges(
-        self,
-        path: str,
-        ranges: Sequence[tuple[int, int | None, int | None]],
-    ) -> list[tuple[int, bytes]]:
-        """Read grouped byte ranges with response-validated HTTP Range."""
-        return await _transfer.read_grouped_ranges(self, path, ranges)
 
     def open(
         self,
@@ -747,15 +770,19 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's upload coordinator with one shared parent-creation scope."""
-        return await self._coordinator.put(
-            lpath,
-            rpath,
-            recursive=recursive,
-            callback=callback,
-            batch_size=batch_size,
-            maxdepth=maxdepth,
-            **kwargs,
-        )
+        async with coordination.write_scope(self):
+            return await AsyncFileSystem._put(  # noqa: SLF001 - inherited seam
+                self._adapter,
+                lpath,
+                coordination.normalize_hook_paths(rpath),
+                recursive=recursive,
+                callback=cast(
+                    "Callback", coordination.DeferredBranchCallback(callback, self)
+                ),
+                batch_size=batch_size,
+                maxdepth=maxdepth,
+                **kwargs,
+            )
 
     async def _pipe(
         self,
@@ -765,12 +792,22 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[Any] | None:
         """Use fsspec's pipe coordinator with one shared parent-creation scope."""
-        return await self._coordinator.pipe(
-            path,
-            value,
-            batch_size=batch_size,
-            **kwargs,
-        )
+        normalized: str | dict[str, bytes]
+        if isinstance(path, str):
+            normalized = coordination.normalize_hook_path(path)
+        else:
+            normalized = {
+                coordination.normalize_hook_path(key): item
+                for key, item in path.items()
+            }
+        async with coordination.write_scope(self):
+            return await AsyncFileSystem._pipe(  # noqa: SLF001 - inherited seam
+                self._adapter,
+                normalized,
+                value=value,
+                batch_size=batch_size,
+                **kwargs,
+            )
 
     async def _pipe_file(
         self,
@@ -839,27 +876,6 @@ class VOSpaceFileSystem(AsyncFileSystem):
         self.pipe_file(path, b"", mode="overwrite")
 
     # -- namespace and mutation ----------------------------------------------
-
-    async def _update_node(self, path: str, properties: Mapping[str, str]) -> None:
-        """POST mutable properties to one node and invalidate cached metadata."""
-        path = self._strip_protocol(path)
-        nodes._validate_property_update(properties)  # noqa: SLF001 - package-private seam
-        authority = await self._require_authority()
-        bindings = await self._get_bindings()
-        current_node = self._parse_and_note(await self._get_node_document(path))
-        document = nodes.build_property_update(
-            f"vos://{authority}{path}",
-            properties,
-            wire_type=current_node.wire_type,
-        )
-        url = bindings.require_nodes() + paths.encode_url_path(path)
-        try:
-            response = await self._send_to_service(
-                "POST", url, content=document, headers=nodes.XML_HEADERS
-            )
-            self._raise_for_status(response, path=path, allowed=(transport.HTTP_OK,))
-        finally:
-            self._invalidate(path)
 
     async def _create_container(self, path: str) -> None:
         """PUT one ContainerNode at ``path``."""
@@ -1050,27 +1066,6 @@ class VOSpaceFileSystem(AsyncFileSystem):
         """Move one DataNode through the shared async executor."""
         await self._move(path1, path2, file_only=True)
 
-    def copy(
-        self,
-        path1: str | list[str],
-        path2: str | list[str],
-        recursive: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
-        maxdepth: int | None = None,
-        on_error: str | None = None,
-        **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
-    ) -> None:
-        """Run one synchronous bridge to the async copy coordinator."""
-        sync(
-            self.loop,
-            self._copy,
-            path1,
-            path2,
-            recursive=recursive,
-            maxdepth=maxdepth,
-            on_error=on_error,
-            **kwargs,
-        )
-
     async def _copy(  # noqa: PLR0913 - fsspec hook signature
         self,
         path1: str | list[str],
@@ -1082,9 +1077,10 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> None:
         """Copy paths inside the inherited-fsspec coordinator seam."""
-        await self._coordinator.copy(
-            path1,
-            path2,
+        await AsyncFileSystem._copy(  # noqa: SLF001 - inherited seam
+            self._adapter,
+            coordination.normalize_hook_paths(path1),
+            coordination.normalize_hook_paths(path2),
             recursive=recursive,
             on_error=on_error,
             maxdepth=maxdepth,
@@ -1127,7 +1123,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         *,
         file_only: bool = False,
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
-    ) -> _moving.MoveResult:
+    ) -> None:
         """Plan and execute one client-derived move."""
         plan = await _moving.plan(
             self,
@@ -1137,7 +1133,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
             maxdepth=maxdepth,
             file_only=file_only,
         )
-        return await _moving.execute(self, plan, **kwargs)
+        await _moving.execute(self, plan, **kwargs)
 
     def _invalidate(self, path: str) -> None:
         """Invalidate the directory cache for ``path``, its subtree, and parent.
@@ -1188,6 +1184,18 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = "use 'await aclose()' to close an asynchronous filesystem"
             raise RuntimeError(msg)
         sync(self.loop, self.aclose)
+
+
+def _canonical_result(
+    result: list[str] | dict[str, dict[str, Any]],
+) -> list[str] | dict[str, dict[str, Any]]:
+    """Retain canonical-path provenance across a find or glob result."""
+    if isinstance(result, dict):
+        return {
+            coordination.canonical_path(key): coordination.canonical_info(info)
+            for key, info in result.items()
+        }
+    return [coordination.canonical_path(item) for item in result]
 
 
 def _broadcast(

@@ -173,7 +173,7 @@ async def test_build_and_close_race_leaves_no_open_client(router: respx.Router) 
     import asyncio
 
     pool = _pool(injected_transport=httpx.MockTransport(router.async_handler))
-    lock = pool._get_lock()
+    lock = pool._lock
     await lock.acquire()
     close = asyncio.create_task(pool.aclose())
     await asyncio.sleep(0)

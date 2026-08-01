@@ -14,6 +14,7 @@ from ._command import (
     _render_operand_diagnostic,
     _run_mapped_command,
 )
+from ._command import _render_failure as _render_base_failure
 
 if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
@@ -33,11 +34,7 @@ async def _run_mkdir(
     sources: Mapping[str, AsyncFilesystemSource],
 ) -> None:
     async def operation(filesystems: Mapping[str, AsyncFileSystem]) -> None:
-        failures = await _trace_operands(
-            request,
-            filesystems,
-            create_parents=request.create_parents,
-        )
+        failures = await _trace_operands(request, filesystems)
         if failures:
             _raise_operand_failures(command, failures, _render_failure)
 
@@ -47,15 +44,13 @@ async def _run_mkdir(
 async def _trace_operands(
     request: _MkdirRequest,
     filesystems: Mapping[str, AsyncFileSystem],
-    *,
-    create_parents: bool,
 ) -> tuple[_Failure, ...]:
     failures = []
     for operand in request.operands:
         result = await _create_operand(
             operand,
             filesystems[operand.name],
-            create_parents=create_parents,
+            create_parents=request.create_parents,
         )
         if isinstance(result, _Failure):
             failures.append(result)
@@ -97,18 +92,11 @@ async def _create_operand(
 
 
 def _render_failure(command: str, failure: _Failure) -> None:
-    if failure.uncertain:
-        if failure.backend_error is None:
-            category = "uncertain state (incompatible result)"
-        else:
-            category = f"uncertain state ({_backend_category(failure.backend_error)})"
-        _render_operand_diagnostic(command, failure.operand, category)
+    if not failure.uncertain:
+        _render_base_failure(command, failure)
         return
     if failure.backend_error is None:
-        _render_operand_diagnostic(command, failure.operand, "incompatible result")
-        return
-    _render_operand_diagnostic(
-        command,
-        failure.operand,
-        _backend_category(failure.backend_error),
-    )
+        category = "uncertain state (incompatible result)"
+    else:
+        category = f"uncertain state ({_backend_category(failure.backend_error)})"
+    _render_operand_diagnostic(command, failure.operand, category)

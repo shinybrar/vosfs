@@ -11,7 +11,7 @@ import pytest
 import typer
 from fsspec_cli._rm import _write_verbose_line
 
-from ._support import _invoke_rm, _RecordingSource, _source_must_not_run
+from ._support import _invoke, _RecordingSource, _source_must_not_run
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -21,7 +21,7 @@ def test_rm_removes_one_file_without_stdout() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_rm(["memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("rm", ["memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -41,7 +41,8 @@ def test_rm_removes_many_files_without_stdout() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["memory:/docs/a.txt", "memory:/docs/b.txt"],
         sources={"memory": source},
     )
@@ -63,7 +64,8 @@ def test_rm_acquires_distinct_sources_before_reusing_them() -> None:
     events: list[tuple[object, ...]] = []
     shared_source = _RecordingSource(events)
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["alpha:/one", "beta:/two", "alpha:/three"],
         sources={
             "beta": shared_source,
@@ -104,7 +106,8 @@ def test_rm_continues_after_an_earlier_success() -> None:
         },
     )
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["memory:/docs/good", "memory:/docs/bad"],
         sources={"memory": source},
     )
@@ -125,7 +128,8 @@ def test_rm_continues_after_an_earlier_failure() -> None:
         },
     )
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["memory:/docs/bad", "memory:/docs/good"],
         sources={"memory": source},
     )
@@ -140,7 +144,8 @@ def test_rm_processes_repeated_operands_independently() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["memory:/docs/notes.txt", "memory:/docs/notes.txt"],
         sources={"memory": source},
     )
@@ -157,7 +162,7 @@ def test_rm_processes_repeated_operands_independently() -> None:
 
 
 def test_rm_rejects_a_missing_mapped_filesystem_operand() -> None:
-    result = _invoke_rm([])
+    result = _invoke("rm", [])
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -172,7 +177,7 @@ def test_rm_force_without_operands_succeeds_without_source_entry() -> None:
         source_calls += 1
         raise AssertionError
 
-    result = _invoke_rm(["-f"], sources={"memory": source_must_not_run})
+    result = _invoke("rm", ["-f"], sources={"memory": source_must_not_run})
 
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -187,7 +192,8 @@ def test_rm_force_ignores_missing_operands_and_removes_later_files() -> None:
         info_by_path={"/docs/missing.txt": FileNotFoundError("missing")},
     )
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-f", "memory:/docs/missing.txt", "memory:/docs/notes.txt"],
         sources={"memory": source},
     )
@@ -209,7 +215,8 @@ def test_rm_force_succeeds_when_all_operands_are_missing() -> None:
         },
     )
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-f", "memory:/docs/first.txt", "memory:/docs/second.txt"],
         sources={"memory": source},
     )
@@ -223,7 +230,7 @@ def test_rm_force_succeeds_when_all_operands_are_missing() -> None:
     [["-f", "-f"], ["-ff"], ["-fff"]],
 )
 def test_rm_force_accepts_repeated_and_grouped_flags(arguments: list[str]) -> None:
-    result = _invoke_rm(arguments)
+    result = _invoke("rm", arguments)
 
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -243,7 +250,7 @@ def test_rm_force_reports_non_missing_pre_mutation_failures(
 ) -> None:
     source = _RecordingSource([], info_error=error_factory())
 
-    result = _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("rm", ["-f", "memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -257,7 +264,7 @@ def test_rm_force_reports_non_missing_pre_mutation_failures(
 def test_rm_force_reports_timeouts_before_mutation(error: Exception) -> None:
     source = _RecordingSource([], info_error=error)
 
-    result = _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("rm", ["-f", "memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -278,7 +285,8 @@ def test_rm_force_continues_mixed_operands_in_order() -> None:
         },
     )
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         [
             "-f",
             "memory:/docs/missing.txt",
@@ -306,7 +314,8 @@ def test_rm_force_confirms_many_file_removals() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-f", "memory:/docs/a.txt", "memory:/docs/b.txt", "memory:/docs/c.txt"],
         sources={"memory": source},
     )
@@ -331,7 +340,7 @@ def test_rm_force_accepts_operand_after_option_terminator() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_rm(["-f", "--", "name:/file"], sources={"name": source})
+    result = _invoke("rm", ["-f", "--", "name:/file"], sources={"name": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     assert [event[0] for event in events] == [
@@ -347,7 +356,7 @@ def test_rm_force_accepts_operand_after_option_terminator() -> None:
 def test_rm_force_option_after_operand_is_parsed_by_typer() -> None:
     source = _RecordingSource([])
 
-    result = _invoke_rm(["memory:/file", "-f"], sources={"memory": source})
+    result = _invoke("rm", ["memory:/file", "-f"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     assert source.call_count == 1
@@ -366,7 +375,7 @@ def test_rm_force_preserves_non_file_failures(
 ) -> None:
     source = _RecordingSource([], info_result=info_result)
 
-    result = _invoke_rm(["-f", "memory:/docs"], sources={"memory": source})
+    result = _invoke("rm", ["-f", "memory:/docs"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -376,7 +385,7 @@ def test_rm_force_preserves_non_file_failures(
 def test_rm_force_preserves_uncertain_mutation_failure() -> None:
     source = _RecordingSource([], rm_file_error=PermissionError())
 
-    result = _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("rm", ["-f", "memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -386,7 +395,7 @@ def test_rm_force_preserves_uncertain_mutation_failure() -> None:
 def test_rm_force_keeps_post_mutation_not_found_uncertain() -> None:
     source = _RecordingSource([], rm_file_error=FileNotFoundError("raced removal"))
 
-    result = _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("rm", ["-f", "memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -401,7 +410,8 @@ def test_rm_force_uses_distinct_sources_and_skips_missing_operands() -> None:
     )
     beta = _RecordingSource(events)
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-f", "alpha:/docs/missing.txt", "beta:/docs/notes.txt"],
         sources={"alpha": alpha, "beta": beta},
     )
@@ -420,7 +430,7 @@ def test_rm_force_preserves_cancellation() -> None:
     source = _RecordingSource([], rm_file_error=control)
 
     with pytest.raises(asyncio.CancelledError) as caught:
-        _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+        _invoke("rm", ["-f", "memory:/docs/notes.txt"], sources={"memory": source})
 
     assert type(caught.value) is asyncio.CancelledError
     exception_type, exception, traceback = source.exit_calls[0]
@@ -432,7 +442,7 @@ def test_rm_force_preserves_cancellation() -> None:
 def test_rm_force_reports_cleanup_failure() -> None:
     source = _RecordingSource([], exit_error=OSError("cleanup failed"))
 
-    result = _invoke_rm(["-f", "memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("rm", ["-f", "memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -445,7 +455,8 @@ def test_rm_accepts_operand_after_option_terminator() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["--", "memory:/docs/notes.txt"],
         sources={"memory": source},
     )
@@ -464,7 +475,7 @@ def test_rm_accepts_operand_after_option_terminator() -> None:
 
 
 def test_rm_treats_dashed_tokens_after_terminator_as_operands() -> None:
-    result = _invoke_rm(["--", "-f"])
+    result = _invoke("rm", ["--", "-f"])
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -495,7 +506,7 @@ def test_rm_rejects_root_and_final_dot_paths_before_source_entry(
         source_calls += 1
         raise AssertionError
 
-    result = _invoke_rm([path], sources={"memory": source_must_not_run})
+    result = _invoke("rm", [path], sources={"memory": source_must_not_run})
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -522,7 +533,7 @@ def test_rm_rejects_whole_argv_destructive_guards_before_any_factory(
         source_calls += 1
         raise AssertionError
 
-    result = _invoke_rm(arguments, sources={"memory": source_must_not_run})
+    result = _invoke("rm", arguments, sources={"memory": source_must_not_run})
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -548,7 +559,7 @@ def test_rm_rejects_malformed_mapped_filesystem_operands(
     arguments: list[str],
     rendered: str,
 ) -> None:
-    result = _invoke_rm(arguments)
+    result = _invoke("rm", arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -556,7 +567,8 @@ def test_rm_rejects_malformed_mapped_filesystem_operands(
 
 
 def test_rm_reports_unknown_names_with_locale_sorted_known_names() -> None:
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["other:/file"],
         sources={
             "zeta": _source_must_not_run,
@@ -575,7 +587,7 @@ def test_rm_reports_unknown_names_with_locale_sorted_known_names() -> None:
 def test_rm_rejects_non_file_types_without_calling_rm_file(info_result: object) -> None:
     source = _RecordingSource([], info_result=info_result)
 
-    result = _invoke_rm(["memory:/docs"], sources={"memory": source})
+    result = _invoke("rm", ["memory:/docs"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -591,7 +603,7 @@ def test_rm_rejects_non_file_types_without_calling_rm_file(info_result: object) 
 def test_rm_rejects_a_missing_file() -> None:
     source = _RecordingSource([], info_error=FileNotFoundError("missing"))
 
-    result = _invoke_rm(["memory:/missing"], sources={"memory": source})
+    result = _invoke("rm", ["memory:/missing"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -616,7 +628,7 @@ def test_rm_maps_pre_mutation_failures_to_locked_categories(
     error = error_factory()
     source = _RecordingSource([], info_error=error)
 
-    result = _invoke_rm(["memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("rm", ["memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -650,7 +662,7 @@ def test_rm_reports_uncertain_mutation_after_delete_attempt(
         },
     )
 
-    result = _invoke_rm(["memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("rm", ["memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -663,7 +675,7 @@ def test_rm_rejects_when_post_check_shows_the_file_still_present() -> None:
         post_info_by_path={"/docs/notes.txt": {"type": "file"}},
     )
 
-    result = _invoke_rm(["memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("rm", ["memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -676,7 +688,7 @@ def test_rm_refuses_an_active_same_thread_event_loop(monkeypatch) -> None:
 
     async def invoke() -> object:
         monkeypatch.setattr(asyncio, "run", recording_run)
-        return _invoke_rm(["memory:/file"])
+        return _invoke("rm", ["memory:/file"])
 
     result = real_run(invoke())
 
@@ -698,7 +710,7 @@ def test_rm_preserves_control_flow_unchanged(control: BaseException) -> None:
     source = _RecordingSource([], rm_file_error=control)
 
     with pytest.raises(type(control)) as caught:
-        _invoke_rm(["memory:/docs/notes.txt"], sources={"memory": source})
+        _invoke("rm", ["memory:/docs/notes.txt"], sources={"memory": source})
 
     assert type(caught.value) is type(control)
     if not isinstance(control, asyncio.CancelledError):
@@ -723,7 +735,8 @@ def test_rm_preserves_earlier_removal_when_later_operand_is_cancelled(
     )
 
     with pytest.raises(type(control)) as caught:
-        _invoke_rm(
+        _invoke(
+            "rm",
             ["memory:/docs/first.txt", "memory:/docs/second.txt"],
             sources={"memory": source},
         )
@@ -760,7 +773,7 @@ def test_rm_preserves_backend_error_when_its_diagnostic_write_fails(
 
     monkeypatch.setattr(typer, "echo", fail_diagnostic)
 
-    result = _invoke_rm(["memory:/file"], sources={"memory": source})
+    result = _invoke("rm", ["memory:/file"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.exception is renderer_error
@@ -780,7 +793,8 @@ def test_rm_stops_acquisition_after_a_source_factory_failure() -> None:
     def broken_source() -> NoReturn:
         raise factory_error
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["first:/one", "broken:/two", "later:/three"],
         sources={
             "first": first,
@@ -802,7 +816,8 @@ def test_rm_reports_source_exit_failures_in_reverse_order() -> None:
     alpha = _RecordingSource(events, exit_error=OSError("alpha exit"))
     beta = _RecordingSource(events, exit_error=RuntimeError("beta exit"))
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["alpha:/one", "beta:/two"],
         sources={"alpha": alpha, "beta": beta},
     )
@@ -820,7 +835,7 @@ def test_rm_reports_source_exit_failures_in_reverse_order() -> None:
     [["--help"], ["-d", "--help"], ["-f", "--help"], ["-v", "--help"]],
 )
 def test_rm_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
-    result = _invoke_rm(arguments)
+    result = _invoke("rm", arguments)
 
     assert result.exit_code == 0
     assert "Usage:" in result.stdout
@@ -828,7 +843,7 @@ def test_rm_leaves_exact_help_to_the_framework(arguments: list[str]) -> None:
 
 
 def test_rm_help_describes_directory_profile() -> None:
-    result = _invoke_rm(["--help"])
+    result = _invoke("rm", ["--help"])
 
     assert result.exit_code == 0
     plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
@@ -837,7 +852,7 @@ def test_rm_help_describes_directory_profile() -> None:
 
 
 def test_rm_help_describes_force_profile() -> None:
-    result = _invoke_rm(["--help"])
+    result = _invoke("rm", ["--help"])
 
     assert result.exit_code == 0
     plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
@@ -846,7 +861,7 @@ def test_rm_help_describes_force_profile() -> None:
 
 
 def test_rm_help_describes_verbose_profile() -> None:
-    result = _invoke_rm(["--help"])
+    result = _invoke("rm", ["--help"])
 
     assert result.exit_code == 0
     plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
@@ -858,7 +873,7 @@ def test_rm_accepts_hidden_file_paths_that_are_not_final_dot_components() -> Non
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_rm(["memory:/.hidden"], sources={"memory": source})
+    result = _invoke("rm", ["memory:/.hidden"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -874,7 +889,8 @@ def test_rm_passes_nonfinal_dot_and_repeated_separator_spelling_literally() -> N
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["memory:/docs//./notes.txt/"],
         sources={"memory": source},
     )
@@ -891,7 +907,7 @@ def test_rm_never_calls_rm_or_rmdir_primitives() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events, trap_rmdir=True)
 
-    result = _invoke_rm(["memory:/docs/notes.txt"], sources={"memory": source})
+    result = _invoke("rm", ["memory:/docs/notes.txt"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert [event[0] for event in events if event[0] == "rm_file"] == ["rm_file"]
@@ -933,7 +949,8 @@ def test_rm_d_removes_mixed_files_and_empty_directories_without_stdout() -> None
         },
     )
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-d", "memory:/docs/file.txt", "memory:/docs/empty"],
         sources={"memory": source},
     )
@@ -961,7 +978,8 @@ def test_rm_d_continues_after_non_empty_directory_failure() -> None:
         },
     )
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-d", "memory:/docs/not-empty", "memory:/docs/file.txt"],
         sources={"memory": source},
     )
@@ -985,7 +1003,8 @@ def test_rm_d_continues_after_an_earlier_success() -> None:
         },
     )
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-d", "memory:/docs/file.txt", "memory:/docs/not-empty"],
         sources={"memory": source},
     )
@@ -1020,7 +1039,7 @@ def test_rm_d_rejects_missing_and_non_qualifying_types(
     source: _RecordingSource,
     expected: str,
 ) -> None:
-    result = _invoke_rm(["-d", "memory:/docs/item"], sources={"memory": source})
+    result = _invoke("rm", ["-d", "memory:/docs/item"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (1, "", expected)
     assert not any(
@@ -1047,7 +1066,8 @@ def test_rm_d_rejects_a_source_without_async_rmdir() -> None:
 
             return _Wrapped()
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-d", "memory:/docs/empty"],
         sources={"memory": _StripRmdir()},
     )
@@ -1067,7 +1087,7 @@ def test_rm_d_reports_uncertain_empty_directory_removal() -> None:
         post_info_error=PermissionError("verify denied"),
     )
 
-    result = _invoke_rm(["-d", "memory:/docs/empty"], sources={"memory": source})
+    result = _invoke("rm", ["-d", "memory:/docs/empty"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -1085,7 +1105,7 @@ def test_rm_d_preserves_directory_removal_cancellation() -> None:
     )
 
     with pytest.raises(asyncio.CancelledError) as caught:
-        _invoke_rm(["-d", "memory:/docs/empty"], sources={"memory": source})
+        _invoke("rm", ["-d", "memory:/docs/empty"], sources={"memory": source})
 
     assert type(caught.value) is asyncio.CancelledError
 
@@ -1102,7 +1122,7 @@ def test_rm_d_preserves_directory_removal_cancellation() -> None:
 def test_rm_d_rejects_unsupported_option_combinations_before_source_entry(
     arguments: list[str],
 ) -> None:
-    result = _invoke_rm(arguments)
+    result = _invoke("rm", arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -1112,7 +1132,7 @@ def test_rm_d_rejects_unsupported_option_combinations_before_source_entry(
 def test_rm_d_repeated_option_is_parsed_by_typer() -> None:
     source = _RecordingSource([], info_result={"type": "directory"})
 
-    result = _invoke_rm(["-dd", "memory:/file"], sources={"memory": source})
+    result = _invoke("rm", ["-dd", "memory:/file"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     assert source.call_count == 1
@@ -1126,7 +1146,7 @@ def test_rm_d_without_operands_rejects_without_source_entry() -> None:
         source_calls += 1
         raise AssertionError
 
-    result = _invoke_rm(["-d"], sources={"memory": source_must_not_run})
+    result = _invoke("rm", ["-d"], sources={"memory": source_must_not_run})
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -1139,7 +1159,8 @@ def test_rm_d_uses_distinct_sources_for_files_and_empty_directories() -> None:
     alpha = _RecordingSource(events)
     beta = _RecordingSource(events, info_result={"type": "directory"})
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-d", "alpha:/docs/notes.txt", "beta:/docs/empty"],
         sources={"alpha": alpha, "beta": beta},
     )
@@ -1168,7 +1189,7 @@ def test_rm_d_reports_access_and_service_failures(
 ) -> None:
     source = _RecordingSource([], info_error=error_factory())
 
-    result = _invoke_rm(["-d", "memory:/docs/item"], sources={"memory": source})
+    result = _invoke("rm", ["-d", "memory:/docs/item"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -1185,7 +1206,7 @@ def test_rm_d_reports_cleanup_failure() -> None:
         exit_error=OSError("cleanup failed"),
     )
 
-    result = _invoke_rm(["-d", "memory:/docs/empty"], sources={"memory": source})
+    result = _invoke("rm", ["-d", "memory:/docs/empty"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -1212,7 +1233,7 @@ def test_rm_d_rejects_malformed_mapped_filesystem_operands(
     arguments: list[str],
     rendered: str,
 ) -> None:
-    result = _invoke_rm(arguments)
+    result = _invoke("rm", arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -1228,8 +1249,8 @@ def test_rm_d_rejects_root_and_final_dot_paths_before_source_entry(path: str) ->
         source_calls += 1
         raise AssertionError
 
-    result = _invoke_rm(
-        ["-d", "memory:/file", path], sources={"memory": source_must_not_run}
+    result = _invoke(
+        "rm", ["-d", "memory:/file", path], sources={"memory": source_must_not_run}
     )
 
     assert result.exit_code == 2
@@ -1242,7 +1263,8 @@ def test_rm_verbose_prints_one_confirmed_removal() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-v", "memory:/docs/notes.txt"],
         sources={"memory": source},
     )
@@ -1261,7 +1283,8 @@ def test_rm_verbose_prints_many_confirmed_removals_in_order() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-v", "memory:/docs/a.txt", "memory:/docs/b.txt"],
         sources={"memory": source},
     )
@@ -1276,7 +1299,8 @@ def test_rm_verbose_prints_many_confirmed_removals_in_order() -> None:
 
 
 def test_rm_verbose_keeps_base_rm_silent_without_flag() -> None:
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["memory:/docs/notes.txt"],
         sources={"memory": _RecordingSource([])},
     )
@@ -1294,7 +1318,8 @@ def test_rm_verbose_prints_nothing_for_missing_directory_or_other_types() -> Non
         },
     )
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         [
             "-v",
             "memory:/docs/missing.txt",
@@ -1316,7 +1341,8 @@ def test_rm_verbose_prints_nothing_for_missing_directory_or_other_types() -> Non
 def test_rm_verbose_prints_nothing_for_uncertain_post_state() -> None:
     source = _RecordingSource([], rm_file_error=PermissionError())
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-v", "memory:/docs/notes.txt"],
         sources={"memory": source},
     )
@@ -1337,7 +1363,8 @@ def test_rm_verbose_interleaves_success_output_and_diagnostics() -> None:
         },
     )
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         [
             "-v",
             "memory:/docs/good",
@@ -1361,7 +1388,8 @@ def test_rm_verbose_uses_distinct_sources() -> None:
     alpha = _RecordingSource(events)
     beta = _RecordingSource(events)
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-v", "alpha:/one", "beta:/two"],
         sources={"alpha": alpha, "beta": beta},
     )
@@ -1389,7 +1417,8 @@ def test_rm_verbose_stops_later_mutation_after_stdout_failure(
 
     monkeypatch.setattr("fsspec_cli._rm._write_verbose_line", fail_after_first)
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-v", "memory:/docs/a.txt", "memory:/docs/b.txt", "memory:/docs/c.txt"],
         sources={"memory": source},
     )
@@ -1418,7 +1447,8 @@ def test_rm_verbose_reports_short_write_and_stops_later_mutation(
 
     monkeypatch.setattr("fsspec_cli._rm._binary_stdout", _PrefixStdout)
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-v", "memory:/docs/a.txt", "memory:/docs/b.txt"],
         sources={"memory": source},
     )
@@ -1467,7 +1497,8 @@ def test_rm_verbose_keeps_broken_pipe_silent_but_reports_exit_failure(
         raise broken_pipe
 
     monkeypatch.setattr("fsspec_cli._rm._write_verbose_line", break_stdout)
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-v", "memory:/docs/notes.txt"],
         sources={"memory": source},
     )
@@ -1492,7 +1523,8 @@ def test_rm_verbose_solo_broken_pipe_is_silent_status_141(
         raise broken_pipe
 
     monkeypatch.setattr("fsspec_cli._rm._write_verbose_line", break_stdout)
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-v", "memory:/docs/notes.txt"],
         sources={"memory": source},
     )
@@ -1523,7 +1555,8 @@ def test_rm_verbose_preserves_backend_error_when_diagnostic_write_fails(
 
     monkeypatch.setattr(typer, "echo", fail_diagnostic)
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-v", "memory:/file"],
         sources={"memory": source},
     )
@@ -1543,7 +1576,7 @@ def test_rm_verbose_preserves_cancellation() -> None:
     source = _RecordingSource([], rm_file_error=control)
 
     with pytest.raises(asyncio.CancelledError) as caught:
-        _invoke_rm(["-v", "memory:/docs/notes.txt"], sources={"memory": source})
+        _invoke("rm", ["-v", "memory:/docs/notes.txt"], sources={"memory": source})
 
     assert type(caught.value) is asyncio.CancelledError
     exception_type, exception, traceback = source.exit_calls[0]
@@ -1555,7 +1588,8 @@ def test_rm_verbose_preserves_cancellation() -> None:
 def test_rm_verbose_reports_cleanup_failure() -> None:
     source = _RecordingSource([], exit_error=OSError("cleanup failed"))
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-v", "memory:/docs/notes.txt"],
         sources={"memory": source},
     )
@@ -1589,7 +1623,7 @@ def test_rm_verbose_rejects_unsupported_shapes_before_source_entry(
         source_calls += 1
         raise AssertionError
 
-    result = _invoke_rm(arguments, sources={"memory": source_must_not_run})
+    result = _invoke("rm", arguments, sources={"memory": source_must_not_run})
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -1599,7 +1633,7 @@ def test_rm_verbose_rejects_unsupported_shapes_before_source_entry(
 def test_rm_verbose_option_after_operand_is_parsed_by_typer() -> None:
     source = _RecordingSource([])
 
-    result = _invoke_rm(["memory:/file", "-v"], sources={"memory": source})
+    result = _invoke("rm", ["memory:/file", "-v"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
@@ -1616,7 +1650,8 @@ def test_rm_verbose_rejects_root_and_final_dot_paths_before_source_entry() -> No
         source_calls += 1
         raise AssertionError
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-v", "memory:/."],
         sources={"memory": source_must_not_run},
     )
@@ -1635,7 +1670,8 @@ def test_rm_verbose_rejects_malformed_mappings_with_zero_factories() -> None:
         source_calls += 1
         raise AssertionError
 
-    result = _invoke_rm(
+    result = _invoke(
+        "rm",
         ["-v", "not-a-mapping"],
         sources={"memory": source_must_not_run},
     )
@@ -1650,7 +1686,7 @@ def test_rm_verbose_accepts_operand_after_option_terminator() -> None:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(events)
 
-    result = _invoke_rm(["-v", "--", "name:/file"], sources={"name": source})
+    result = _invoke("rm", ["-v", "--", "name:/file"], sources={"name": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,

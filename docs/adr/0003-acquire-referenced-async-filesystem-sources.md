@@ -112,10 +112,11 @@ The proven call sites are:
   materialization, and asynchronous iteration; and
 - guarded recursive `rm`: `_info`, `_ls`, `_rm_file`, and `_rmdir`.
 
-Synchronous iterator workers catch every iterator `BaseException` and return it
-as typed outcome data, so iterator control flow never crosses the child-task
-boundary as task cancellation. Recursive `cp` also closes an iterator returned
-after interrupted awaitable resolution before source cleanup. A source is
+Synchronous iterator materialization runs inside the drained worker and lets
+an iterator exception propagate from `asyncio.to_thread`: an ordinary failure
+follows the backend-failure mapping, and escaping `BaseException` control flow
+follows the precedence table below. Recursive `cp` also closes an iterator
+returned after interrupted awaitable resolution before source cleanup. A source is
 therefore never exited while one of these invocation-owned operations is still
 running.
 

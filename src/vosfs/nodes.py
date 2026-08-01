@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from vosfs.xmlio import DEFAULT_LIMIT, safe_parse
+from vosfs.xmlio import safe_parse
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -47,8 +47,6 @@ MD5_PROPERTY_URI = "ivo://ivoa.net/vospace/core#MD5"  # OpenCADC extension
 CONTENT_TYPE_PROPERTY_URI = (
     "ivo://ivoa.net/vospace/core#contenttype"  # OpenCADC extension
 )
-_CORE_PROPERTY_NAMESPACE = "ivo://ivoa.net/vospace/core#"
-_MUTABLE_CORE_PROPERTY_URIS = frozenset({CONTENT_TYPE_PROPERTY_URI})
 
 # Directions this profile emits during synchronous byte negotiation.
 _ALLOWED_DIRECTIONS = ("pullFromVoSpace", "pushToVoSpace")
@@ -96,9 +94,6 @@ class Node:
     Attributes:
         node_type: One of ``"data"``, ``"container"``, or ``"link"``.
             Structured and unstructured data nodes are reported as ``"data"``.
-        wire_type: The exact local name from ``xsi:type``, retained so updates
-            cannot silently change a structured or unstructured data node into
-            a base ``DataNode``.
         uri: The node identifier URI carried by the document.
         size: The byte length for a data node, or ``0`` for containers and
             links.
@@ -113,7 +108,6 @@ class Node:
     """
 
     node_type: str
-    wire_type: str
     uri: str
     size: int
     mtime: str | None
@@ -123,34 +117,31 @@ class Node:
     properties: Mapping[str, str]
 
 
-def parse_node(data: bytes, *, limit: int = DEFAULT_LIMIT) -> Node:
+def parse_node(data: bytes) -> Node:
     """Parse a single ``node`` document into a :class:`Node`.
 
     Args:
         data: The raw XML response body.
-        limit: Maximum accepted body size in bytes, enforced before parsing.
 
     Returns:
         The parsed node.
 
     Raises:
-        ValueError: If the body exceeds ``limit``, is malformed, uses a DTD or
-            external entity, is not a ``node`` document, or declares an unknown
-            node type.
+        ValueError: If the body exceeds the bounded-parse limit, is malformed,
+            uses a DTD or external entity, is not a ``node`` document, or
+            declares an unknown node type.
     """
-    root = safe_parse(data, limit=limit)
+    root = safe_parse(data)
     return _node_from_element(root)
 
 
-def parse_container(
-    data: bytes, *, limit: int = DEFAULT_LIMIT
-) -> tuple[Node, list[Node]]:
+def parse_container(data: bytes) -> tuple[Node, list[Node]]:
     """Parse a node document once, returning the node and its immediate children.
 
     Avoids parsing the same body twice when a caller needs both the container
     node and its listing.
     """
-    root = safe_parse(data, limit=limit)
+    root = safe_parse(data)
     return _node_from_element(root), _children_of(root)
 
 
@@ -244,61 +235,6 @@ def build_transfer_document(
     return _serialize(root)
 
 
-def build_property_update(
-    uri: str,
-    properties: Mapping[str, str],
-    *,
-    wire_type: str,
-) -> bytes:
-    """Build a node POST body that sets mutable, non-administrative properties.
-
-    The document carries the existing node's concrete ``xsi:type`` because the
-    OpenCADC reader requires it for schema validation and rejects a type that
-    differs from the stored node. Every supplied property URI in the VOSpace core
-    namespace is checked against the profile's full-URI allow-list before
-    serialization. Non-core property URIs remain available for service-defined
-    custom metadata.
-
-    Args:
-        uri: The node identifier URI to update.
-        properties: A mapping of property URI to new string value.
-        wire_type: The exact parsed ``xsi:type`` local name of the existing
-            node.
-
-    Returns:
-        A UTF-8 ``node`` document setting the supplied properties.
-
-    Raises:
-        ValueError: If any property URI names an administrative, server-
-            computed, or type-defining property, or ``wire_type`` cannot be
-            represented by the private update primitive.
-    """
-    _validate_property_update(properties)
-    node_type = _NODE_TYPE_BY_XSI_LOCAL.get(wire_type)
-    if node_type not in {"data", "container"}:
-        msg = f"property updates are unsupported for node type {wire_type!r}"
-        raise ValueError(msg)
-    root = _new_node_element(uri, xsi_type=f"vos:{wire_type}")
-    if node_type == "data":
-        # OpenCADC's NodeReader requires this schema-optional DataNode field.
-        root.set("busy", "false")
-    properties_element = ET.SubElement(root, _PROPERTIES_TAG)
-    for property_uri, value in properties.items():
-        element = ET.SubElement(properties_element, _PROPERTY_TAG)
-        element.set("uri", property_uri)
-        element.text = value
-    if node_type == "container":
-        # ContainerNode's schema and OpenCADC reader require the child list.
-        ET.SubElement(root, _NODES_TAG)
-    return _serialize(root)
-
-
-def _validate_property_update(properties: Mapping[str, str]) -> None:
-    """Validate every property URI before a node update performs network I/O."""
-    for property_uri in properties:
-        _reject_admin_property(property_uri)
-
-
 def _node_from_element(element: ET.Element) -> Node:
     """Build a :class:`Node` from a ``<node>`` element.
 
@@ -315,7 +251,7 @@ def _node_from_element(element: ET.Element) -> Node:
     if element.tag != _NODE_TAG:
         msg = f"expected a VOSpace node element, got {element.tag!r}"
         raise ValueError(msg)
-    node_type, wire_type = _node_types_of(element)
+    node_type = _node_type_of(element)
     uri = element.get("uri")
     if uri is None:
         msg = "node element is missing a uri attribute"
@@ -325,7 +261,6 @@ def _node_from_element(element: ET.Element) -> Node:
     size = _parse_size(properties) if node_type == "data" else 0
     return Node(
         node_type=node_type,
-        wire_type=wire_type,
         uri=uri,
         size=size,
         mtime=properties.get(MTIME_PROPERTY_URI) or properties.get(DATE_PROPERTY_URI),
@@ -336,8 +271,8 @@ def _node_from_element(element: ET.Element) -> Node:
     )
 
 
-def _node_types_of(element: ET.Element) -> tuple[str, str]:
-    """Return the fsspec node type and exact wire type from ``xsi:type``.
+def _node_type_of(element: ET.Element) -> str:
+    """Return the coarse fsspec node type from ``xsi:type``.
 
     The ``xsi:type`` value is a namespace-prefixed QName such as
     ``vos:ContainerNode``; the kind is taken from the local name after the
@@ -355,7 +290,7 @@ def _node_types_of(element: ET.Element) -> tuple[str, str]:
         element: A VOSpace ``node`` element.
 
     Returns:
-        The coarse fsspec node type and exact ``xsi:type`` local name.
+        The coarse fsspec node type.
 
     Raises:
         ValueError: If the element carries no ``xsi:type`` or an unknown one.
@@ -366,7 +301,7 @@ def _node_types_of(element: ET.Element) -> tuple[str, str]:
         raise ValueError(msg)
     local_name = xsi_type.rsplit(":", 1)[-1]
     try:
-        return _NODE_TYPE_BY_XSI_LOCAL[local_name], local_name
+        return _NODE_TYPE_BY_XSI_LOCAL[local_name]
     except KeyError:
         msg = f"unknown node type {xsi_type!r}"
         raise ValueError(msg) from None
@@ -434,25 +369,6 @@ def _parse_size(properties: Mapping[str, str]) -> int:
     except ValueError as exc:
         msg = f"length property is not an integer: {raw!r}"
         raise ValueError(msg) from exc
-
-
-def _reject_admin_property(property_uri: str) -> None:
-    """Reject a core property URI outside the profile's mutable allow-list.
-
-    Args:
-        property_uri: The candidate property URI.
-
-    Raises:
-        ValueError: If the URI names a non-mutable VOSpace core property.
-    """
-    malformed = any(character.isspace() for character in property_uri)
-    is_core = property_uri.casefold().startswith(_CORE_PROPERTY_NAMESPACE)
-    if malformed or (is_core and property_uri not in _MUTABLE_CORE_PROPERTY_URIS):
-        msg = (
-            f"property {property_uri!r} is malformed or administrative "
-            "and cannot be set"
-        )
-        raise ValueError(msg)
 
 
 def _new_node_element(uri: str, *, xsi_type: str | None = None) -> ET.Element:

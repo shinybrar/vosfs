@@ -23,6 +23,7 @@ from ._command import (
     _run_mapped_command,
     _write_binary,
 )
+from ._cp import _remove_temporary
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
 
 if TYPE_CHECKING:
@@ -76,26 +77,7 @@ def _render_operand_failure(command: str, failure: _Failure | _StagingFailure) -
     if isinstance(failure, _StagingFailure):
         _render_staging_failure(command, failure.operand, failure.error)
         return
-    if isinstance(failure.backend_error, IsADirectoryError):
-        prefix = _render_diagnostic_prefix(command)
-        rendered_operand = _render_diagnostic_value(failure.operand.spelling)
-        typer.echo(
-            f"{prefix} {rendered_operand}: is a directory",
-            err=True,
-            color=True,
-        )
-        return
     _render_failure(command, failure)
-
-
-def _remove_temporary(path: str) -> Exception | None:
-    try:
-        Path(path).unlink()
-    except FileNotFoundError:
-        return None
-    except Exception as error:  # noqa: BLE001 - staging cleanup boundary.
-        return error
-    return None
 
 
 @dataclass
@@ -175,26 +157,26 @@ async def _stage_operand(
     operand: _MappedOperand,
     filesystem: AsyncFileSystem,
     ownership: _CatOwnership,
-) -> tuple[str | None, _Failure | _StagingFailure | None]:
+) -> str | _Failure | _StagingFailure:
     # fsspec's native async API intentionally exposes underscore coroutines.
     try:
         info = await filesystem._info(operand.path)
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
-        return None, _Failure(operand, backend_error=error)
+        return _Failure(operand, backend_error=error)
 
     if not isinstance(info, Mapping) or info.get("type") != "file":
-        return None, _Failure(operand)
+        return _Failure(operand)
 
     try:
         descriptor, temporary = tempfile.mkstemp(prefix="fsspec-cli-cat-")
     except Exception as error:  # noqa: BLE001 - local staging creation boundary.
-        return None, _StagingFailure(operand, error)
+        return _StagingFailure(operand, error)
 
     ownership.add(descriptor, temporary, operand)
     close_error = _close_descriptor(ownership, descriptor)
     if close_error is not None:
         _sweep_ownership(ownership)
-        return None, _failure_after_temporary(
+        return _failure_after_temporary(
             ownership,
             operand,
             temporary,
@@ -205,7 +187,7 @@ async def _stage_operand(
     try:
         await filesystem._get_file(operand.path, temporary)
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
-        return None, _failure_after_temporary(
+        return _failure_after_temporary(
             ownership,
             operand,
             temporary,
@@ -216,7 +198,7 @@ async def _stage_operand(
         _remove_owned_temporary(ownership, temporary)
         raise
 
-    return temporary, None
+    return temporary
 
 
 @dataclass(frozen=True)
@@ -339,15 +321,12 @@ async def _emit_mapped_operand(
     progress: _CatProgress,
     ownership: _CatOwnership,
 ) -> None:
-    temporary, failure = await _stage_operand(operand, filesystem, ownership)
-    if failure is not None:
-        _render_operand_failure(command, failure)
-        progress.failures.append(failure)
+    staged = await _stage_operand(operand, filesystem, ownership)
+    if not isinstance(staged, str):
+        _render_operand_failure(command, staged)
+        progress.failures.append(staged)
         return
-    if temporary is None:
-        progress.failures.append(_Failure(operand))
-        _render_operand_failure(command, progress.failures[-1])
-        return
+    temporary = staged
     try:
         _apply_forward_result(
             command,

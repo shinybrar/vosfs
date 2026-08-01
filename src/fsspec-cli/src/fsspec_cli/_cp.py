@@ -10,8 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import typer
-
 from ._command import (
     _CommandFailureError,
     _drain_current_operation,
@@ -19,10 +17,12 @@ from ._command import (
     _MappedOperand,
     _parse_mapped_operand,
     _render_backend_failure,
+    _render_operand_diagnostic,
     _run_mapped_command,
     _usage_error,
 )
-from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
+from ._diagnostics import _render_diagnostic_value
+from ._manifest import _TOKEN_ALIASES, _shared_tokens_match
 from ._path import _lexical_basename, _lexical_join, _lexical_parent
 from ._recursive_cp import _canonical_operand, _run_recursive_cp
 
@@ -34,12 +34,6 @@ if TYPE_CHECKING:
     from ._app import AsyncFilesystemSource
 
 _MIN_OPERAND_COUNT = 2
-_VERIFICATION_TOKEN_ALIASES = (
-    ("etag", ("ETag", "etag")),
-    ("md5", ("md5",)),
-    ("content-md5", ("content-md5", "content_md5")),
-    ("checksum", ("checksum",)),
-)
 
 
 @dataclass(frozen=True)
@@ -136,20 +130,48 @@ def _require_file_size(info: object) -> int | None:
 def _require_source_file_size(
     source: _MappedOperand,
     info: object,
-) -> tuple[int | None, _CpFailure | None]:
+) -> int | _CpFailure:
     if not isinstance(info, Mapping):
-        return None, _CpFailure(source, incompatible="result")
+        return _CpFailure(source, incompatible="result")
     result_type = info.get("type")
     if not isinstance(result_type, str):
-        return None, _CpFailure(source, incompatible="result")
+        return _CpFailure(source, incompatible="result")
     if result_type == "directory":
-        return None, _CpFailure(source, incompatible="directory")
+        return _CpFailure(source, incompatible="directory")
     if result_type != "file":
-        return None, _CpFailure(source, incompatible="result")
+        return _CpFailure(source, incompatible="result")
     size = _require_file_size(info)
     if size is None:
-        return None, _CpFailure(source, incompatible="result")
-    return size, None
+        return _CpFailure(source, incompatible="result")
+    return size
+
+
+async def _prepare_transfer(
+    request: _CpRequest,
+    source_filesystem: AsyncFileSystem,
+    destination_filesystem: AsyncFileSystem,
+) -> tuple[_TransferProof, str] | _CpFailure:
+    """Read and validate the source, then resolve the destination path."""
+    try:
+        source_info = await _drain_current_operation(
+            source_filesystem._info(request.source.path)
+        )
+    except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
+        return _CpFailure(request.source, backend_error=error)
+
+    expected_size = _require_source_file_size(request.source, source_info)
+    if isinstance(expected_size, _CpFailure):
+        return expected_size
+    proof = _freeze_transfer_proof(source_info, expected_size)
+
+    resolved, resolution_failure = await _resolve_destination(
+        request.destination,
+        request.source.path,
+        destination_filesystem,
+    )
+    if resolution_failure is not None:
+        return resolution_failure
+    return proof, resolved
 
 
 async def _resolve_destination(  # noqa: C901, PLR0911, PLR0912 - explicit target branches.
@@ -252,7 +274,9 @@ async def _stage_remote(
 
 def _remove_temporary(path: str) -> Exception | None:
     try:
-        Path(path).unlink(missing_ok=True)
+        Path(path).unlink()
+    except FileNotFoundError:
+        return None
     except Exception as error:  # noqa: BLE001 - local staging cleanup boundary.
         return error
     return None
@@ -267,7 +291,7 @@ def _verification_tokens(info: object) -> dict[str, frozenset[str | bytes]]:
     if not isinstance(info, Mapping):
         return {}
     tokens: dict[str, frozenset[str | bytes]] = {}
-    for normalized, aliases in _VERIFICATION_TOKEN_ALIASES:
+    for normalized, aliases in _TOKEN_ALIASES:
         values = frozenset(
             value
             for alias in aliases
@@ -285,18 +309,6 @@ def _freeze_transfer_proof(
     return _TransferProof(
         expected_size=expected_size,
         tokens=tuple(_verification_tokens(source_info).items()),
-    )
-
-
-def _shared_verification_tokens_match(
-    proof: _TransferProof,
-    destination_info: object,
-) -> bool:
-    destination_tokens = _verification_tokens(destination_info)
-    return all(
-        destination_tokens[field] == source_values
-        for field, source_values in proof.tokens
-        if field in destination_tokens
     )
 
 
@@ -326,7 +338,9 @@ async def _verify_transfer(  # noqa: PLR0913 - one explicit transfer-proof bound
     if (
         verified_size is None
         or verified_size != proof.expected_size
-        or not _shared_verification_tokens_match(proof, destination_info)
+        or not _shared_tokens_match(
+            proof.tokens, _verification_tokens(destination_info)
+        )
     ):
         return _CpFailure(
             destination,
@@ -354,34 +368,19 @@ async def _verify_transfer(  # noqa: PLR0913 - one explicit transfer-proof bound
     return None
 
 
-async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - explicit copy outcomes.
+async def _confirmed_cross_source_cp_file(  # noqa: C901 - explicit copy outcomes.
     request: _CpRequest,
     source_filesystem: AsyncFileSystem,
     destination_filesystem: AsyncFileSystem,
 ) -> _CpFailure | None:
-    try:
-        source_info = await _drain_current_operation(
-            source_filesystem._info(request.source.path)
-        )
-    except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
-        return _CpFailure(request.source, backend_error=error)
-
-    expected_size, source_failure = _require_source_file_size(
-        request.source, source_info
-    )
-    if source_failure is not None:
-        return source_failure
-    if expected_size is None:
-        return _CpFailure(request.source, incompatible="result")
-    proof = _freeze_transfer_proof(source_info, expected_size)
-
-    resolved, resolution_failure = await _resolve_destination(
-        request.destination,
-        request.source.path,
+    prepared = await _prepare_transfer(
+        request,
+        source_filesystem,
         destination_filesystem,
     )
-    if resolution_failure is not None:
-        return resolution_failure
+    if isinstance(prepared, _CpFailure):
+        return prepared
+    proof, resolved = prepared
 
     if source_filesystem is destination_filesystem and request.source.path == resolved:
         return _CpFailure(request.source, incompatible="same_path")
@@ -410,7 +409,7 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - exp
                 category="staging failure",
             )
         else:
-            if staged_size != expected_size:
+            if staged_size != proof.expected_size:
                 primary_failure = _CpFailure(
                     request.source,
                     category="verification failure",
@@ -461,33 +460,14 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901, PLR0911, PLR0912 - exp
     return None
 
 
-async def _confirmed_cp_file(  # noqa: PLR0911 - explicit copy outcomes.
+async def _confirmed_cp_file(
     request: _CpRequest,
     filesystem: AsyncFileSystem,
 ) -> _CpFailure | None:
-    try:
-        source_info = await _drain_current_operation(
-            filesystem._info(request.source.path)
-        )
-    except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
-        return _CpFailure(request.source, backend_error=error)
-
-    expected_size, source_failure = _require_source_file_size(
-        request.source, source_info
-    )
-    if source_failure is not None:
-        return source_failure
-    if expected_size is None:
-        return _CpFailure(request.source, incompatible="result")
-    proof = _freeze_transfer_proof(source_info, expected_size)
-
-    resolved, resolution_failure = await _resolve_destination(
-        request.destination,
-        request.source.path,
-        filesystem,
-    )
-    if resolution_failure is not None:
-        return resolution_failure
+    prepared = await _prepare_transfer(request, filesystem, filesystem)
+    if isinstance(prepared, _CpFailure):
+        return prepared
+    proof, resolved = prepared
 
     if request.source.path == resolved:
         return _CpFailure(request.source, incompatible="same_path")
@@ -516,16 +496,6 @@ async def _confirmed_cp_file(  # noqa: PLR0911 - explicit copy outcomes.
         request.destination,
         require_source_absent=False,
     )
-
-
-def _render_operand_diagnostic(
-    command: str,
-    operand: _MappedOperand,
-    category: str,
-) -> None:
-    prefix = _render_diagnostic_prefix(command)
-    rendered_operand = _render_diagnostic_value(operand.spelling)
-    typer.echo(f"{prefix} {rendered_operand}: {category}", err=True, color=True)
 
 
 def _render_staging_category(error: Exception) -> str:

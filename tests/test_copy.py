@@ -2,14 +2,22 @@
 
 import pytest
 import respx
-from conftest import AUTHORITY, BASE_URL, make_fs
-from namespace_support import _fs, _install_percent_mutation_routes
+from conftest import (
+    AUTHORITY,
+    BASE_URL,
+    call_urls,
+    container_xml,
+    data_child,
+    make_fs,
+    make_sim_fs,
+)
+from namespace_support import _install_percent_mutation_routes
 from vospace_sim import VOSpaceSim
 
 
 async def test_cp_file_relays_bytes(router: respx.Router) -> None:
     sim = VOSpaceSim().add_file("/src", b"copy-me")
-    fs = _fs(router, sim)
+    fs = make_sim_fs(router, sim)
     await fs._cp_file("/src", "/dst")
     assert sim.blobs["/dst"] == b"copy-me"
     assert sim.blobs["/src"] == b"copy-me"  # source preserved
@@ -29,12 +37,7 @@ def test_copy_preserves_literal_percent_destination_and_parent(
     assert files["/root/100%41/copied"] == b"copy-me"
     assert "/root/100%2541" in created
     assert not any("100A" in path for path in created)
-    byte_puts = [
-        str(call.request.url)
-        for call in router.calls
-        if call.request.method == "PUT"
-        and str(call.request.url).startswith(f"{BASE_URL}/files")
-    ]
+    byte_puts = call_urls(router, "PUT", f"{BASE_URL}/files")
     assert byte_puts == [f"{BASE_URL}/files?p=/root/100%2541/copied"]
     fs.close()
 
@@ -42,15 +45,10 @@ def test_copy_preserves_literal_percent_destination_and_parent(
 def test_copy_raw_percent_urls_decode_source_and_destination_once(
     router: respx.Router,
 ) -> None:
-    source_root = (
-        f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
-        f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-        f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}/src%2541">'
-        f'<vos:properties/><vos:nodes><vos:node xsi:type="vos:DataNode" '
-        f'uri="vos://{AUTHORITY}/src%2541/child"><vos:properties>'
-        f'<vos:property uri="ivo://ivoa.net/vospace/core#length">5</vos:property>'
-        f"</vos:properties></vos:node></vos:nodes></vos:node>"
-    ).encode()
+    source_root = container_xml(
+        f"vos://{AUTHORITY}/src%2541",
+        data_child(f"vos://{AUTHORITY}/src%2541/child", 5),
+    )
     files = {"/src%41/file": b"scalar", "/src%41/child": b"child"}
     created, _deleted = _install_percent_mutation_routes(
         router,
@@ -66,12 +64,9 @@ def test_copy_raw_percent_urls_decode_source_and_destination_once(
     assert files["/tree%42/child"] == b"child"
     assert all("/vos:" not in path for path in files)
     assert "/tree%2542" in created
-    byte_urls = [
-        str(call.request.url)
-        for call in router.calls
-        if call.request.method in {"GET", "PUT"}
-        and str(call.request.url).startswith(f"{BASE_URL}/files")
-    ]
+    byte_urls = call_urls(router, "GET", f"{BASE_URL}/files") + call_urls(
+        router, "PUT", f"{BASE_URL}/files"
+    )
     assert any("p=/src%2541/file" in url for url in byte_urls)
     assert any("p=/dest%2542/copied" in url for url in byte_urls)
     assert any("p=/tree%2542/child" in url for url in byte_urls)

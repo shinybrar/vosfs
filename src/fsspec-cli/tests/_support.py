@@ -15,104 +15,22 @@ def _source_must_not_run() -> NoReturn:
     raise AssertionError
 
 
-def _invoke_ls(
+def _invoke(
+    command: str,
     arguments: list[str],
     *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
+    sources: Mapping[str, AsyncFilesystemSource] | None = None,
+    env: Mapping[str, str] | None = None,
+    stdin: bytes | str | None = None,
 ) -> Result:
     if sources is None:
         sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["ls", *arguments])
-
-
-def _invoke_ll(
-    arguments: list[str],
-    *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["ll", *arguments])
-
-
-def _invoke_du(
-    arguments: list[str],
-    *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["du", *arguments])
-
-
-def _invoke_mkdir(
-    arguments: list[str],
-    *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["mkdir", *arguments])
-
-
-def _invoke_rmdir(
-    arguments: list[str],
-    *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["rmdir", *arguments])
-
-
-def _invoke_unlink(
-    arguments: list[str],
-    *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["unlink", *arguments])
-
-
-def _invoke_rm(
-    arguments: list[str],
-    *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["rm", *arguments])
-
-
-def _invoke_cp(
-    arguments: list[str],
-    *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["cp", *arguments])
-
-
-def _invoke_stat(
-    arguments: list[str],
-    *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["stat", *arguments])
-
-
-def _invoke_info(
-    arguments: list[str],
-    *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["info", *arguments])
+    return CliRunner().invoke(
+        App(sources).typer_app,
+        [command, *arguments],
+        env=env,
+        input=stdin,
+    )
 
 
 class _RecordingFileSystem(AsyncFileSystem):

@@ -9,10 +9,9 @@ from typing import NoReturn
 import pytest
 import typer
 from fsspec.asyn import AsyncFileSystem
-from fsspec_cli import App, AsyncFilesystemSource
-from typer.testing import CliRunner, Result
 
 from ._ansi import strip_ansi
+from ._support import _invoke
 
 
 class _ListSubclass(list[str]):
@@ -42,20 +41,6 @@ class _MalformedItemsMapping(dict[str, object]):
 
 class _FindControl(BaseException):
     pass
-
-
-def _source_must_not_run() -> NoReturn:
-    raise AssertionError
-
-
-def _invoke_find(
-    arguments: list[str],
-    *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["find", *arguments])
 
 
 class _FindFileSystem(AsyncFileSystem):
@@ -134,7 +119,7 @@ def test_find_renders_recursive_backend_file_paths_after_one_call() -> None:
         result=["/docs/sub/b.txt", "/docs/a.txt"],
     )
 
-    result = _invoke_find(["memory:/docs"], sources={"memory": source})
+    result = _invoke("find", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
@@ -158,7 +143,7 @@ def test_find_orders_paths_by_locale_then_raw_spelling(
     }
     monkeypatch.setattr(locale, "strxfrm", transformed.__getitem__)
 
-    result = _invoke_find(["memory:/docs"], sources={"memory": source})
+    result = _invoke("find", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
@@ -177,7 +162,7 @@ def test_find_does_not_misclassify_an_internal_locale_failure(
         raise internal_error
 
     monkeypatch.setattr(locale, "strxfrm", fail_locale)
-    result = _invoke_find(["memory:/docs"], sources={"memory": source})
+    result = _invoke("find", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (1, "", "")
     assert result.exception is internal_error
@@ -265,7 +250,7 @@ def test_find_accepts_locked_interspersed_options_and_call_shapes(
 ) -> None:
     source = _FindSource(result=find_result)
 
-    result = _invoke_find(arguments, sources={"memory": source})
+    result = _invoke("find", arguments, sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, stdout, "")
     assert source.find_calls == [(*call, {})]
@@ -305,7 +290,7 @@ def test_find_maxdepth_zero_filters_the_single_backend_call_to_the_root(
 ) -> None:
     source = _FindSource(result=find_result)
 
-    result = _invoke_find(arguments, sources={"memory": source})
+    result = _invoke("find", arguments, sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, stdout, "")
     assert source.find_calls == [(*call, {})]
@@ -313,7 +298,7 @@ def test_find_maxdepth_zero_filters_the_single_backend_call_to_the_root(
 
 @pytest.mark.parametrize("arguments", [["--help"], ["--type", "d", "--help"]])
 def test_find_help_comes_from_typed_callback(arguments: list[str]) -> None:
-    result = _invoke_find(arguments)
+    result = _invoke("find", arguments)
 
     help_text = strip_ansi(result.stdout)
     assert (result.exit_code, result.stderr) == (0, "")
@@ -374,7 +359,7 @@ def test_find_usage_failures_are_typer_owned_and_source_free(
     arguments: list[str],
     contexts: tuple[str, ...],
 ) -> None:
-    result = _invoke_find(arguments)
+    result = _invoke("find", arguments)
 
     assert (result.exit_code, result.stdout) == (2, "")
     diagnostic = strip_ansi(result.stderr)
@@ -385,7 +370,7 @@ def test_find_usage_failures_are_typer_owned_and_source_free(
 def test_find_rejects_a_depth_too_large_for_the_runtime_deterministically() -> None:
     value = "9" * 5000
 
-    result = _invoke_find(["--maxdepth", value, "memory:/docs"])
+    result = _invoke("find", ["--maxdepth", value, "memory:/docs"])
 
     assert (result.exit_code, result.stdout) == (2, "")
     diagnostic = strip_ansi(result.stderr)
@@ -411,7 +396,7 @@ def test_find_rejects_incompatible_file_results_atomically(
 ) -> None:
     source = _FindSource(result=find_result)
 
-    result = _invoke_find(["memory:/docs"], sources={"memory": source})
+    result = _invoke("find", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -440,7 +425,8 @@ def test_find_rejects_incompatible_directory_results_atomically(
 ) -> None:
     source = _FindSource(result=find_result)
 
-    result = _invoke_find(
+    result = _invoke(
+        "find",
         ["--type", "d", "memory:/docs"],
         sources={"memory": source},
     )
@@ -455,7 +441,8 @@ def test_find_rejects_incompatible_directory_results_atomically(
 def test_find_rejects_malformed_detailed_items_atomically_and_cleans_up() -> None:
     source = _FindSource(result=_MalformedItemsMapping())
 
-    result = _invoke_find(
+    result = _invoke(
+        "find",
         ["--type", "d", "memory:/docs"],
         sources={"memory": source},
     )
@@ -472,7 +459,7 @@ def test_find_rejects_malformed_detailed_items_atomically_and_cleans_up() -> Non
 def test_find_validates_the_complete_result_before_output() -> None:
     source = _FindSource(result=["/docs/good", "/docs/bad\nname"])
 
-    result = _invoke_find(["memory:/docs"], sources={"memory": source})
+    result = _invoke("find", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -500,7 +487,7 @@ def test_find_reports_backend_failures_and_passes_them_to_cleanup(
 ) -> None:
     source = _FindSource(error=error)
 
-    result = _invoke_find(["memory:/docs"], sources={"memory": source})
+    result = _invoke("find", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -531,7 +518,7 @@ def test_find_cleans_up_after_an_output_failure(
         raise output_error
 
     monkeypatch.setattr(typer, "echo", fail_stdout)
-    result = _invoke_find(["memory:/docs"], sources={"memory": source})
+    result = _invoke("find", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -555,7 +542,7 @@ def test_find_keeps_broken_pipe_silent_and_cleans_up(
         raise broken_pipe
 
     monkeypatch.setattr(typer, "echo", break_stdout)
-    result = _invoke_find(["memory:/docs"], sources={"memory": source})
+    result = _invoke("find", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (1, "", "")
     exception_type, exception, traceback = source.exit_calls[0]
@@ -570,7 +557,7 @@ def test_find_retains_complete_output_when_source_exit_fails() -> None:
         exit_error=OSError("cleanup"),
     )
 
-    result = _invoke_find(["memory:/docs"], sources={"memory": source})
+    result = _invoke("find", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -587,6 +574,6 @@ def test_find_cleans_up_then_propagates_backend_control_flow() -> None:
     )
 
     with pytest.raises(_FindControl) as caught:
-        _invoke_find(["memory:/docs"], sources={"memory": source})
+        _invoke("find", ["memory:/docs"], sources={"memory": source})
 
     assert caught.value is control

@@ -11,25 +11,8 @@ from typing import NoReturn
 
 import pytest
 from fsspec.asyn import AsyncFileSystem
-from fsspec_cli import App
-from typer.testing import CliRunner, Result
 
-from ._support import _RecordingSource, _source_must_not_run
-
-
-def _invoke_cat(
-    arguments: list[str],
-    *,
-    sources: dict[str, object] | None = None,
-    stdin: bytes | str | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(
-        App(sources).typer_app,
-        ["cat", *arguments],
-        input=stdin,
-    )
+from ._support import _invoke, _RecordingSource, _source_must_not_run
 
 
 @pytest.mark.parametrize(
@@ -44,7 +27,7 @@ def test_cat_leaves_usage_failures_to_typer(
     arguments: list[str],
     contexts: tuple[str, ...],
 ) -> None:
-    result = _invoke_cat(arguments)
+    result = _invoke("cat", arguments)
 
     assert (result.exit_code, result.stdout_bytes) == (2, b"")
     for context in contexts:
@@ -52,7 +35,7 @@ def test_cat_leaves_usage_failures_to_typer(
 
 
 def test_cat_help_comes_from_typed_callback() -> None:
-    result = _invoke_cat(["--help"])
+    result = _invoke("cat", ["--help"])
 
     assert (result.exit_code, result.stderr) == (0, "")
     assert "Usage:" in result.stdout
@@ -78,7 +61,7 @@ def test_cat_validates_every_mapped_input_before_source_acquisition(
     arguments: list[str],
     stderr: str,
 ) -> None:
-    result = _invoke_cat(arguments)
+    result = _invoke("cat", arguments)
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -97,7 +80,7 @@ def test_cat_emits_exact_bytes_for_one_file_in_operand_order() -> None:
 
     source = _RecordingSource(events, get_file_hook=hook)
 
-    result = _invoke_cat(["memory:/blob"], sources={"memory": source})
+    result = _invoke("cat", ["memory:/blob"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout_bytes == payload
@@ -120,7 +103,8 @@ def test_cat_acquires_all_sources_before_first_info_or_get_file() -> None:
         get_file_by_path={"/one": b"a", "/two": b"b", "/three": b"a"},
     )
 
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         ["alpha:/one", "beta:/two", "alpha:/three"],
         sources={
             "alpha": source,
@@ -169,7 +153,7 @@ def test_cat_acquires_all_sources_before_first_info_or_get_file() -> None:
 def test_cat_forwards_binary_payloads_verbatim(payload: bytes) -> None:
     source = _RecordingSource([], get_file_content=payload)
 
-    result = _invoke_cat(["memory:/blob"], sources={"memory": source})
+    result = _invoke("cat", ["memory:/blob"], sources={"memory": source})
 
     assert result.exit_code == 0
     assert result.stdout_bytes == payload
@@ -195,7 +179,8 @@ def test_cat_continues_after_staging_failures_and_keeps_earlier_bytes() -> None:
         },
     )
 
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         [
             "memory:/ok",
             "memory:/missing",
@@ -223,7 +208,7 @@ def test_cat_reports_download_failure_without_emitting_bytes() -> None:
         get_file_error=OSError("download"),
     )
 
-    result = _invoke_cat(["memory:/blob"], sources={"memory": source})
+    result = _invoke("cat", ["memory:/blob"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout_bytes == b""
@@ -239,7 +224,7 @@ def test_cat_reports_temporary_creation_failure(monkeypatch) -> None:
         raise OSError(message)
 
     monkeypatch.setattr(tempfile, "mkstemp", fail_mkstemp)
-    result = _invoke_cat(["memory:/blob"], sources={"memory": source})
+    result = _invoke("cat", ["memory:/blob"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout_bytes == b""
@@ -270,7 +255,8 @@ def test_cat_stops_on_stdout_failure_and_preserves_accepted_bytes(
             return None
 
     monkeypatch.setattr("fsspec_cli._cat._binary_stdout", _PrefixStdout)
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         ["memory:/one", "memory:/two"],
         sources={"memory": source},
     )
@@ -301,7 +287,7 @@ def test_cat_keeps_broken_pipe_silent_but_reports_exit_failure(
             return None
 
     monkeypatch.setattr("fsspec_cli._cat._binary_stdout", _BrokenStdout)
-    result = _invoke_cat(["memory:/blob"], sources={"memory": source})
+    result = _invoke("cat", ["memory:/blob"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stderr == ("cat: memory: source exit failure (OSError): cleanup\n")
@@ -331,7 +317,7 @@ def test_cat_removes_temporary_after_cleanup_failure(monkeypatch) -> None:
         real_unlink(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", fail_unlink)
-    result = _invoke_cat(["memory:/blob"], sources={"memory": source})
+    result = _invoke("cat", ["memory:/blob"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout_bytes == b"data"
@@ -341,7 +327,8 @@ def test_cat_removes_temporary_after_cleanup_failure(monkeypatch) -> None:
 
 
 def test_cat_unknown_name_lists_known_sources() -> None:
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         ["zeta:/file"],
         sources={"beta": _source_must_not_run, "alpha": _source_must_not_run},
     )
@@ -361,7 +348,8 @@ def test_cat_stops_acquisition_after_a_source_factory_failure() -> None:
     def broken_source() -> NoReturn:
         raise factory_error
 
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         ["first:/one", "broken:/two", "later:/three"],
         sources={
             "first": first,
@@ -396,7 +384,7 @@ def test_cat_rejects_an_incompatible_source_context_manager(
     def source() -> object:
         return incompatible_manager
 
-    result = _invoke_cat(["broken:/file"], sources={"broken": source})
+    result = _invoke("cat", ["broken:/file"], sources={"broken": source})
 
     assert result.exit_code == 1
     assert result.stdout_bytes == b""
@@ -422,7 +410,8 @@ def test_cat_stops_after_source_entry_failure_without_exiting_failed_entry() -> 
         events.append(("broken-factory",))
         return BrokenContext()
 
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         ["first:/one", "broken:/two", "later:/three"],
         sources={
             "first": first,
@@ -475,7 +464,7 @@ def test_cat_exits_a_source_that_yields_an_incompatible_filesystem(
         events.append(("factory",))
         return YieldingContext()
 
-    result = _invoke_cat(["broken:/file"], sources={"broken": source})
+    result = _invoke("cat", ["broken:/file"], sources={"broken": source})
 
     assert result.exit_code == 1
     assert result.stdout_bytes == b""
@@ -519,7 +508,7 @@ def test_cat_removes_temporary_on_get_file_cancellation(
     source.get_file_hook = tracking_hook
 
     with pytest.raises(type(control)) as caught:
-        _invoke_cat(["memory:/blob"], sources={"memory": source})
+        _invoke("cat", ["memory:/blob"], sources={"memory": source})
 
     assert type(caught.value) is type(control)
     if not isinstance(control, asyncio.CancelledError):
@@ -569,7 +558,7 @@ def test_cat_retries_temporary_cleanup_after_get_file_cancellation(
     monkeypatch.setattr("fsspec_cli._cat._render_staging_failure", capture_render)
 
     with pytest.raises(type(control)) as caught:
-        _invoke_cat(["memory:/blob"], sources={"memory": source})
+        _invoke("cat", ["memory:/blob"], sources={"memory": source})
 
     assert type(caught.value) is type(control)
     if not isinstance(control, asyncio.CancelledError):
@@ -597,7 +586,8 @@ def test_cat_continues_after_temporary_open_failure(monkeypatch) -> None:
         return real_open(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", fail_open)
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         ["memory:/bad", "memory:/ok"],
         sources={"memory": source},
     )
@@ -636,7 +626,8 @@ def test_cat_continues_after_temporary_read_failure(monkeypatch) -> None:
         return real_open(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", fail_read_open)
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         ["memory:/bad", "memory:/ok"],
         sources={"memory": source},
     )
@@ -681,7 +672,8 @@ def test_cat_continues_after_temporary_close_failure(monkeypatch) -> None:
         return handle
 
     monkeypatch.setattr(Path, "open", wrap_open)
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         ["memory:/bad", "memory:/ok"],
         sources={"memory": source},
     )
@@ -728,7 +720,8 @@ def test_cat_stops_after_delayed_temporary_read_failure_emitting_partial(
         return real_open(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", fail_late_read_open)
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         ["memory:/bad", "memory:/ok"],
         sources={"memory": source},
     )
@@ -781,7 +774,8 @@ def test_cat_stops_when_single_handle_read_fails_after_first_output(
         return real_open(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", fail_after_output_open)
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         ["memory:/bad", "memory:/later"],
         sources={"memory": source},
     )
@@ -815,7 +809,7 @@ def test_cat_reports_cleanup_failure_after_download_failure(monkeypatch) -> None
 
     monkeypatch.setattr(tempfile, "mkstemp", tracking_mkstemp)
     monkeypatch.setattr(Path, "unlink", fail_unlink)
-    result = _invoke_cat(["memory:/blob"], sources={"memory": source})
+    result = _invoke("cat", ["memory:/blob"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout_bytes == b""
@@ -849,7 +843,7 @@ def test_cat_finally_closes_descriptor_after_two_os_close_failures(monkeypatch) 
 
     monkeypatch.setattr(tempfile, "mkstemp", tracking_mkstemp)
     monkeypatch.setattr(os, "close", fail_close)
-    result = _invoke_cat(["memory:/blob"], sources={"memory": source})
+    result = _invoke("cat", ["memory:/blob"], sources={"memory": source})
 
     assert result.exit_code == 1
     assert result.stdout_bytes == b""
@@ -911,7 +905,7 @@ def test_cat_operand_free_reads_binary_stdin_once(monkeypatch) -> None:
     payload = b"\xff\xfe\0stdin"
     _install_stdin(monkeypatch, io.BytesIO(payload))
 
-    result = _invoke_cat([])
+    result = _invoke("cat", [])
 
     assert result.exit_code == 0
     assert result.stdout_bytes == payload
@@ -921,7 +915,7 @@ def test_cat_operand_free_reads_binary_stdin_once(monkeypatch) -> None:
 def test_cat_operand_free_with_empty_stdin(monkeypatch) -> None:
     _install_stdin(monkeypatch, io.BytesIO(b""))
 
-    result = _invoke_cat([])
+    result = _invoke("cat", [])
 
     assert result.exit_code == 0
     assert result.stdout_bytes == b""
@@ -944,7 +938,7 @@ def test_cat_dash_forwards_binary_stdin_verbatim(
 ) -> None:
     _install_stdin(monkeypatch, io.BytesIO(payload))
 
-    result = _invoke_cat(["-"])
+    result = _invoke("cat", ["-"])
 
     assert result.exit_code == 0
     assert result.stdout_bytes == payload
@@ -954,7 +948,7 @@ def test_cat_dash_forwards_binary_stdin_verbatim(
 def test_cat_accepts_option_terminator_before_stdin(monkeypatch) -> None:
     _install_stdin(monkeypatch, io.BytesIO(b"stdin"))
 
-    result = _invoke_cat(["--", "-"])
+    result = _invoke("cat", ["--", "-"])
 
     assert (result.exit_code, result.stdout_bytes, result.stderr) == (
         0,
@@ -967,7 +961,7 @@ def test_cat_short_read_stdin_still_emits_all_bytes(monkeypatch) -> None:
     payload = b"abcdefghij"
     _install_stdin(monkeypatch, _ShortReadStdin(payload, chunk=3))
 
-    result = _invoke_cat(["-"])
+    result = _invoke("cat", ["-"])
 
     assert result.exit_code == 0
     assert result.stdout_bytes == payload
@@ -979,7 +973,7 @@ def test_cat_repeated_dash_second_occurrence_sees_eof(monkeypatch) -> None:
     handle = io.BytesIO(payload)
     _install_stdin(monkeypatch, handle)
 
-    result = _invoke_cat(["-", "-"])
+    result = _invoke("cat", ["-", "-"])
 
     assert result.exit_code == 0
     assert result.stdout_bytes == payload
@@ -995,7 +989,8 @@ def test_cat_preserves_file_stdin_file_order(monkeypatch) -> None:
     )
     _install_stdin(monkeypatch, io.BytesIO(b"S"))
 
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         ["memory:/left", "-", "memory:/right"],
         sources={"memory": source},
     )
@@ -1045,7 +1040,7 @@ def test_cat_acquires_sources_before_any_stdin_read(
 
     _install_stdin(monkeypatch, _OrderingStdin())
 
-    result = _invoke_cat(arguments, sources={"memory": tracking_factory})
+    result = _invoke("cat", arguments, sources={"memory": tracking_factory})
 
     assert result.exit_code == 0
     assert events[0] == "factory"
@@ -1079,7 +1074,8 @@ def test_cat_all_multi_source_context_entries_complete_before_stdin(
 
     _install_stdin(monkeypatch, _OrderingStdin())
 
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         ["alpha:/one", "-", "beta:/two"],
         sources={"alpha": alpha_factory, "beta": beta_factory},
     )
@@ -1134,7 +1130,8 @@ def test_cat_stdin_untouched_when_later_source_factory_fails(
 
     _install_stdin(monkeypatch, _ForbiddenStdin())
 
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         arguments,
         sources={
             "first": first,
@@ -1196,7 +1193,8 @@ def test_cat_stdin_untouched_when_later_source_entry_fails(
 
     _install_stdin(monkeypatch, _ForbiddenStdin())
 
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         arguments,
         sources={
             "first": first,
@@ -1287,7 +1285,7 @@ def test_cat_stops_on_stdout_failure_during_stdin_at_each_position(
 
     prefix_stdout = _PrefixStdout(accepted_prefix)
     monkeypatch.setattr("fsspec_cli._cat._binary_stdout", lambda: prefix_stdout)
-    result = _invoke_cat(arguments, sources={"memory": source})
+    result = _invoke("cat", arguments, sources={"memory": source})
 
     assert result.exit_code == 1
     assert b"".join(accepted) == expected_stdout
@@ -1315,7 +1313,8 @@ def test_cat_continues_after_missing_file_before_and_after_stdin(monkeypatch) ->
     )
     _install_stdin(monkeypatch, io.BytesIO(b"S"))
 
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         ["memory:/missing", "-", "memory:/ok", "memory:/missing"],
         sources={"memory": source},
     )
@@ -1331,7 +1330,8 @@ def test_cat_continues_after_stdin_read_failure(monkeypatch) -> None:
     source = _RecordingSource([], get_file_content=b"OK")
     _install_stdin(monkeypatch, _FailingStdin(before=b"S"))
 
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         ["-", "memory:/blob"],
         sources={"memory": source},
     )
@@ -1357,7 +1357,8 @@ def test_cat_stops_on_stdout_failure_during_stdin(monkeypatch) -> None:
             return None
 
     monkeypatch.setattr("fsspec_cli._cat._binary_stdout", _PrefixStdout)
-    result = _invoke_cat(
+    result = _invoke(
+        "cat",
         ["-", "memory:/blob"],
         sources={"memory": source},
     )
@@ -1378,7 +1379,7 @@ def test_cat_zero_source_invalid_argv_never_reads_stdin(monkeypatch) -> None:
             raise AssertionError
 
     _install_stdin(monkeypatch, _ForbiddenStdin())
-    result = _invoke_cat(["/bare"], sources={"memory": _source_must_not_run})
+    result = _invoke("cat", ["/bare"], sources={"memory": _source_must_not_run})
 
     assert result.exit_code == 2
     assert result.stderr == "cat: /bare: invalid mapped filesystem operand\n"
@@ -1404,7 +1405,7 @@ def test_cat_propagates_cancellation_during_stdin_read(
     _install_stdin(monkeypatch, _CancelStdin())
 
     with pytest.raises(type(control)) as caught:
-        _invoke_cat(["-", "memory:/blob"], sources={"memory": source})
+        _invoke("cat", ["-", "memory:/blob"], sources={"memory": source})
 
     assert type(caught.value) is type(control)
     if not isinstance(control, asyncio.CancelledError):

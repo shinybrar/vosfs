@@ -12,7 +12,6 @@ from fsspec_cli._path import (
     _lexical_relative,
     _lexical_root,
     _same_lexical_path,
-    _strip_trailing_slashes,
 )
 
 
@@ -36,25 +35,23 @@ def test_lexical_basename_preserves_the_locked_path_contract(
 
 
 @pytest.mark.parametrize(
-    ("path", "stripped", "root", "final_dot", "any_dot"),
+    ("path", "root", "final_dot", "any_dot"),
     [
-        ("/", "", True, False, False),
-        ("///", "", True, False, False),
-        ("/docs/", "/docs", False, False, False),
-        ("/docs/.", "/docs/.", False, True, True),
-        ("/docs/../", "/docs/..", False, True, True),
-        ("/docs/./file", "/docs/./file", False, False, True),
-        ("/.hidden", "/.hidden", False, False, False),
+        ("/", True, False, False),
+        ("///", True, False, False),
+        ("/docs/", False, False, False),
+        ("/docs/.", False, True, True),
+        ("/docs/../", False, True, True),
+        ("/docs/./file", False, False, True),
+        ("/.hidden", False, False, False),
     ],
 )
 def test_lexical_path_safeguard_facts(
     path: str,
-    stripped: str,
     root: bool,
     final_dot: bool,
     any_dot: bool,
 ) -> None:
-    assert _strip_trailing_slashes(path) == stripped
     assert _is_root(path) is root
     assert _has_final_dot_segment(path) is final_dot
     assert _has_dot_segment(path) is any_dot

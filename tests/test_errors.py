@@ -189,8 +189,8 @@ def test_http_exception_maps_413_to_enospc() -> None:
     assert exc.errno == errno.ENOSPC
 
 
-def test_http_exception_maps_quota_fault_to_enospc() -> None:
-    exc = errors.http_exception(500, fault="QuotaExceeded")
+def test_http_exception_maps_quota_body_to_enospc() -> None:
+    exc = errors.http_exception(500, body="quota exceeded for this user")
     assert type(exc) is OSError
     assert exc.errno == errno.ENOSPC
 

@@ -1,16 +1,12 @@
-"""Typed query-command registration through the mounted application seam."""
+"""Typed command registration through the mounted application seam."""
 
 from __future__ import annotations
-
-from typing import NoReturn
 
 import pytest
 from fsspec_cli import App
 from typer.testing import CliRunner
 
-
-def _source_must_not_run() -> NoReturn:
-    raise AssertionError
+from ._support import _source_must_not_run
 
 
 @pytest.mark.parametrize(
@@ -22,9 +18,12 @@ def _source_must_not_run() -> NoReturn:
         ("size", "Display exact file sizes", ("name:/path",)),
         ("test", "Evaluate a file predicate", ("name:/path", "-e", "-d", "-f")),
         ("stat", "Display file status", ("name:/path",)),
+        ("mkdir", "Create directories", ("name:/path", "-p")),
+        ("rmdir", "Remove empty directories", ("name:/path",)),
+        ("unlink", "Remove a single file", ("name:/path",)),
     ],
 )
-def test_query_help_comes_from_typed_callback_metadata(
+def test_help_comes_from_typed_callback_metadata(
     command: str,
     summary: str,
     parameters: tuple[str, ...],
@@ -52,9 +51,20 @@ def test_query_help_comes_from_typed_callback_metadata(
         ("size", [], ("Missing argument", "name:/path")),
         ("test", ["-e"], ("Missing argument", "name:/path")),
         ("stat", [], ("Missing argument", "name:/path")),
+        ("mkdir", [], ("Missing argument", "name:/path")),
+        (
+            "rmdir",
+            ["--parents", "memory:/docs"],
+            ("No such option", "parents"),
+        ),
+        (
+            "unlink",
+            ["memory:/one", "memory:/two"],
+            ("unexpected extra argument", "memory:/two"),
+        ),
     ],
 )
-def test_typer_rejects_query_syntax_before_source_acquisition(
+def test_typer_rejects_syntax_before_source_acquisition(
     command: str,
     arguments: list[str],
     contexts: tuple[str, ...],

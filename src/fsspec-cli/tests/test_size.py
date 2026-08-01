@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, NoReturn
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 import typer
 from fsspec.asyn import AsyncFileSystem
-from fsspec_cli import App, AsyncFilesystemSource
-from typer.testing import CliRunner, Result
+
+from ._support import _invoke
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -27,20 +27,6 @@ class _SizeControl(BaseException):
 
 
 _DEFAULT_BATCH = object()
-
-
-def _source_must_not_run() -> NoReturn:
-    raise AssertionError
-
-
-def _invoke_size(
-    arguments: list[str],
-    *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["size", *arguments])
 
 
 class _SizeFileSystem(AsyncFileSystem):
@@ -120,7 +106,7 @@ class _SizeContext(AbstractAsyncContextManager[_SizeFileSystem]):
 def test_size_uses_one_size_call_for_one_operand() -> None:
     source = _SizeSource(single_result=1536)
 
-    result = _invoke_size(["memory:/docs/a.txt"], sources={"memory": source})
+    result = _invoke("size", ["memory:/docs/a.txt"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
@@ -135,7 +121,8 @@ def test_size_batches_by_first_source_reference_and_preserves_operand_order() ->
     memory = _SizeSource(batch_result=[2, 4])
     local = _SizeSource(batch_result=[3, 5])
 
-    result = _invoke_size(
+    result = _invoke(
+        "size",
         [
             "memory:/a",
             "local:/b",
@@ -157,7 +144,7 @@ def test_size_batches_by_first_source_reference_and_preserves_operand_order() ->
 
 
 def test_size_help_comes_from_typed_callback() -> None:
-    result = _invoke_size(["--help"])
+    result = _invoke("size", ["--help"])
 
     assert (result.exit_code, result.stderr) == (0, "")
     help_text = result.stdout
@@ -181,7 +168,7 @@ def test_size_preflight_failures_are_stable_and_source_free(
     arguments: list[str],
     diagnostic: str,
 ) -> None:
-    result = _invoke_size(arguments)
+    result = _invoke("size", arguments)
 
     assert (result.exit_code, result.stdout, result.stderr) == (2, "", diagnostic)
 
@@ -198,7 +185,7 @@ def test_size_leaves_usage_failures_to_typer(
     arguments: list[str],
     contexts: tuple[str, ...],
 ) -> None:
-    result = _invoke_size(arguments)
+    result = _invoke("size", arguments)
 
     assert (result.exit_code, result.stdout) == (2, "")
     diagnostic = result.stderr
@@ -209,7 +196,7 @@ def test_size_leaves_usage_failures_to_typer(
 def test_size_accepts_the_option_terminator() -> None:
     source = _SizeSource(single_result=0)
 
-    result = _invoke_size(["--", "memory:/zero"], sources={"memory": source})
+    result = _invoke("size", ["--", "memory:/zero"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
@@ -222,7 +209,7 @@ def test_size_accepts_the_option_terminator() -> None:
 def test_size_rejects_incompatible_single_results(size_result: object) -> None:
     source = _SizeSource(single_result=size_result)
 
-    result = _invoke_size(["memory:/a"], sources={"memory": source})
+    result = _invoke("size", ["memory:/a"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -240,7 +227,8 @@ def test_size_rejects_incompatible_batch_results_atomically(
 ) -> None:
     source = _SizeSource(batch_result=batch_result)
 
-    result = _invoke_size(
+    result = _invoke(
+        "size",
         ["memory:/a", "memory:/b"],
         sources={"memory": source},
     )
@@ -271,7 +259,7 @@ def test_size_reports_backend_failure_and_passes_it_to_cleanup(
 ) -> None:
     source = _SizeSource(error=error)
 
-    result = _invoke_size(["memory:/a"], sources={"memory": source})
+    result = _invoke("size", ["memory:/a"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -289,7 +277,8 @@ def test_size_batch_failure_is_atomic_and_stops_in_source_order() -> None:
     local = _SizeSource(error=error)
     later = _SizeSource(batch_result=[3])
 
-    result = _invoke_size(
+    result = _invoke(
+        "size",
         ["memory:/a", "local:/b", "later:/c"],
         sources={"memory": memory, "local": local, "later": later},
     )
@@ -320,7 +309,7 @@ def test_size_cleans_up_after_output_failure(monkeypatch: pytest.MonkeyPatch) ->
         raise output_error
 
     monkeypatch.setattr(typer, "echo", fail_stdout)
-    result = _invoke_size(["memory:/a"], sources={"memory": source})
+    result = _invoke("size", ["memory:/a"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -341,7 +330,7 @@ def test_size_keeps_broken_pipe_silent_and_cleans_up(
         raise broken_pipe
 
     monkeypatch.setattr(typer, "echo", break_stdout)
-    result = _invoke_size(["memory:/a"], sources={"memory": source})
+    result = _invoke("size", ["memory:/a"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (1, "", "")
     assert source.exit_calls[0][1] is broken_pipe
@@ -350,7 +339,7 @@ def test_size_keeps_broken_pipe_silent_and_cleans_up(
 def test_size_retains_complete_output_when_source_exit_fails() -> None:
     source = _SizeSource(single_result=1, exit_error=OSError("cleanup"))
 
-    result = _invoke_size(["memory:/a"], sources={"memory": source})
+    result = _invoke("size", ["memory:/a"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -364,7 +353,7 @@ def test_size_cleans_up_then_propagates_backend_control_flow() -> None:
     source = _SizeSource(error=control)
 
     with pytest.raises(_SizeControl) as caught:
-        _invoke_size(["memory:/a"], sources={"memory": source})
+        _invoke("size", ["memory:/a"], sources={"memory": source})
 
     assert caught.value is control
     assert source.lifecycle == ["factory", "enter", "exit"]

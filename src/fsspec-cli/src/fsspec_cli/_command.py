@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import locale
 import sys
 from contextlib import suppress
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
 
     from ._app import AsyncFilesystemSource
+    from ._recursive_rm import _RecursiveRmFailure
 
 # 128 + SIGPIPE (13): lets pipeline consumers distinguish a closed reader from
 # an ordinary command failure when the broken pipe is the sole failure.
@@ -151,6 +153,22 @@ async def _drain_current_operation(operation: Awaitable[_ResultT]) -> _ResultT:
     return cast("_ResultT", result)
 
 
+async def _call(
+    filesystem: AsyncFileSystem,
+    operation: str,
+    *args: object,
+    **kwargs: object,
+) -> object:
+    """Await one named async hook, refusing absent or synchronous forms."""
+    method = getattr(filesystem, operation, None)
+    if not callable(method):
+        raise NotImplementedError
+    result = method(*args, **kwargs)
+    if not inspect.isawaitable(result):
+        raise NotImplementedError
+    return await _drain_current_operation(result)
+
+
 def _render_operand_diagnostic(
     command: str,
     operand: _MappedOperand,
@@ -192,7 +210,9 @@ def _backend_category(error: Exception) -> str:
     return f"backend failure ({rendered_class}): {rendered_message}"
 
 
-def _first_backend_error(failures: Iterable[_Failure]) -> Exception | None:
+def _first_backend_error(
+    failures: Iterable[_Failure | _RecursiveRmFailure],
+) -> Exception | None:
     """Return the first backend exception among ``failures``, if any."""
     return next(
         (
@@ -336,11 +356,6 @@ def _valid_size(value: object) -> TypeGuard[int]:
     return type(value) is int and value >= 0
 
 
-def _sorted_known(known_names: Collection[str]) -> list[str]:
-    """Return the configured source names in locale order for diagnostics."""
-    return sorted(known_names, key=_collate)
-
-
 def _parse_mapped_operand(
     command: str,
     argument: str,
@@ -362,7 +377,7 @@ def _parse_mapped_operand(
         rendered_operand = _render_diagnostic_value(argument)
         rendered_names = ", ".join(
             _render_diagnostic_value(candidate)
-            for candidate in _sorted_known(known_names)
+            for candidate in sorted(known_names, key=_collate)
         )
         _usage_error(
             command,

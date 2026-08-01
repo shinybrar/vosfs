@@ -4,12 +4,7 @@ from urllib.parse import unquote
 
 import httpx
 import respx
-from conftest import AUTHORITY, NODES_URL, make_fs, mock_transfers
-
-
-def _fs(router, sim, *, asynchronous=True):
-    sim.install(router)
-    return make_fs(router, asynchronous=asynchronous)
+from conftest import AUTHORITY, NODES_URL, container_xml, data_xml, mock_transfers
 
 
 def _install_percent_mutation_routes(
@@ -31,25 +26,15 @@ def _install_percent_mutation_routes(
         if request.method == "GET":
             document = listings.get(internal)
             if document is None and (internal in files or internal in data_nodes):
-                document = (
-                    f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
-                    f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-                    f'xsi:type="vos:DataNode" uri="vos://{AUTHORITY}{encoded}">'
-                    f"<vos:properties><vos:property "
-                    f'uri="ivo://ivoa.net/vospace/core#length">'
-                    f"{len(files.get(internal, b''))}</vos:property>"
-                    f"</vos:properties></vos:node>"
-                ).encode()
+                document = data_xml(
+                    f"vos://{AUTHORITY}{encoded}", len(files.get(internal, b""))
+                )
             if document is not None:
                 return httpx.Response(200, content=document)
             if encoded in created or "100A" in encoded:
-                document = (
-                    f'<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0" '
-                    f'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-                    f'xsi:type="vos:ContainerNode" uri="vos://{AUTHORITY}{encoded}">'
-                    f"<vos:properties/><vos:nodes/></vos:node>"
-                ).encode()
-                return httpx.Response(200, content=document)
+                return httpx.Response(
+                    200, content=container_xml(f"vos://{AUTHORITY}{encoded}")
+                )
             return httpx.Response(404)
         if request.method == "PUT":
             created.add(encoded)

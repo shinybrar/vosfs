@@ -6,13 +6,14 @@ from typing import NoReturn
 import pytest
 from fsspec.asyn import AsyncFileSystem
 
-from ._support import _invoke_ls, _RecordingSource, _source_must_not_run
+from ._support import _invoke, _RecordingSource, _source_must_not_run
 
 
 def test_ls_traces_one_file_on_its_source_invocation_loop() -> None:
     events: list[tuple[object, ...]] = []
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["memory:/path:with:colons"],
         sources={"memory": _RecordingSource(events)},
     )
@@ -28,7 +29,8 @@ def test_ls_acquires_distinct_names_before_reusing_sources_for_files() -> None:
     events: list[tuple[object, ...]] = []
     shared_source = _RecordingSource(events)
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["alpha:/one", "alpha:/three", "beta:/two"],
         sources={
             "beta": shared_source,
@@ -61,7 +63,8 @@ def test_ls_stops_acquisition_after_a_source_factory_failure() -> None:
     def broken_source() -> NoReturn:
         raise factory_error
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["first:/one", "broken:/two", "later:/three"],
         sources={
             "first": first,
@@ -96,7 +99,7 @@ def test_ls_rejects_an_incompatible_source_context_manager(
     def source() -> object:
         return incompatible_manager
 
-    result = _invoke_ls(["broken:/file"], sources={"broken": source})
+    result = _invoke("ls", ["broken:/file"], sources={"broken": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -122,7 +125,8 @@ def test_ls_stops_after_source_entry_failure_without_exiting_failed_entry() -> N
         events.append(("broken-factory",))
         return BrokenContext()
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["first:/one", "broken:/two", "later:/three"],
         sources={
             "first": first,
@@ -175,7 +179,7 @@ def test_ls_exits_a_source_that_yields_an_incompatible_filesystem(
         events.append(("factory",))
         return YieldingContext()
 
-    result = _invoke_ls(["broken:/file"], sources={"broken": source})
+    result = _invoke("ls", ["broken:/file"], sources={"broken": source})
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -203,7 +207,8 @@ def _async_filesystem_with_flag(
 def test_ls_rejects_a_non_file_info_result(info_result: object) -> None:
     events: list[tuple[object, ...]] = []
 
-    result = _invoke_ls(
+    result = _invoke(
+        "ls",
         ["memory:/file"],
         sources={"memory": _RecordingSource(events, info_result)},
     )

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import socket
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
@@ -11,11 +10,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Generic, Literal, TypeVar
 
 from fsspec.asyn import AsyncFileSystem
+from fsspec.implementations.asyn_wrapper import AsyncFileSystemWrapper
+from fsspec.implementations.memory import MemoryFileSystem
 from fsspec_cli import App
 from typer.testing import CliRunner, Result
 
 if TYPE_CHECKING:
     from types import TracebackType
+
 
 _FilesystemT = TypeVar("_FilesystemT", bound=AsyncFileSystem)
 _FilesystemFactory = Callable[[], _FilesystemT]
@@ -73,14 +75,75 @@ class FindCall:
     kwargs: Mapping[str, object]
 
 
-def _block_network(monkeypatch) -> None:
-    def fail_network(*args: object, **kwargs: object) -> None:
-        del args, kwargs
-        message = "hermetic command-matrix tests prohibit network access"
-        raise AssertionError(message)
+@dataclass(frozen=True)
+class _OperationSpec:
+    """How one instrumented hook records its call and forwards arguments."""
 
-    monkeypatch.setattr(socket, "create_connection", fail_network)
-    monkeypatch.setattr(socket, "getaddrinfo", fail_network)
+    keyword: str | None = None
+    keyword_default: object = None
+    destination_field: str | None = None
+    results: str | None = None
+    record_path: bool = False
+
+
+_OPERATION_SPECS: dict[str, _OperationSpec] = {
+    "info": _OperationSpec(results="info_results"),
+    "ls": _OperationSpec(keyword="detail", keyword_default=True, results="ls_results"),
+    "du": _OperationSpec(keyword="total", keyword_default=True),
+    "get_file": _OperationSpec(
+        destination_field="local_path",
+        results="get_file_results",
+        record_path=True,
+    ),
+    "mkdir": _OperationSpec(keyword="create_parents", keyword_default=True),
+    "makedirs": _OperationSpec(keyword="exist_ok", keyword_default=False),
+    "rmdir": _OperationSpec(),
+    "rm_file": _OperationSpec(),
+    "cp_file": _OperationSpec(destination_field="destination_path"),
+}
+
+
+_MEMORY_DOCS: Mapping[str, bytes] = {
+    "/docs/notes.txt": b"notes.txt",
+    "/docs/.hidden": b".hidden",
+    "/docs/guide.md": b"guide.md",
+}
+
+
+def _memory_factory(
+    monkeypatch,
+    files: Mapping[str, bytes] | None = None,
+    *,
+    directories: tuple[str, ...] = ("/docs",),
+) -> Callable[[], AsyncFileSystemWrapper]:
+    """Build an adapted-Memory filesystem factory with isolated, re-seeded state."""
+    resolved = dict(_MEMORY_DOCS if files is None else files)
+    monkeypatch.setattr(MemoryFileSystem, "store", {})
+    monkeypatch.setattr(MemoryFileSystem, "pseudo_dirs", [""])
+    monkeypatch.setattr(MemoryFileSystem, "_cache", {})
+
+    def make_filesystem() -> AsyncFileSystemWrapper:
+        MemoryFileSystem.store.clear()
+        MemoryFileSystem.pseudo_dirs[:] = [""]
+        MemoryFileSystem.clear_instance_cache()
+        filesystem = MemoryFileSystem()
+        for directory in directories:
+            filesystem.makedirs(directory)
+        for path, content in resolved.items():
+            filesystem.pipe_file(path, content)
+        return AsyncFileSystemWrapper(filesystem, asynchronous=True)
+
+    return make_filesystem
+
+
+def _memory_source(
+    monkeypatch,
+    files: Mapping[str, bytes] | None = None,
+    *,
+    directories: tuple[str, ...] = ("/docs",),
+) -> _ProbedSource[AsyncFileSystemWrapper]:
+    """Build a probed adapted-Memory source with isolated, re-seeded state."""
+    return _ProbedSource(_memory_factory(monkeypatch, files, directories=directories))
 
 
 class _ProbedSource(Generic[_FilesystemT]):
@@ -112,90 +175,50 @@ class _ProbedSource(Generic[_FilesystemT]):
         )
         return _ProbedContext(self, source_id)
 
-    def _wrap_info(
+    def _wrap(
         self,
         source_id: int,
-        original_info: Callable[..., Awaitable[object]],
+        filesystem: _FilesystemT,
+        name: str,
+        spec: _OperationSpec,
     ) -> Callable[..., Awaitable[object]]:
-        async def info(path: str, **kwargs: object) -> object:
+        original = getattr(filesystem, f"_{name}", None)
+
+        async def operation(path: str, *args: object, **kwargs: object) -> object:
+            extra: dict[str, object] = {}
+            if spec.keyword is not None:
+                kwargs.setdefault(spec.keyword, spec.keyword_default)
+                extra[spec.keyword] = kwargs[spec.keyword]
+            if spec.destination_field is not None:
+                extra[spec.destination_field] = args[0]
+            recorded = {
+                key: value for key, value in kwargs.items() if key != spec.keyword
+            }
             self.calls.append(
                 FilesystemCall(
-                    "info",
+                    name,
                     source_id,
                     path,
-                    None,
-                    kwargs,
+                    extra.pop("detail", None),
+                    recorded,
                     id(asyncio.get_running_loop()),
+                    **extra,
                 )
             )
+            if original is None:
+                message = f"{type(filesystem).__name__} lacks _{name}"
+                raise NotImplementedError(message)
             try:
-                result = await original_info(path, **kwargs)
+                result = await original(path, *args, **kwargs)
             except Exception as error:
-                self.errors.append((source_id, "info", error))
+                self.errors.append((source_id, name, error))
                 raise
-            self.info_results.append((source_id, result))
+            if spec.results is not None:
+                value = path if spec.record_path else result
+                getattr(self, spec.results).append((source_id, value))
             return result
 
-        return info
-
-    def _wrap_ls(
-        self,
-        source_id: int,
-        original_ls: Callable[..., Awaitable[object]],
-    ) -> Callable[..., Awaitable[object]]:
-        async def ls(
-            path: str,
-            detail: bool = True,  # noqa: FBT002 - mirrors the fsspec hook.
-            **kwargs: object,
-        ) -> object:
-            self.calls.append(
-                FilesystemCall(
-                    "ls",
-                    source_id,
-                    path,
-                    detail,
-                    kwargs,
-                    id(asyncio.get_running_loop()),
-                )
-            )
-            try:
-                result = await original_ls(path, detail=detail, **kwargs)
-            except Exception as error:
-                self.errors.append((source_id, "ls", error))
-                raise
-            self.ls_results.append((source_id, result))
-            return result
-
-        return ls
-
-    def _wrap_du(
-        self,
-        source_id: int,
-        original_du: Callable[..., Awaitable[object]],
-    ) -> Callable[..., Awaitable[object]]:
-        async def du(
-            path: str,
-            total: bool = True,  # noqa: FBT002 - mirrors the fsspec hook.
-            **kwargs: object,
-        ) -> object:
-            self.calls.append(
-                FilesystemCall(
-                    "du",
-                    source_id,
-                    path,
-                    None,
-                    kwargs,
-                    id(asyncio.get_running_loop()),
-                    total=total,
-                )
-            )
-            try:
-                return await original_du(path, total=total, **kwargs)
-            except Exception as error:
-                self.errors.append((source_id, "du", error))
-                raise
-
-        return du
+        return operation
 
     def _wrap_find(
         self,
@@ -232,184 +255,6 @@ class _ProbedSource(Generic[_FilesystemT]):
 
         return find
 
-    def _wrap_get_file(
-        self,
-        source_id: int,
-        original_get_file: Callable[..., Awaitable[object]],
-    ) -> Callable[..., Awaitable[object]]:
-        async def get_file(rpath: str, lpath: str, **kwargs: object) -> object:
-            self.calls.append(
-                FilesystemCall(
-                    "get_file",
-                    source_id,
-                    rpath,
-                    None,
-                    kwargs,
-                    id(asyncio.get_running_loop()),
-                    local_path=lpath,
-                )
-            )
-            try:
-                result = await original_get_file(rpath, lpath, **kwargs)
-            except Exception as error:
-                self.errors.append((source_id, "get_file", error))
-                raise
-            self.get_file_results.append((source_id, rpath))
-            return result
-
-        return get_file
-
-    def _wrap_mkdir(
-        self,
-        source_id: int,
-        filesystem: _FilesystemT,
-        original_mkdir: Callable[..., Awaitable[None]] | None,
-    ) -> Callable[..., Awaitable[None]]:
-        async def mkdir(
-            path: str,
-            create_parents: bool = True,  # noqa: FBT002 - mirrors the fsspec hook.
-            **kwargs: object,
-        ) -> None:
-            self.calls.append(
-                FilesystemCall(
-                    "mkdir",
-                    source_id,
-                    path,
-                    None,
-                    kwargs,
-                    id(asyncio.get_running_loop()),
-                    create_parents=create_parents,
-                )
-            )
-            if original_mkdir is None:
-                message = f"{type(filesystem).__name__} lacks _mkdir"
-                raise NotImplementedError(message)
-            try:
-                await original_mkdir(path, create_parents=create_parents, **kwargs)
-            except Exception as error:
-                self.errors.append((source_id, "mkdir", error))
-                raise
-
-        return mkdir
-
-    def _wrap_makedirs(
-        self,
-        source_id: int,
-        filesystem: _FilesystemT,
-        original_makedirs: Callable[..., Awaitable[None]] | None,
-    ) -> Callable[..., Awaitable[None]]:
-        async def makedirs(
-            path: str,
-            exist_ok: bool = False,  # noqa: FBT002 - mirrors the fsspec hook.
-            **kwargs: object,
-        ) -> None:
-            self.calls.append(
-                FilesystemCall(
-                    "makedirs",
-                    source_id,
-                    path,
-                    None,
-                    kwargs,
-                    id(asyncio.get_running_loop()),
-                    exist_ok=exist_ok,
-                )
-            )
-            if original_makedirs is None:
-                message = f"{type(filesystem).__name__} lacks _makedirs"
-                raise NotImplementedError(message)
-            try:
-                await original_makedirs(path, exist_ok=exist_ok, **kwargs)
-            except Exception as error:
-                self.errors.append((source_id, "makedirs", error))
-                raise
-
-        return makedirs
-
-    def _wrap_rmdir(
-        self,
-        source_id: int,
-        filesystem: _FilesystemT,
-        original_rmdir: Callable[..., Awaitable[None]] | None,
-    ) -> Callable[..., Awaitable[None]]:
-        async def rmdir(path: str, **kwargs: object) -> None:
-            self.calls.append(
-                FilesystemCall(
-                    "rmdir",
-                    source_id,
-                    path,
-                    None,
-                    kwargs,
-                    id(asyncio.get_running_loop()),
-                )
-            )
-            if original_rmdir is None:
-                message = f"{type(filesystem).__name__} lacks _rmdir"
-                raise NotImplementedError(message)
-            try:
-                await original_rmdir(path, **kwargs)
-            except Exception as error:
-                self.errors.append((source_id, "rmdir", error))
-                raise
-
-        return rmdir
-
-    def _wrap_rm_file(
-        self,
-        source_id: int,
-        filesystem: _FilesystemT,
-        original_rm_file: Callable[..., Awaitable[None]] | None,
-    ) -> Callable[..., Awaitable[None]]:
-        async def rm_file(path: str, **kwargs: object) -> None:
-            self.calls.append(
-                FilesystemCall(
-                    "rm_file",
-                    source_id,
-                    path,
-                    None,
-                    kwargs,
-                    id(asyncio.get_running_loop()),
-                )
-            )
-            if original_rm_file is None:
-                message = f"{type(filesystem).__name__} lacks _rm_file"
-                raise NotImplementedError(message)
-            try:
-                await original_rm_file(path, **kwargs)
-            except Exception as error:
-                self.errors.append((source_id, "rm_file", error))
-                raise
-
-        return rm_file
-
-    def _wrap_cp_file(
-        self,
-        source_id: int,
-        filesystem: _FilesystemT,
-        original_cp_file: Callable[..., Awaitable[None]] | None,
-    ) -> Callable[..., Awaitable[None]]:
-        async def cp_file(path1: str, path2: str, **kwargs: object) -> None:
-            self.calls.append(
-                FilesystemCall(
-                    "cp_file",
-                    source_id,
-                    path1,
-                    None,
-                    kwargs,
-                    id(asyncio.get_running_loop()),
-                    destination_path=path2,
-                )
-            )
-            if original_cp_file is None:
-                message = f"{type(filesystem).__name__} lacks _cp_file"
-                raise NotImplementedError(message)
-            try:
-                await original_cp_file(path1, path2, **kwargs)
-            except Exception as error:
-                self.errors.append((source_id, "cp_file", error))
-                raise
-
-        return cp_file
-
     def _wrap_rm(
         self,
         source_id: int,
@@ -431,65 +276,16 @@ class _ProbedSource(Generic[_FilesystemT]):
         return rm
 
     def instrument(self, source_id: int, filesystem: _FilesystemT) -> None:
-        setattr(  # noqa: B010 - instrument this instance.
-            filesystem,
-            "_info",
-            self._wrap_info(source_id, filesystem._info),
-        )
-        setattr(  # noqa: B010 - instrument this instance.
-            filesystem,
-            "_ls",
-            self._wrap_ls(source_id, filesystem._ls),
-        )
-        setattr(  # noqa: B010 - instrument this instance.
-            filesystem,
-            "_du",
-            self._wrap_du(source_id, filesystem._du),
-        )
+        for name, spec in _OPERATION_SPECS.items():
+            setattr(
+                filesystem,
+                f"_{name}",
+                self._wrap(source_id, filesystem, name, spec),
+            )
         setattr(  # noqa: B010 - instrument this instance.
             filesystem,
             "_find",
             self._wrap_find(source_id, filesystem._find),
-        )
-        setattr(  # noqa: B010 - instrument.
-            filesystem,
-            "_get_file",
-            self._wrap_get_file(source_id, filesystem._get_file),
-        )
-        setattr(  # noqa: B010 - instrument this instance.
-            filesystem,
-            "_mkdir",
-            self._wrap_mkdir(
-                source_id, filesystem, getattr(filesystem, "_mkdir", None)
-            ),
-        )
-        setattr(  # noqa: B010 - instrument this instance.
-            filesystem,
-            "_makedirs",
-            self._wrap_makedirs(
-                source_id, filesystem, getattr(filesystem, "_makedirs", None)
-            ),
-        )
-        setattr(  # noqa: B010 - instrument this instance.
-            filesystem,
-            "_rmdir",
-            self._wrap_rmdir(
-                source_id, filesystem, getattr(filesystem, "_rmdir", None)
-            ),
-        )
-        setattr(  # noqa: B010 - instrument this instance.
-            filesystem,
-            "_rm_file",
-            self._wrap_rm_file(
-                source_id, filesystem, getattr(filesystem, "_rm_file", None)
-            ),
-        )
-        setattr(  # noqa: B010 - instrument this instance.
-            filesystem,
-            "_cp_file",
-            self._wrap_cp_file(
-                source_id, filesystem, getattr(filesystem, "_cp_file", None)
-            ),
         )
         setattr(  # noqa: B010 - negative trap for recursive rm.
             filesystem,
@@ -554,38 +350,6 @@ def _invoke(app: App, command: str, arguments: list[str]) -> Result:
     return CliRunner().invoke(app.typer_app, [command, *arguments])
 
 
-def _invoke_ls(app: App, arguments: list[str]) -> Result:
-    return _invoke(app, "ls", arguments)
-
-
-def _invoke_cat(app: App, arguments: list[str]) -> Result:
-    return _invoke(app, "cat", arguments)
-
-
-def _invoke_mkdir(app: App, arguments: list[str]) -> Result:
-    return _invoke(app, "mkdir", arguments)
-
-
-def _invoke_rmdir(app: App, arguments: list[str]) -> Result:
-    return _invoke(app, "rmdir", arguments)
-
-
-def _invoke_unlink(app: App, arguments: list[str]) -> Result:
-    return _invoke(app, "unlink", arguments)
-
-
-def _invoke_rm(app: App, arguments: list[str]) -> Result:
-    return _invoke(app, "rm", arguments)
-
-
-def _invoke_cp(app: App, arguments: list[str]) -> Result:
-    return _invoke(app, "cp", arguments)
-
-
-def _invoke_stat(app: App, arguments: list[str]) -> Result:
-    return _invoke(app, "stat", arguments)
-
-
 def _exercise_locked_profile(
     source_name: str,
     source: _ProbedSource[_FilesystemT],
@@ -595,9 +359,9 @@ def _exercise_locked_profile(
     operand = f"{source_name}:{path}"
     missing_operand = f"{operand}/missing"
 
-    plain = _invoke_ls(app, [operand])
-    almost_all = _invoke_ls(app, ["-A", operand])
-    missing = _invoke_ls(app, [missing_operand])
+    plain = _invoke(app, "ls", [operand])
+    almost_all = _invoke(app, "ls", ["-A", operand])
+    missing = _invoke(app, "ls", [missing_operand])
 
     assert (plain.exit_code, plain.stdout, plain.stderr) == (
         0,
@@ -704,8 +468,8 @@ def _exercise_long_listing_profile(
     app = App({source_name: source})
     directory_operand = f"{source_name}:{path}"
 
-    exact = _invoke_ls(app, ["-l", directory_operand])
-    human = _invoke_ls(app, ["-lh", directory_operand])
+    exact = _invoke(app, "ls", ["-l", directory_operand])
+    human = _invoke(app, "ls", ["-lh", directory_operand])
 
     assert (exact.exit_code, exact.stdout, exact.stderr) == (
         0,
@@ -760,9 +524,9 @@ def _exercise_cat_profile(
     operand = f"{source_name}:{path}"
     missing_operand = f"{operand}.missing"
 
-    plain = _invoke_cat(app, [operand])
-    repeated = _invoke_cat(app, [operand, operand])
-    missing = _invoke_cat(app, [missing_operand])
+    plain = _invoke(app, "cat", [operand])
+    repeated = _invoke(app, "cat", [operand, operand])
+    missing = _invoke(app, "cat", [missing_operand])
 
     assert (plain.exit_code, plain.stdout_bytes, plain.stderr) == (0, payload, "")
     assert (repeated.exit_code, repeated.stdout_bytes, repeated.stderr) == (
@@ -842,10 +606,10 @@ def _exercise_mkdir_locked_profile(
     parent_file = f"{file_path}/child"
     missing_parent = f"{parent_path}/absent/child"
 
-    success = _invoke_mkdir(app, [f"{source_name}:{new_dir}"])
-    exists = _invoke_mkdir(app, [f"{source_name}:{file_path}"])
-    parent_fail = _invoke_mkdir(app, [f"{source_name}:{parent_file}"])
-    missing = _invoke_mkdir(app, [f"{source_name}:{missing_parent}"])
+    success = _invoke(app, "mkdir", [f"{source_name}:{new_dir}"])
+    exists = _invoke(app, "mkdir", [f"{source_name}:{file_path}"])
+    parent_fail = _invoke(app, "mkdir", [f"{source_name}:{parent_file}"])
+    missing = _invoke(app, "mkdir", [f"{source_name}:{missing_parent}"])
 
     assert (success.exit_code, success.stdout, success.stderr) == (0, "", "")
     assert (exists.exit_code, exists.stdout, exists.stderr) == (
@@ -912,10 +676,10 @@ def _exercise_mkdir_memory_over_eager_failure(
     parent_file = f"{file_path}/child"
     missing_parent = f"{parent_path}/absent/child"
 
-    success = _invoke_mkdir(app, [f"{source_name}:{new_dir}"])
-    exists = _invoke_mkdir(app, [f"{source_name}:{file_path}"])
-    parent_fail = _invoke_mkdir(app, [f"{source_name}:{parent_file}"])
-    over_eager = _invoke_mkdir(app, [f"{source_name}:{missing_parent}"])
+    success = _invoke(app, "mkdir", [f"{source_name}:{new_dir}"])
+    exists = _invoke(app, "mkdir", [f"{source_name}:{file_path}"])
+    parent_fail = _invoke(app, "mkdir", [f"{source_name}:{parent_file}"])
+    over_eager = _invoke(app, "mkdir", [f"{source_name}:{missing_parent}"])
 
     assert (success.exit_code, success.stdout, success.stderr) == (0, "", "")
     assert (exists.exit_code, exists.stdout, exists.stderr) == (
@@ -962,12 +726,12 @@ def _exercise_mkdir_p_locked_profile(
     parent_file = f"{file_path}/child"
     root_operand = f"{source_name}:/"
 
-    deep = _invoke_mkdir(app, ["-p", f"{source_name}:{new_dir}"])
-    one = _invoke_mkdir(app, ["-p", f"{source_name}:{one_parent}"])
-    existing = _invoke_mkdir(app, ["-p", f"{source_name}:{existing_dir}"])
-    exists = _invoke_mkdir(app, ["-p", f"{source_name}:{file_path}"])
-    parent_fail = _invoke_mkdir(app, ["-p", f"{source_name}:{parent_file}"])
-    root = _invoke_mkdir(app, ["-p", root_operand])
+    deep = _invoke(app, "mkdir", ["-p", f"{source_name}:{new_dir}"])
+    one = _invoke(app, "mkdir", ["-p", f"{source_name}:{one_parent}"])
+    existing = _invoke(app, "mkdir", ["-p", f"{source_name}:{existing_dir}"])
+    exists = _invoke(app, "mkdir", ["-p", f"{source_name}:{file_path}"])
+    parent_fail = _invoke(app, "mkdir", ["-p", f"{source_name}:{parent_file}"])
+    root = _invoke(app, "mkdir", ["-p", root_operand])
 
     assert (deep.exit_code, deep.stdout, deep.stderr) == (0, "", "")
     assert (one.exit_code, one.stdout, one.stderr) == (0, "", "")
@@ -1027,9 +791,9 @@ def _exercise_rmdir_locked_profile(
     empty_dir = f"{parent_path}/empty"
     file_path = f"{parent_path}/{file_name}"
 
-    success = _invoke_rmdir(app, [f"{source_name}:{empty_dir}"])
-    non_empty = _invoke_rmdir(app, [f"{source_name}:{parent_path}"])
-    file_fail = _invoke_rmdir(app, [f"{source_name}:{file_path}"])
+    success = _invoke(app, "rmdir", [f"{source_name}:{empty_dir}"])
+    non_empty = _invoke(app, "rmdir", [f"{source_name}:{parent_path}"])
+    file_fail = _invoke(app, "rmdir", [f"{source_name}:{file_path}"])
 
     assert (success.exit_code, success.stdout, success.stderr) == (0, "", "")
     assert (non_empty.exit_code, non_empty.stdout, non_empty.stderr) == (
@@ -1077,9 +841,9 @@ def _exercise_unlink_locked_profile(
     missing_path = f"{parent_path}/missing.txt"
     directory_path = parent_path
 
-    success = _invoke_unlink(app, [f"{source_name}:{file_path}"])
-    missing = _invoke_unlink(app, [f"{source_name}:{missing_path}"])
-    directory = _invoke_unlink(app, [f"{source_name}:{directory_path}"])
+    success = _invoke(app, "unlink", [f"{source_name}:{file_path}"])
+    missing = _invoke(app, "unlink", [f"{source_name}:{missing_path}"])
+    directory = _invoke(app, "unlink", [f"{source_name}:{directory_path}"])
 
     assert (success.exit_code, success.stdout, success.stderr) == (0, "", "")
     assert (missing.exit_code, missing.stdout, missing.stderr) == (
@@ -1130,13 +894,14 @@ def _exercise_rm_locked_profile(
     second_path = f"{parent_path}/guide.md"
     third_path = f"{parent_path}/.hidden"
 
-    success = _invoke_rm(app, [f"{source_name}:{file_path}"])
-    many = _invoke_rm(
+    success = _invoke(app, "rm", [f"{source_name}:{file_path}"])
+    many = _invoke(
         app,
+        "rm",
         [f"{source_name}:{second_path}", f"{source_name}:{third_path}"],
     )
-    missing = _invoke_rm(app, [f"{source_name}:{missing_path}"])
-    directory = _invoke_rm(app, [f"{source_name}:{directory_path}"])
+    missing = _invoke(app, "rm", [f"{source_name}:{missing_path}"])
+    directory = _invoke(app, "rm", [f"{source_name}:{directory_path}"])
 
     assert (success.exit_code, success.stdout, success.stderr) == (0, "", "")
     assert (many.exit_code, many.stdout, many.stderr) == (0, "", "")
@@ -1195,8 +960,9 @@ def _exercise_rm_directory_profile(
     empty_dir = f"{parent_path}/empty"
     calls_before = len(source.calls)
 
-    result = _invoke_rm(
+    result = _invoke(
         app,
+        "rm",
         ["-d", f"{source_name}:{file_path}", f"{source_name}:{empty_dir}"],
     )
 
@@ -1215,7 +981,7 @@ def _exercise_rm_force_profile(
     app = App({source_name: source})
     missing_path = f"{parent_path}/missing.txt"
     calls_before = len(source.calls)
-    result = _invoke_rm(app, ["-f", f"{source_name}:{missing_path}"])
+    result = _invoke(app, "rm", ["-f", f"{source_name}:{missing_path}"])
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     assert [(call.operation, call.path) for call in source.calls[calls_before:]] == [
@@ -1234,8 +1000,8 @@ def _exercise_rm_verbose_profile(
     file_path = f"{parent_path}/{file_name}"
     missing_path = f"{parent_path}/missing-verbose.txt"
     calls_before = len(source.calls)
-    success = _invoke_rm(app, ["-v", f"{source_name}:{file_path}"])
-    missing = _invoke_rm(app, ["-v", f"{source_name}:{missing_path}"])
+    success = _invoke(app, "rm", ["-v", f"{source_name}:{file_path}"])
+    missing = _invoke(app, "rm", ["-v", f"{source_name}:{missing_path}"])
 
     assert (success.exit_code, success.stdout, success.stderr) == (
         0,
@@ -1264,7 +1030,7 @@ def _exercise_recursive_rm_profile(
         capabilities={"recursion": {"remove": True}},
     )
 
-    result = _invoke_rm(app, ["-Rv", f"{source_name}:{root}"])
+    result = _invoke(app, "rm", ["-Rv", f"{source_name}:{root}"])
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
@@ -1307,28 +1073,32 @@ def _exercise_cp_locked_profile(  # noqa: PLR0913 - matrix probe knobs.
         # cleanup on every platform; call-shape checks below still prove the
         # locked cp boundary, and backend-specific tests cover payload bytes.
 
-    success = _invoke_cp(
+    success = _invoke(
         app,
+        "cp",
         [f"{source_name}:{file_path}", f"{source_name}:{copy_path}"],
     )
     assert (success.exit_code, success.stdout, success.stderr) == (0, "", "")
     _assert_bytes(copy_path, expected)
     _assert_bytes(file_path, expected)
 
-    into_dir = _invoke_cp(
+    into_dir = _invoke(
         app,
+        "cp",
         [f"{source_name}:{file_path}", f"{source_name}:{target_dir}"],
     )
     assert (into_dir.exit_code, into_dir.stdout, into_dir.stderr) == (0, "", "")
     _assert_bytes(f"{target_dir}/{file_name}", expected)
     _assert_bytes(file_path, expected)
 
-    same_path = _invoke_cp(
+    same_path = _invoke(
         app,
+        "cp",
         [f"{source_name}:{file_path}", f"{source_name}:{file_path}"],
     )
-    directory_source = _invoke_cp(
+    directory_source = _invoke(
         app,
+        "cp",
         [f"{source_name}:{parent_path}", f"{source_name}:{copy_path}"],
     )
 
@@ -1377,8 +1147,9 @@ def _exercise_multi_source_cp_locked_profile(
         # cleanup on every platform; call-shape checks below still prove the
         # locked multi-source cp boundary, and hermetic tests cover payload bytes.
 
-    result = _invoke_cp(
+    result = _invoke(
         app,
+        "cp",
         [
             f"{source_name}:{notes_path}",
             f"{source_name}:{guide_path}",
@@ -1463,8 +1234,9 @@ def _exercise_stat_locked_profile(
     app = App({source_name: source})
     calls_before = len(source.calls)
     info_before = len(source.info_results)
-    result = _invoke_stat(
+    result = _invoke(
         app,
+        "stat",
         [f"{source_name}:{file_path}", f"{source_name}:{directory_path}"],
     )
     recorded: dict[str, object] = {}
@@ -1499,7 +1271,7 @@ def _exercise_stat_incomplete_profile(
 ) -> None:
     app = App({source_name: source})
     calls_before = len(source.calls)
-    result = _invoke_stat(app, [f"{source_name}:{path}"])
+    result = _invoke(app, "stat", [f"{source_name}:{path}"])
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,

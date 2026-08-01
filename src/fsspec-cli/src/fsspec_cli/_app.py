@@ -12,7 +12,7 @@ from typing import Annotated, Any, Literal, TypeAlias, TypedDict
 import typer
 from fsspec import AbstractFileSystem
 
-from ._basename import _run_basename
+from ._basename import _run_basename, _run_dirname
 from ._cat import _run_cat, _StdinOperand
 from ._command import (
     _MappedOperand,
@@ -21,10 +21,9 @@ from ._command import (
 )
 from ._cp import _cp_plan, _run_cp
 from ._diagnostics import _render_diagnostic_prefix, _render_diagnostic_value
-from ._dirname import _run_dirname
 from ._du import _DuRequest, _run_du
 from ._find import _FindRequest, _run_find
-from ._head_tail import _run_head, _run_tail
+from ._head_tail import _read_head, _read_tail, _run_byte_range
 from ._info import _run_info
 from ._ls import _LsRequest, _run_ls
 from ._mkdir import _MkdirRequest, _run_mkdir
@@ -500,7 +499,13 @@ class App:
             mapped = self._mapped("head", operand)
             _run_async_command(
                 "head",
-                lambda: _run_head("head", count, mapped, self._sources),
+                lambda: _run_byte_range(
+                    "head",
+                    count,
+                    mapped,
+                    self._sources,
+                    _read_head,
+                ),
             )
 
         @self.typer_app.command()
@@ -509,7 +514,13 @@ class App:
             mapped = self._mapped("tail", operand)
             _run_async_command(
                 "tail",
-                lambda: _run_tail("tail", count, mapped, self._sources),
+                lambda: _run_byte_range(
+                    "tail",
+                    count,
+                    mapped,
+                    self._sources,
+                    _read_tail,
+                ),
             )
 
         @self.typer_app.command()

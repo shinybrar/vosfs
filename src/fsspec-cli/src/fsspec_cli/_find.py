@@ -13,7 +13,6 @@ from ._command import (
     _MappedOperand,
     _run_single_operand_text,
 )
-from ._path import _strip_trailing_slashes
 
 if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
@@ -33,8 +32,8 @@ def _render_result(request: _FindRequest, result: object) -> str | _Failure:
     if paths is None:
         return _Failure(request.operand)
     if request.maxdepth == 0:
-        root = _strip_trailing_slashes(request.operand.path)
-        paths = [path for path in paths if _strip_trailing_slashes(path) == root]
+        root = request.operand.path.rstrip("/")
+        paths = [path for path in paths if path.rstrip("/") == root]
     paths.sort(key=_collate)
     return "".join(f"{path}\n" for path in paths)
 

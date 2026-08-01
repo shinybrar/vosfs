@@ -14,7 +14,7 @@ from fsspec_cli import App
 from typer.testing import CliRunner
 
 from ._support import (
-    _invoke_cp,
+    _invoke,
     _RecordingFileSystem,
     _RecordingSource,
     _source_must_not_run,
@@ -51,7 +51,8 @@ def test_cp_copies_one_file_without_stdout() -> None:
     events: list[tuple[object, ...]] = []
     source = _file_source(events)
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -88,7 +89,8 @@ def test_cp_preserves_backend_error_when_its_diagnostic_write_fails(
 
     monkeypatch.setattr(typer, "echo", fail_diagnostic)
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -107,7 +109,8 @@ def test_cp_reuses_destination_directory_info_for_same_source_parent() -> None:
     events: list[tuple[object, ...]] = []
     source = _file_source(events, directories={"/", "/docs", "/target"})
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/target"],
         sources={"memory": source},
     )
@@ -130,7 +133,8 @@ def test_cp_copies_multiple_files_into_existing_directory_in_argv_order() -> Non
         directories={"/", "/docs", "/target"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         [
             "memory:/docs/first.txt",
             "memory:/docs/second.txt",
@@ -159,7 +163,8 @@ def test_cp_reuses_destination_directory_info_for_multi_source_parents() -> None
         directories={"/", "/docs", "/target"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         [
             "memory:/docs/first.txt",
             "memory:/docs/second.txt",
@@ -208,7 +213,8 @@ def test_cp_acquires_multi_source_names_once_in_argv_order() -> None:
 
         return factory
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         [
             "first:/docs/first.txt",
             "second:/docs/second.txt",
@@ -244,7 +250,8 @@ def test_cp_replaces_duplicate_basenames_in_argv_order() -> None:
         directories={"/", "/target"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         [
             "first:/first/item.txt",
             "second:/second/item.txt",
@@ -272,7 +279,8 @@ def test_cp_leaves_completed_multi_source_targets_after_later_failure() -> None:
         put_file_by_path={"/target/second.txt": OSError("upload failed")},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         [
             "first:/docs/first.txt",
             "second:/docs/second.txt",
@@ -297,7 +305,8 @@ def test_cp_rejects_other_source_type_mid_multi_source_sequence() -> None:
         },
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         [
             "memory:/docs/first.txt",
             "memory:/docs/other",
@@ -322,7 +331,8 @@ def test_cp_rejects_directory_source_mid_multi_source_sequence() -> None:
         directories={"/", "/docs", "/docs/nested", "/target"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         [
             "memory:/docs/first.txt",
             "memory:/docs/nested",
@@ -352,7 +362,8 @@ def test_cp_replaces_existing_multi_source_target_file() -> None:
         directories={"/", "/docs", "/target"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         [
             "memory:/docs/first.txt",
             "memory:/docs/second.txt",
@@ -389,7 +400,8 @@ def test_cp_copies_empty_binary_and_large_multi_source_payloads(
         directories={"/", "/docs", "/target"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         [
             f"memory:/docs/{label}-a.bin",
             f"memory:/docs/{label}-b.bin",
@@ -422,7 +434,8 @@ def test_cp_rejects_other_cross_source_type_mid_multi_source_sequence() -> None:
         directories={"/", "/target"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         [
             "first:/docs/first.txt",
             "other:/docs/other",
@@ -451,7 +464,8 @@ def test_cp_rejects_file_as_multi_source_target_before_copy() -> None:
         },
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         [
             "memory:/docs/first.txt",
             "memory:/docs/second.txt",
@@ -478,7 +492,8 @@ def test_cp_reuses_configured_name_for_mixed_multi_source_sequence() -> None:
         directories={"/", "/docs"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         [
             "shared:/docs/first.txt",
             "other:/docs/second.txt",
@@ -528,7 +543,8 @@ def test_cp_keeps_verified_target_after_later_multi_source_verification_failure(
         destination.file_contents[remote_path] = b"wrong!"
 
     destination.put_file_by_path = {"/target/second.txt": corrupt_upload}
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         [
             "first:/docs/first.txt",
             "second:/docs/second.txt",
@@ -570,7 +586,8 @@ def test_cp_cleans_later_cross_source_stage_on_multi_source_cancellation() -> No
     second.get_file_by_path = {"/docs/second.txt": cancel_staging}
 
     with pytest.raises(asyncio.CancelledError):
-        _invoke_cp(
+        _invoke(
+            "cp",
             [
                 "first:/docs/first.txt",
                 "second:/docs/second.txt",
@@ -635,7 +652,8 @@ def test_cp_drains_current_download_before_staging_and_source_cleanup() -> None:
                 order.append("destination exit")
 
     with pytest.raises(asyncio.CancelledError):
-        _invoke_cp(
+        _invoke(
+            "cp",
             ["source:/docs/notes.txt", "destination:/out/copy.txt"],
             sources={
                 "source": source_factory,
@@ -656,7 +674,8 @@ def test_cp_requires_existing_directory_for_multiple_sources() -> None:
         info_by_path={"/missing": FileNotFoundError("missing")},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         [
             "memory:/docs/first.txt",
             "memory:/docs/second.txt",
@@ -690,7 +709,8 @@ def test_cp_copies_payload_between_distinct_configured_sources(payload: bytes) -
         directories={"/", "/out"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["source:/docs/notes.txt", "destination:/out/copy.txt"],
         sources={"source": source, "destination": destination},
     )
@@ -712,7 +732,8 @@ def test_cp_reuses_destination_directory_info_for_cross_source_parent() -> None:
         directories={"/", "/target"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["source:/docs/notes.txt", "destination:/target"],
         sources={"source": source, "destination": destination},
     )
@@ -733,7 +754,8 @@ def test_cp_rejects_cross_source_same_path_on_shared_backend_before_mutation() -
     async def shared_filesystem() -> _RecordingFileSystem:
         yield filesystem
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["left:/docs/notes.txt", "right:/docs/notes.txt"],
         sources={"left": shared_filesystem, "right": shared_filesystem},
     )
@@ -760,7 +782,8 @@ def test_cp_accepts_same_size_cross_source_destination_without_shared_token() ->
         destination.file_contents[remote_path] = b"corrupt"
 
     destination.put_file_by_path = {"/out/copy.txt": corrupt_upload}
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["source:/docs/notes.txt", "destination:/out/copy.txt"],
         sources={"source": source, "destination": destination},
     )
@@ -788,7 +811,8 @@ def test_cp_hides_local_temporary_path_in_cross_source_staging_diagnostic() -> N
         directories={"/", "/out"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["source:/docs/notes.txt", "destination:/out/copy.txt"],
         sources={"source": source, "destination": destination},
     )
@@ -818,7 +842,8 @@ def test_cp_rejects_invalid_cross_source_destination_after_upload(
         post_info_by_path={"/out/copy.txt": destination_info},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["source:/docs/notes.txt", "destination:/out/copy.txt"],
         sources={"source": source, "destination": destination},
     )
@@ -833,7 +858,8 @@ def test_cp_rejects_invalid_cross_source_destination_after_upload(
 def test_cp_appends_basename_when_destination_is_directory() -> None:
     source = _file_source(directories={"/", "/docs", "/docs/out"})
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/out"],
         sources={"memory": source},
     )
@@ -855,7 +881,8 @@ def test_cp_preserves_root_source_destination(source_path: str) -> None:
         directories={"/", "/out"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         [f"source:{source_path}", "destination:/out"],
         sources={"source": source, "destination": destination},
     )
@@ -873,7 +900,8 @@ def test_cp_replaces_existing_destination_file() -> None:
         }
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -886,7 +914,8 @@ def test_cp_replaces_existing_destination_file() -> None:
 def test_cp_rejects_same_path_before_mutation() -> None:
     source = _file_source()
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/notes.txt"],
         sources={"memory": source},
     )
@@ -902,7 +931,8 @@ def test_cp_rejects_directory_destination_collision_before_mutation() -> None:
         directories={"/", "/docs", "/docs/out", "/docs/out/notes.txt"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/out"],
         sources={"memory": source},
     )
@@ -919,7 +949,8 @@ def test_cp_rejects_missing_parent() -> None:
         directories={"/"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/missing/copy.txt"],
         sources={"memory": source},
     )
@@ -939,7 +970,8 @@ def test_cp_rejects_parent_that_is_a_file() -> None:
         directories={"/", "/docs"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/parent/copy.txt"],
         sources={"memory": source},
     )
@@ -957,7 +989,8 @@ def test_cp_rejects_directory_source() -> None:
         directories={"/", "/docs"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs", "memory:/docs/copy"],
         sources={"memory": source},
     )
@@ -971,7 +1004,8 @@ def test_cp_rejects_directory_source() -> None:
 def test_cp_acquires_destination_before_cross_source_backend_work() -> None:
     source = _file_source()
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["alpha:/docs/notes.txt", "beta:/two"],
         sources={"alpha": source, "beta": _source_must_not_run},
     )
@@ -990,7 +1024,8 @@ def test_cp_uses_distinct_names_even_when_backends_are_similar() -> None:
         directories={"/", "/docs"},
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["alpha:/docs/notes.txt", "beta:/docs/copy.txt"],
         sources={"alpha": left, "beta": right},
     )
@@ -1004,7 +1039,7 @@ def test_cp_uses_distinct_names_even_when_backends_are_similar() -> None:
 
 
 def test_cp_rejects_one_operand() -> None:
-    result = _invoke_cp(["memory:/one"])
+    result = _invoke("cp", ["memory:/one"])
 
     assert result.exit_code == 2
     assert result.stdout == ""
@@ -1033,7 +1068,7 @@ def test_cp_rejects_invalid_multi_source_operand_before_source_entry(
     arguments: list[str],
     diagnostic: str,
 ) -> None:
-    result = _invoke_cp(arguments)
+    result = _invoke("cp", arguments)
 
     assert (result.exit_code, result.stdout, result.stderr) == (2, "", diagnostic)
 
@@ -1041,7 +1076,8 @@ def test_cp_rejects_invalid_multi_source_operand_before_source_entry(
 def test_cp_accepts_operands_after_option_terminator() -> None:
     source = _file_source()
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["--", "memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -1063,7 +1099,8 @@ def test_cp_copies_empty_binary_and_large_payloads(label: str, payload: bytes) -
     del label
     source = _file_source(content=payload)
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -1084,7 +1121,8 @@ def test_cp_uses_pre_copy_metadata_snapshot_without_redownloading_source() -> No
 
     source.cp_file_hook = copy_then_mutate
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -1108,7 +1146,8 @@ def test_cp_reports_truncated_destination_as_verification_failure() -> None:
 
     source.cp_file_hook = truncate_destination
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -1123,7 +1162,8 @@ def test_cp_reports_truncated_destination_as_verification_failure() -> None:
 def test_cp_reports_copy_exception_as_uncertain_residue() -> None:
     source = _file_source(cp_file_error=RuntimeError("relay-failed"))
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -1139,7 +1179,8 @@ def test_cp_reports_copy_exception_as_uncertain_residue() -> None:
 def test_cp_never_deletes_source_on_failure() -> None:
     source = _file_source(cp_file_error=OSError("boom"))
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -1158,7 +1199,8 @@ def test_cp_preserves_control_flow(control: BaseException) -> None:
     source = _file_source(cp_file_error=control)
 
     with pytest.raises(type(control)) as caught:
-        _invoke_cp(
+        _invoke(
+            "cp",
             ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
             sources={"memory": source},
         )
@@ -1174,7 +1216,7 @@ def test_cp_refuses_an_active_same_thread_event_loop(monkeypatch) -> None:
 
     async def invoke() -> object:
         monkeypatch.setattr(asyncio, "run", recording_run)
-        return _invoke_cp(["memory:/a", "memory:/b"])
+        return _invoke("cp", ["memory:/a", "memory:/b"])
 
     result = real_run(invoke())
 
@@ -1185,7 +1227,8 @@ def test_cp_refuses_an_active_same_thread_event_loop(monkeypatch) -> None:
 
 
 def test_cp_reports_unknown_names_with_locale_sorted_known_names() -> None:
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["other:/a", "other:/b"],
         sources={
             "zeta": _source_must_not_run,
@@ -1234,7 +1277,8 @@ def test_cp_cancels_without_claiming_success() -> None:
     source.cp_file_hook = cancel
 
     with pytest.raises(asyncio.CancelledError):
-        _invoke_cp(
+        _invoke(
+            "cp",
             ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
             sources={"memory": source},
         )
@@ -1244,7 +1288,8 @@ def test_cp_cancels_without_claiming_success() -> None:
 def test_cp_uses_exact_configured_name_identity() -> None:
     source = _file_source()
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["vault:/docs/notes.txt", "vault:/docs/copy.txt"],
         sources={"vault": source},
     )
@@ -1264,7 +1309,8 @@ def test_cp_accepts_same_size_destination_without_shared_token() -> None:
 
     source.cp_file_hook = corrupt_same_size
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -1304,7 +1350,8 @@ def test_cp_accepts_matching_normalized_metadata_tokens() -> None:
         },
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -1344,7 +1391,8 @@ def test_cp_rejects_when_any_shared_metadata_token_mismatches() -> None:
         },
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -1381,7 +1429,8 @@ def test_cp_freezes_source_metadata_before_same_source_mutation() -> None:
         source_info.clear()
 
     source.cp_file_hook = copy_and_clear_source_metadata
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -1421,7 +1470,8 @@ def test_cp_freezes_source_metadata_before_cross_source_mutation() -> None:
         source_info["checksum"] = "destination-token"
 
     destination.put_file_by_path = {"/out/copy.txt": upload_and_change_source_metadata}
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["source:/docs/notes.txt", "destination:/out/copy.txt"],
         sources={"source": source, "destination": destination},
     )
@@ -1467,7 +1517,8 @@ def test_cp_ignores_str_and_bytes_subclass_tokens_after_mutation(
         },
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -1484,7 +1535,8 @@ def test_cp_reports_post_copy_destination_type_mismatch() -> None:
         },
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -1503,7 +1555,8 @@ def test_cp_reports_post_copy_destination_info_failure() -> None:
         }
     )
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["memory:/docs/notes.txt", "memory:/docs/copy.txt"],
         sources={"memory": source},
     )
@@ -1531,7 +1584,8 @@ def test_cp_reports_cross_source_temporary_cleanup_failure(monkeypatch) -> None:
 
     monkeypatch.setattr("fsspec_cli._cp._remove_temporary", fail_cleanup)
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["source:/docs/notes.txt", "destination:/out/copy.txt"],
         sources={"source": source, "destination": destination},
     )
@@ -1578,7 +1632,8 @@ def test_cp_cleanup_failure_does_not_mask_verification_failure(
 
     monkeypatch.setattr("fsspec_cli._cp._remove_temporary", fail_cleanup)
 
-    result = _invoke_cp(
+    result = _invoke(
+        "cp",
         ["source:/docs/notes.txt", "destination:/out/copy.txt"],
         sources={"source": source, "destination": destination},
     )
@@ -1626,7 +1681,8 @@ def test_cp_propagates_cleanup_control_flow_after_descriptor_close_error(
     monkeypatch.setattr("fsspec_cli._cp._remove_temporary", fail_cleanup)
 
     with pytest.raises(_SecondaryControlFlow) as caught:
-        _invoke_cp(
+        _invoke(
+            "cp",
             ["source:/docs/notes.txt", "destination:/out/copy.txt"],
             sources={"source": source, "destination": destination},
         )
@@ -1661,7 +1717,8 @@ def test_cp_propagates_cleanup_control_flow_after_staging_download_error(
     monkeypatch.setattr("fsspec_cli._cp._remove_temporary", fail_cleanup)
 
     with pytest.raises(_SecondaryControlFlow) as caught:
-        _invoke_cp(
+        _invoke(
+            "cp",
             ["source:/docs/notes.txt", "destination:/out/copy.txt"],
             sources={"source": source, "destination": destination},
         )
@@ -1702,7 +1759,8 @@ def test_cp_preserves_descriptor_close_control_flow_over_cleanup_failure(
     monkeypatch.setattr("fsspec_cli._cp._remove_temporary", fail_cleanup)
 
     with pytest.raises(_ControlFlow) as caught:
-        _invoke_cp(
+        _invoke(
+            "cp",
             ["source:/docs/notes.txt", "destination:/out/copy.txt"],
             sources={"source": source, "destination": destination},
         )
@@ -1737,7 +1795,8 @@ def test_cp_preserves_staging_download_control_flow_over_cleanup_failure(
     monkeypatch.setattr("fsspec_cli._cp._remove_temporary", fail_cleanup)
 
     with pytest.raises(_ControlFlow) as caught:
-        _invoke_cp(
+        _invoke(
+            "cp",
             ["source:/docs/notes.txt", "destination:/out/copy.txt"],
             sources={"source": source, "destination": destination},
         )
@@ -1775,7 +1834,8 @@ def test_cp_preserves_post_staging_control_flow_over_cleanup_failure(
     monkeypatch.setattr("fsspec_cli._cp._remove_temporary", fail_cleanup)
 
     with pytest.raises(_ControlFlow) as caught:
-        _invoke_cp(
+        _invoke(
+            "cp",
             ["source:/docs/notes.txt", "destination:/out/copy.txt"],
             sources={"source": source, "destination": destination},
         )
@@ -1802,7 +1862,8 @@ def test_cp_removes_cross_source_temporary_on_upload_control_flow(
     )
 
     with pytest.raises(type(control)) as caught:
-        _invoke_cp(
+        _invoke(
+            "cp",
             ["source:/docs/notes.txt", "destination:/out/copy.txt"],
             sources={"source": source, "destination": destination},
         )

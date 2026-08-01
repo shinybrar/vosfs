@@ -128,19 +128,6 @@ Source-free callbacks need no context parameter. Source-aware callbacks read
 the frozen snapshot from `CommandContext`, which exposes **only** the source
 mapping — never capability policy or private helpers.
 
-The bundled `sign` extension shows the intended shape for a backend-specific
-command:
-
-```python
-from fsspec_cli.extensions import sign
-
-App({"data": data_source}, extensions=[sign])
-```
-
-`sign data:/path` calls the selected filesystem's `sign` capability. A source
-without it exits nonzero with one `unsupported operation` diagnostic and no
-traceback — support is detected by calling, never inferred from backend type.
-
 ## Exit statuses
 
 Anything shelling out to your CLI needs these:
@@ -173,7 +160,7 @@ myapp fs cat data:/huge.log | head -5   # 141
 | Broken pipe gives | Commands |
 | --- | --- |
 | `141` | `cat`, `head`, `tail`, `rm -v` |
-| `1` | `ls`, `ll`, `du`, `find`, `tree`, `info`, `size`, `stat`, `sign` |
+| `1` | `ls`, `ll`, `du`, `find`, `tree`, `info`, `size`, `stat` |
 
 The second group formats and buffers its whole output before a single write, so
 a broken pipe there is an ordinary output failure with nothing partially

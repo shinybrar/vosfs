@@ -8,16 +8,16 @@ import sys
 import threading
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING, Literal, NoReturn
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 import typer
 from fsspec.asyn import AsyncFileSystem
-from fsspec_cli import App, AsyncFilesystemSource
+from fsspec_cli import App
 from typer.main import get_command
-from typer.testing import CliRunner, Result
 
 from ._ansi import strip_ansi
+from ._support import _invoke
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -230,20 +230,6 @@ class _BlockingContext(AbstractAsyncContextManager[_BlockingFileSystem]):
         self.source.events.append("exit")
 
 
-def _source_must_not_run() -> NoReturn:
-    raise AssertionError
-
-
-def _invoke_tree(
-    arguments: list[str],
-    *,
-    sources: dict[str, AsyncFilesystemSource] | None = None,
-) -> Result:
-    if sources is None:
-        sources = {"memory": _source_must_not_run}
-    return CliRunner().invoke(App(sources).typer_app, ["tree", *arguments])
-
-
 _TREE_ROWS: list[object] = [
     ("/docs", ["z-dir", "a-dir"], ["z.txt", "a.txt"]),
     ("/docs/a-dir", ["nested"], ["b.txt"]),
@@ -269,7 +255,7 @@ def test_tree_consumes_both_pinned_walk_shapes_and_renders_exactly(
 ) -> None:
     source = _TreeSource(rows=_TREE_ROWS, shape=shape)
 
-    result = _invoke_tree(["memory:/docs"], sources={"memory": source})
+    result = _invoke("tree", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
@@ -305,7 +291,7 @@ def test_tree_joins_adapted_iterator_before_source_exit_on_task_cancellation(
     monkeypatch.setattr(asyncio, "run", cancelling_run)
 
     with pytest.raises(asyncio.CancelledError) as caught:
-        _invoke_tree(["memory:/docs"], sources={"memory": source})
+        _invoke("tree", ["memory:/docs"], sources={"memory": source})
 
     assert type(caught.value) is asyncio.CancelledError
     assert source.events == [
@@ -366,7 +352,7 @@ def test_tree_depth_contract_filters_over_yielded_rows(
 ) -> None:
     source = _TreeSource(rows=_TREE_ROWS)
 
-    result = _invoke_tree(arguments, sources={"memory": source})
+    result = _invoke("tree", arguments, sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, stdout, "")
     assert source.walk_calls == [
@@ -387,7 +373,7 @@ def test_tree_empty_directory_and_file_root_render_only_the_operand(
 ) -> None:
     source = _TreeSource(rows=rows)
 
-    result = _invoke_tree([operand], sources={"memory": source})
+    result = _invoke("tree", [operand], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
@@ -410,7 +396,7 @@ def test_tree_preserves_operand_root_spelling_after_relationship_validation(
 ) -> None:
     source = _TreeSource(rows=rows)
 
-    result = _invoke_tree([operand], sources={"memory": source})
+    result = _invoke("tree", [operand], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, stdout, "")
 
@@ -430,7 +416,7 @@ def test_tree_renders_a_valid_chain_deeper_than_the_python_recursion_limit() -> 
     )
     expected += f"{'    ' * depth}└── leaf\n"
 
-    result = _invoke_tree(["memory:/root"], sources={"memory": source})
+    result = _invoke("tree", ["memory:/root"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, expected, "")
     assert source.walk_calls == [("/root", None, False, "raise", {})]
@@ -448,7 +434,7 @@ def test_tree_orders_each_group_by_locale_then_raw(
     }
     monkeypatch.setattr(locale, "strxfrm", transformed.__getitem__)
 
-    result = _invoke_tree(["memory:/docs"], sources={"memory": source})
+    result = _invoke("tree", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
@@ -459,7 +445,7 @@ def test_tree_orders_each_group_by_locale_then_raw(
 
 @pytest.mark.parametrize("arguments", [["--help"], ["--maxdepth", "2", "--help"]])
 def test_tree_help_comes_from_typed_callback(arguments: list[str]) -> None:
-    result = _invoke_tree(arguments)
+    result = _invoke("tree", arguments)
 
     help_text = strip_ansi(result.stdout)
     assert (result.exit_code, result.stderr) == (0, "")
@@ -495,7 +481,7 @@ def test_tree_usage_failures_are_typer_owned_and_source_free(
     arguments: list[str],
     contexts: tuple[str, ...],
 ) -> None:
-    result = _invoke_tree(arguments)
+    result = _invoke("tree", arguments)
 
     assert (result.exit_code, result.stdout) == (2, "")
     diagnostic = strip_ansi(result.stderr)
@@ -506,7 +492,7 @@ def test_tree_usage_failures_are_typer_owned_and_source_free(
 def test_tree_rejects_a_runtime_oversized_depth_deterministically() -> None:
     value = "9" * 5000
 
-    result = _invoke_tree(["--maxdepth", value, "memory:/docs"])
+    result = _invoke("tree", ["--maxdepth", value, "memory:/docs"])
 
     assert (result.exit_code, result.stdout) == (2, "")
     diagnostic = strip_ansi(result.stderr)
@@ -541,7 +527,7 @@ def test_tree_rejects_malformed_or_impossible_walks_atomically(
 ) -> None:
     source = _TreeSource(rows=rows)
 
-    result = _invoke_tree(["memory:/docs"], sources={"memory": source})
+    result = _invoke("tree", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -555,7 +541,7 @@ def test_tree_rejects_malformed_or_impossible_walks_atomically(
 def test_tree_rejects_an_incompatible_top_level_walk_shape(invalid: object) -> None:
     source = _TreeSource(rows=invalid, shape="invalid")
 
-    result = _invoke_tree(["memory:/docs"], sources={"memory": source})
+    result = _invoke("tree", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -567,7 +553,7 @@ def test_tree_rejects_an_incompatible_top_level_walk_shape(invalid: object) -> N
 def test_tree_rejects_an_awaitable_resolving_to_a_non_iterator() -> None:
     source = _TreeSource(rows=[("/docs", [], [])], shape="adapted-invalid")
 
-    result = _invoke_tree(["memory:/docs"], sources={"memory": source})
+    result = _invoke("tree", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -596,7 +582,7 @@ def test_tree_reports_every_ordinary_walk_failure_as_backend_failure(
         iteration_error=error if stage.startswith("iterate") else None,
     )
 
-    result = _invoke_tree(["memory:/docs"], sources={"memory": source})
+    result = _invoke("tree", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -619,7 +605,7 @@ def test_tree_cleans_up_then_preserves_walk_control_flow(stage: str) -> None:
     )
 
     with pytest.raises(_TreeControl) as caught:
-        _invoke_tree(["memory:/docs"], sources={"memory": source})
+        _invoke("tree", ["memory:/docs"], sources={"memory": source})
 
     assert caught.value is control
     assert source.lifecycle == ["factory", "enter", "exit"]
@@ -673,7 +659,7 @@ def test_tree_cleans_up_after_output_failure(monkeypatch: pytest.MonkeyPatch) ->
         raise output_error
 
     monkeypatch.setattr(typer, "echo", fail_stdout)
-    result = _invoke_tree(["memory:/docs"], sources={"memory": source})
+    result = _invoke("tree", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
@@ -686,7 +672,7 @@ def test_tree_cleans_up_after_output_failure(monkeypatch: pytest.MonkeyPatch) ->
 def test_tree_retains_complete_output_when_source_exit_fails() -> None:
     source = _TreeSource(exit_error=OSError("cleanup"))
 
-    result = _invoke_tree(["memory:/docs"], sources={"memory": source})
+    result = _invoke("tree", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,

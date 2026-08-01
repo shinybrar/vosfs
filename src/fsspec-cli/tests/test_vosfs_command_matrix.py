@@ -12,7 +12,6 @@ from fsspec_cli import App
 from vosfs import VOSpaceFileSystem
 
 from ._matrix_support import (
-    _block_network,
     _exercise_cat_profile,
     _exercise_cp_locked_profile,
     _exercise_locked_profile,
@@ -24,157 +23,47 @@ from ._matrix_support import (
     _exercise_rmdir_locked_profile,
     _exercise_stat_incomplete_profile,
     _exercise_unlink_locked_profile,
-    _invoke_rm,
-    _ProbedSource,
+    _invoke,
 )
 from ._matrix_support import _exercise_mkdir_locked_profile as _exercise_mkdir_profile
+from ._vosfs_matrix_support import (
+    _AUTHORITY,
+    _BASE_URL,
+    _CAPABILITIES,
+    _SYNC_CAPABILITIES,
+    _StrictMockTransport,
+    _vos_child,
+    _vos_container,
+    _vos_data,
+    _vosfs_source,
+)
 
-_BASE_URL = "https://example.test/arc"
-_NODES_URL = f"{_BASE_URL}/nodes"
-_SYNC_URL = f"{_BASE_URL}/synctrans"
-_AUTHORITY = "example.test!vault"
-_CAPABILITIES = f"""<?xml version="1.0" encoding="UTF-8"?>
-<vosi:capabilities xmlns:vosi="http://www.ivoa.net/xml/VOSICapabilities/v1.0"
-                   xmlns:vs="http://www.ivoa.net/xml/VODataService/v1.1"
-                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <capability standardID="ivo://ivoa.net/std/VOSpace/v2.0#nodes">
-    <interface xsi:type="vs:ParamHTTP" role="std">
-      <accessURL use="base">{_NODES_URL}</accessURL>
-    </interface>
-  </capability>
-</vosi:capabilities>
-""".encode()
-_CAT_CAPABILITIES = f"""<?xml version="1.0" encoding="UTF-8"?>
-<vosi:capabilities xmlns:vosi="http://www.ivoa.net/xml/VOSICapabilities/v1.0"
-                   xmlns:vs="http://www.ivoa.net/xml/VODataService/v1.1"
-                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <capability standardID="ivo://ivoa.net/std/VOSpace/v2.0#nodes">
-    <interface xsi:type="vs:ParamHTTP" role="std">
-      <accessURL use="base">{_NODES_URL}</accessURL>
-    </interface>
-  </capability>
-  <capability standardID="ivo://ivoa.net/std/VOSpace#sync-2.1">
-    <interface xsi:type="vs:ParamHTTP" role="std">
-      <accessURL use="full">{_SYNC_URL}</accessURL>
-    </interface>
-  </capability>
-</vosi:capabilities>
-""".encode()
-_DOCS = f"""<vos:node
-    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}/docs">
-  <vos:properties/>
-  <vos:nodes>
-    <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/notes.txt">
-      <vos:properties/>
-    </vos:node>
-    <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/.hidden">
-      <vos:properties/>
-    </vos:node>
-    <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/guide.md">
-      <vos:properties/>
-    </vos:node>
-  </vos:nodes>
-</vos:node>
-""".encode()
-_LONG_DOCS = f"""<vos:node
-    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}/docs">
-  <vos:properties/>
-  <vos:nodes>
-    <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/notes.txt">
-      <vos:properties>
-        <vos:property uri="ivo://ivoa.net/vospace/core#length">1536</vos:property>
-        <vos:property uri="ivo://ivoa.net/vospace/core#mtime">2026-07-17T18:00:00Z</vos:property>
-      </vos:properties>
-    </vos:node>
-    <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/.hidden">
-      <vos:properties>
-        <vos:property uri="ivo://ivoa.net/vospace/core#length">7</vos:property>
-      </vos:properties>
-    </vos:node>
-    <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/guide.md">
-      <vos:properties>
-        <vos:property uri="ivo://ivoa.net/vospace/core#length">8</vos:property>
-        <vos:property uri="ivo://ivoa.net/vospace/core#mtime">2026-07-17T18:00:00Z</vos:property>
-      </vos:properties>
-    </vos:node>
-    <vos:node xsi:type="vos:LinkNode" uri="vos://{_AUTHORITY}/docs/shortcut">
-      <vos:properties/>
-      <vos:target>vos://{_AUTHORITY}/docs/guide.md</vos:target>
-    </vos:node>
-  </vos:nodes>
-</vos:node>
-""".encode()
 _BLOB_PAYLOAD = b"vos-cat\0\xff\xfe"
-_BLOB = f"""<vos:node
-    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/blob.bin">
-  <vos:properties>
-    <vos:property uri="ivo://ivoa.net/vospace/core#length">{len(_BLOB_PAYLOAD)}</vos:property>
-  </vos:properties>
-</vos:node>
-""".encode()
-
-
-_SUBDIR = f"""<vos:node
-    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}/docs/subdir">
-  <vos:properties/>
-  <vos:nodes/>
-</vos:node>
-""".encode()
-_ROOT = f"""<vos:node
-    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}/">
-  <vos:properties/>
-  <vos:nodes/>
-</vos:node>
-""".encode()
-
-
-_DOCS_WITH_EMPTY = f"""<vos:node
-    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}/docs">
-  <vos:properties/>
-  <vos:nodes>
-    <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/notes.txt">
-      <vos:properties/>
-    </vos:node>
-    <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/.hidden">
-      <vos:properties/>
-    </vos:node>
-    <vos:node xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/guide.md">
-      <vos:properties/>
-    </vos:node>
-    <vos:node xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}/docs/empty">
-      <vos:properties/>
-      <vos:nodes/>
-    </vos:node>
-  </vos:nodes>
-</vos:node>
-""".encode()
-_EMPTY = f"""<vos:node
-    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:type="vos:ContainerNode" uri="vos://{_AUTHORITY}/docs/empty">
-  <vos:properties/>
-  <vos:nodes/>
-</vos:node>
-""".encode()
-_NOTES = f"""<vos:node
-    xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:type="vos:DataNode" uri="vos://{_AUTHORITY}/docs/notes.txt">
-  <vos:properties/>
-</vos:node>
-""".encode()
+_DOCS = _vos_container(
+    "/docs",
+    _vos_child("DataNode", "/docs/notes.txt")
+    + _vos_child("DataNode", "/docs/.hidden")
+    + _vos_child("DataNode", "/docs/guide.md"),
+)
+_LONG_DOCS = _vos_container(
+    "/docs",
+    _vos_child("DataNode", "/docs/notes.txt", length=1536, mtime="2026-07-17T18:00:00Z")
+    + _vos_child("DataNode", "/docs/.hidden", length=7)
+    + _vos_child("DataNode", "/docs/guide.md", length=8, mtime="2026-07-17T18:00:00Z")
+    + _vos_child("LinkNode", "/docs/shortcut", target="/docs/guide.md"),
+)
+_BLOB = _vos_data("/docs/blob.bin", length=len(_BLOB_PAYLOAD))
+_SUBDIR = _vos_container("/docs/subdir")
+_ROOT = _vos_container("/")
+_DOCS_WITH_EMPTY = _vos_container(
+    "/docs",
+    _vos_child("DataNode", "/docs/notes.txt")
+    + _vos_child("DataNode", "/docs/.hidden")
+    + _vos_child("DataNode", "/docs/guide.md")
+    + _vos_child("ContainerNode", "/docs/empty"),
+)
+_EMPTY = _vos_container("/docs/empty")
+_NOTES = _vos_data("/docs/notes.txt")
 
 
 _RESPONSES: dict[tuple[str, str], httpx.Response] = {
@@ -192,35 +81,6 @@ _LONG_RESPONSES: dict[tuple[str, str], httpx.Response] = {
     ("GET", "/arc/capabilities"): httpx.Response(200, content=_CAPABILITIES),
     ("GET", "/arc/nodes/docs"): httpx.Response(200, content=_LONG_DOCS),
 }
-
-
-@pytest.fixture(autouse=True)
-def _prohibit_unplanned_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    _block_network(monkeypatch)
-
-
-class _StrictMockTransport(httpx.MockTransport):
-    def __init__(
-        self,
-        responses: dict[tuple[str, str], httpx.Response] | None = None,
-    ) -> None:
-        self.requests: list[tuple[str, str]] = []
-        self.closed = False
-        self._responses = _RESPONSES if responses is None else responses
-        super().__init__(self._respond)
-
-    async def _respond(self, request: httpx.Request) -> httpx.Response:
-        call = (request.method, request.url.path)
-        self.requests.append(call)
-        response = self._responses.get(call)
-        if response is None:
-            message = f"unplanned mocked request: {call!r}"
-            raise AssertionError(message)
-        return response
-
-    async def aclose(self) -> None:
-        self.closed = True
-        await super().aclose()
 
 
 def _target_path(content: bytes | None) -> str:
@@ -263,7 +123,7 @@ class _CatMockTransport(httpx.MockTransport):
         self.requests.append(call)
         handlers = {
             ("GET", "/arc/capabilities"): lambda: httpx.Response(
-                200, content=_CAT_CAPABILITIES
+                200, content=_SYNC_CAPABILITIES
             ),
             ("GET", "/arc/nodes/docs/blob.bin"): lambda: httpx.Response(
                 200, content=_BLOB
@@ -452,25 +312,8 @@ class _UnlinkMockTransport(httpx.MockTransport):
         await super().aclose()
 
 
-async def _close_vosfs(filesystem: VOSpaceFileSystem) -> None:
-    await filesystem.aclose()
-
-
 def test_native_vosfs_plain_ls_profile_uses_only_mocked_transport() -> None:
-    transports: list[_StrictMockTransport] = []
-
-    def make_filesystem() -> VOSpaceFileSystem:
-        transport = _StrictMockTransport()
-        transports.append(transport)
-        return VOSpaceFileSystem(
-            _BASE_URL,
-            transport=transport,
-            asynchronous=True,
-            skip_instance_cache=True,
-            trust_env=False,
-        )
-
-    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+    source, transports = _vosfs_source(_RESPONSES)
 
     _exercise_locked_profile("vos", source, "/docs")
 
@@ -509,20 +352,7 @@ def test_native_vosfs_long_listing_profile_is_remote_and_uses_detail(
         "fsspec_cli._listing.time.localtime",
         time.gmtime,
     )
-    transports: list[_StrictMockTransport] = []
-
-    def make_filesystem() -> VOSpaceFileSystem:
-        transport = _StrictMockTransport(_LONG_RESPONSES)
-        transports.append(transport)
-        return VOSpaceFileSystem(
-            _BASE_URL,
-            transport=transport,
-            asynchronous=True,
-            skip_instance_cache=True,
-            trust_env=False,
-        )
-
-    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+    source, transports = _vosfs_source(_LONG_RESPONSES)
 
     _exercise_long_listing_profile(
         "vos",
@@ -558,20 +388,9 @@ def test_native_vosfs_long_listing_profile_is_remote_and_uses_detail(
 
 
 def test_native_vosfs_plain_cat_profile_uses_only_mocked_transport() -> None:
-    transports: list[_CatMockTransport] = []
-
-    def make_filesystem() -> VOSpaceFileSystem:
-        transport = _CatMockTransport(_BLOB_PAYLOAD)
-        transports.append(transport)
-        return VOSpaceFileSystem(
-            _BASE_URL,
-            transport=transport,
-            asynchronous=True,
-            skip_instance_cache=True,
-            trust_env=False,
-        )
-
-    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+    source, transports = _vosfs_source(
+        transport_factory=lambda: _CatMockTransport(_BLOB_PAYLOAD),
+    )
 
     _exercise_cat_profile("vos", source, "/docs/blob.bin", payload=_BLOB_PAYLOAD)
 
@@ -588,20 +407,7 @@ def test_native_vosfs_plain_cat_profile_uses_only_mocked_transport() -> None:
 
 
 def test_native_vosfs_base_mkdir_profile_uses_only_mocked_transport() -> None:
-    transports: list[_StrictMockTransport] = []
-
-    def make_filesystem() -> VOSpaceFileSystem:
-        transport = _StrictMockTransport()
-        transports.append(transport)
-        return VOSpaceFileSystem(
-            _BASE_URL,
-            transport=transport,
-            asynchronous=True,
-            skip_instance_cache=True,
-            trust_env=False,
-        )
-
-    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+    source, transports = _vosfs_source(_RESPONSES)
 
     _exercise_mkdir_profile("vos", source, "/docs", parent_file_category="not found")
 
@@ -633,20 +439,7 @@ def test_native_vosfs_base_mkdir_profile_uses_only_mocked_transport() -> None:
 
 
 def test_native_vosfs_mkdir_p_profile_uses_only_mocked_transport() -> None:
-    transports: list[_MakedirsMockTransport] = []
-
-    def make_filesystem() -> VOSpaceFileSystem:
-        transport = _MakedirsMockTransport()
-        transports.append(transport)
-        return VOSpaceFileSystem(
-            _BASE_URL,
-            transport=transport,
-            asynchronous=True,
-            skip_instance_cache=True,
-            trust_env=False,
-        )
-
-    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+    source, transports = _vosfs_source(transport_factory=_MakedirsMockTransport)
 
     _exercise_mkdir_p_locked_profile(
         "vos",
@@ -664,20 +457,7 @@ def test_native_vosfs_mkdir_p_profile_uses_only_mocked_transport() -> None:
 
 
 def test_native_vosfs_base_rmdir_profile_uses_only_mocked_transport() -> None:
-    transports: list[_RmdirMockTransport] = []
-
-    def make_filesystem() -> VOSpaceFileSystem:
-        transport = _RmdirMockTransport()
-        transports.append(transport)
-        return VOSpaceFileSystem(
-            _BASE_URL,
-            transport=transport,
-            asynchronous=True,
-            skip_instance_cache=True,
-            trust_env=False,
-        )
-
-    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+    source, transports = _vosfs_source(transport_factory=_RmdirMockTransport)
 
     _exercise_rmdir_locked_profile("vos", source, "/docs")
 
@@ -690,22 +470,9 @@ def test_native_vosfs_base_rmdir_profile_uses_only_mocked_transport() -> None:
 
 
 def test_native_vosfs_rm_d_profile_uses_only_mocked_transport() -> None:
-    transports: list[_RmdirMockTransport] = []
+    source, transports = _vosfs_source(transport_factory=_RmdirMockTransport)
 
-    def make_filesystem() -> VOSpaceFileSystem:
-        transport = _RmdirMockTransport()
-        transports.append(transport)
-        return VOSpaceFileSystem(
-            _BASE_URL,
-            transport=transport,
-            asynchronous=True,
-            skip_instance_cache=True,
-            trust_env=False,
-        )
-
-    source = _ProbedSource(make_filesystem, close=_close_vosfs)
-
-    result = _invoke_rm(App({"vos": source}), ["-d", "vos:/docs/empty"])
+    result = _invoke(App({"vos": source}), "rm", ["-d", "vos:/docs/empty"])
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     assert all(isinstance(fs, VOSpaceFileSystem) for fs in source.filesystems)
@@ -716,20 +483,7 @@ def test_native_vosfs_rm_d_profile_uses_only_mocked_transport() -> None:
 
 
 def test_native_vosfs_unlink_profile_uses_only_mocked_transport() -> None:
-    transports: list[_UnlinkMockTransport] = []
-
-    def make_filesystem() -> VOSpaceFileSystem:
-        transport = _UnlinkMockTransport()
-        transports.append(transport)
-        return VOSpaceFileSystem(
-            _BASE_URL,
-            transport=transport,
-            asynchronous=True,
-            skip_instance_cache=True,
-            trust_env=False,
-        )
-
-    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+    source, transports = _vosfs_source(transport_factory=_UnlinkMockTransport)
 
     _exercise_unlink_locked_profile("vos", source, "/docs")
 
@@ -741,20 +495,7 @@ def test_native_vosfs_unlink_profile_uses_only_mocked_transport() -> None:
 
 
 def test_native_vosfs_base_rm_profile_uses_only_mocked_transport() -> None:
-    transports: list[_UnlinkMockTransport] = []
-
-    def make_filesystem() -> VOSpaceFileSystem:
-        transport = _UnlinkMockTransport()
-        transports.append(transport)
-        return VOSpaceFileSystem(
-            _BASE_URL,
-            transport=transport,
-            asynchronous=True,
-            skip_instance_cache=True,
-            trust_env=False,
-        )
-
-    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+    source, transports = _vosfs_source(transport_factory=_UnlinkMockTransport)
 
     _exercise_rm_locked_profile("vos", source, "/docs")
     _exercise_rm_force_profile("vos", source, "/docs")
@@ -869,7 +610,7 @@ class _CpMockTransport(httpx.MockTransport):
         call = (request.method, request.url.path)
         self.requests.append(call)
         if call == ("GET", "/arc/capabilities"):
-            return httpx.Response(200, content=_CAT_CAPABILITIES)
+            return httpx.Response(200, content=_SYNC_CAPABILITIES)
         if call == ("POST", "/arc/synctrans"):
             return httpx.Response(
                 303,
@@ -914,20 +655,7 @@ class _CpMockTransport(httpx.MockTransport):
 
 
 def test_native_vosfs_same_source_cp_profile_uses_only_mocked_transport() -> None:
-    transports: list[_CpMockTransport] = []
-
-    def make_filesystem() -> VOSpaceFileSystem:
-        transport = _CpMockTransport()
-        transports.append(transport)
-        return VOSpaceFileSystem(
-            _BASE_URL,
-            transport=transport,
-            asynchronous=True,
-            skip_instance_cache=True,
-            trust_env=False,
-        )
-
-    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+    source, transports = _vosfs_source(transport_factory=_CpMockTransport)
 
     _exercise_cp_locked_profile("vos", source, "/docs", payload=b"notes.txt")
 
@@ -949,20 +677,7 @@ def test_native_vosfs_mv_remains_unverified_without_exact_operation() -> None:
 
 
 def test_native_vosfs_stat_profile_fails_closed_on_incomplete_info() -> None:
-    transports: list[_UnlinkMockTransport] = []
-
-    def make_filesystem() -> VOSpaceFileSystem:
-        transport = _UnlinkMockTransport()
-        transports.append(transport)
-        return VOSpaceFileSystem(
-            _BASE_URL,
-            transport=transport,
-            asynchronous=True,
-            skip_instance_cache=True,
-            trust_env=False,
-        )
-
-    source = _ProbedSource(make_filesystem, close=_close_vosfs)
+    source, transports = _vosfs_source(transport_factory=_UnlinkMockTransport)
 
     _exercise_stat_incomplete_profile("vos", source, "/docs/notes.txt")
 
