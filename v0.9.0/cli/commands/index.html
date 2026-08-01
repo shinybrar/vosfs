@@ -1,0 +1,1599 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Public documentation for the vosfs Python package.">
+      
+      
+        <meta name="author" content="vosfs contributors">
+      
+      
+        <link rel="canonical" href="https://shinybrar.github.io/vosfs/v0.9.0/cli/commands/">
+      
+      
+        <link rel="prev" href="../integration/">
+      
+      
+        <link rel="next" href="../api-reference/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.50">
+    
+    
+      
+        <title>Command reference - vosfs</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.62c9b9cc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#command-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="vosfs" class="md-header__button md-logo" aria-label="vosfs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            vosfs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Command reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/shinybrar/vosfs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="vosfs" class="md-nav__button md-logo" aria-label="vosfs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+
+    </a>
+    vosfs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/shinybrar/vosfs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  User Guide
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../recipes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Recipes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Troubleshooting
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API Reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  fsspec-cli
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  fsspec-cli
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Overview
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Integration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Command Reference
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Command Reference
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        At a glance
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#listing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Listing
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Listing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ls-ll" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>ls</code>, <code>ll</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#du" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>du</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#find" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>find</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>tree</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Metadata
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Metadata">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#size" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>size</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>test</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#info" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>info</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stat" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>stat</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-bytes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reading bytes
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reading bytes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#head-tail" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>head</code>, <code>tail</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cat" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>cat</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#copying-and-moving" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Copying and moving
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Copying and moving">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cp" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>cp</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mv" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>mv</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#namespace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Namespace
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Namespace">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mkdir" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>mkdir</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rmdir" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>rmdir</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unlink" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>unlink</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rm" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>rm</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#path-strings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Path strings
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Path strings">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#basename-dirname" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>basename</code>, <code>dirname</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-something-fails" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When something fails
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API Reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://github.com/shinybrar/vosfs/releases" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Releases
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://github.com/shinybrar/vosfs/blob/main/CONTRIBUTING.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Contributing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        At a glance
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#listing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Listing
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Listing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ls-ll" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>ls</code>, <code>ll</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#du" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>du</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#find" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>find</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>tree</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Metadata
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Metadata">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#size" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>size</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>test</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#info" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>info</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stat" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>stat</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-bytes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reading bytes
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reading bytes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#head-tail" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>head</code>, <code>tail</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cat" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>cat</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#copying-and-moving" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Copying and moving
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Copying and moving">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cp" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>cp</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mv" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>mv</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#namespace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Namespace
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Namespace">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mkdir" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>mkdir</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rmdir" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>rmdir</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unlink" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>unlink</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rm" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>rm</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#path-strings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Path strings
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Path strings">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#basename-dirname" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>basename</code>, <code>dirname</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-something-fails" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When something fails
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="command-reference">Command reference<a class="headerlink" href="#command-reference" title="Permanent link">&para;</a></h1>
+<p>Every command takes operands spelled <code>name:/path</code>. <code>name</code> is a key from the
+source mapping you passed to <code>App</code>; <code>/path</code> is handed to that backend
+literally.</p>
+<p><code>--</code> ends option parsing. A mapped operand always begins with <code>name:</code>, and a
+source name may not start with <code>-</code>, so <code>--</code> matters mainly for the source-free
+commands, whose operand is a bare string:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>basename<span class="w"> </span>--<span class="w"> </span>-weird-name
+</span></code></pre></div>
+<h2 id="at-a-glance">At a glance<a class="headerlink" href="#at-a-glance" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#ls-ll"><code>ls</code></a></td>
+<td>List directory contents; <code>-l</code>/<code>ll</code> for long form</td>
+</tr>
+<tr>
+<td><a href="#du"><code>du</code></a></td>
+<td>Recursive byte usage</td>
+</tr>
+<tr>
+<td><a href="#find"><code>find</code></a></td>
+<td>Recursive path list</td>
+</tr>
+<tr>
+<td><a href="#tree"><code>tree</code></a></td>
+<td>Recursive tree drawing</td>
+</tr>
+<tr>
+<td><a href="#size"><code>size</code></a></td>
+<td>Exact byte counts</td>
+</tr>
+<tr>
+<td><a href="#test"><code>test</code></a></td>
+<td>Existence/type predicate as an exit status</td>
+</tr>
+<tr>
+<td><a href="#info"><code>info</code></a></td>
+<td>Full normalized metadata, including backend extras</td>
+</tr>
+<tr>
+<td><a href="#stat"><code>stat</code></a></td>
+<td>Reduced BSD/macOS-shaped status line</td>
+</tr>
+<tr>
+<td><a href="#head-tail"><code>head</code> / <code>tail</code></a></td>
+<td>Leading or trailing bytes</td>
+</tr>
+<tr>
+<td><a href="#cat"><code>cat</code></a></td>
+<td>Concatenate files (and stdin) to stdout</td>
+</tr>
+<tr>
+<td><a href="#cp"><code>cp</code></a></td>
+<td>Copy files, or one directory with <code>-R</code></td>
+</tr>
+<tr>
+<td><a href="#mv"><code>mv</code></a></td>
+<td>Move or rename within one filesystem</td>
+</tr>
+<tr>
+<td><a href="#mkdir"><code>mkdir</code></a></td>
+<td>Create directories</td>
+</tr>
+<tr>
+<td><a href="#rmdir"><code>rmdir</code></a></td>
+<td>Remove empty directories</td>
+</tr>
+<tr>
+<td><a href="#unlink"><code>unlink</code></a></td>
+<td>Remove one file</td>
+</tr>
+<tr>
+<td><a href="#rm"><code>rm</code></a></td>
+<td>Remove files; <code>-d</code> empty dirs; guarded <code>-R</code></td>
+</tr>
+<tr>
+<td><a href="#basename-dirname"><code>basename</code> / <code>dirname</code></a></td>
+<td>Path string slicing, no I/O</td>
+</tr>
+</tbody>
+</table>
+<h2 id="listing">Listing<a class="headerlink" href="#listing" title="Permanent link">&para;</a></h2>
+<h3 id="ls-ll"><code>ls</code>, <code>ll</code><a class="headerlink" href="#ls-ll" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>ls<span class="w"> </span>data:/project
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>ls<span class="w"> </span>-A<span class="w"> </span>data:/project<span class="w">          </span><span class="c1"># include dot entries</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>ls<span class="w"> </span>-l<span class="w"> </span>data:/project<span class="w">          </span><span class="c1"># long form</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>myapp<span class="w"> </span>fs<span class="w"> </span>ls<span class="w"> </span>-lh<span class="w"> </span>data:/project<span class="w">         </span><span class="c1"># long form, human-readable sizes</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>myapp<span class="w"> </span>fs<span class="w"> </span>ll<span class="w"> </span>-h<span class="w"> </span>data:/project<span class="w">          </span><span class="c1"># `ll` is always long</span>
+</span></code></pre></div>
+<p>A file operand prints itself; a directory prints its sorted children. With
+several operands, files come first, then one headed block per directory.</p>
+<p>Long listing shows <strong>only the columns the backend actually supplies</strong>. Against
+local disk you get a full POSIX-like row; against an object store you get type,
+size, and mtime. Missing values show <code>-</code>; nothing is invented.</p>
+<p><code>-h</code> means human-readable, not help. <code>ll</code> does not accept <code>-l</code> — it is already
+long.</p>
+<h3 id="du"><code>du</code><a class="headerlink" href="#du" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>du<span class="w"> </span>data:/project<span class="w">             </span><span class="c1"># per-path usage</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>du<span class="w"> </span>-s<span class="w"> </span>data:/project<span class="w">          </span><span class="c1"># total only</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>du<span class="w"> </span>-sh<span class="w"> </span>data:/project<span class="w">         </span><span class="c1"># total, human-readable</span>
+</span></code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title"><code>du</code> is recursive and can be expensive</p>
+<p>On backends using fsspec's default hook, <code>du</code> walks the whole subtree and
+reads metadata for every file. Against a remote store that is many
+requests. <strong><code>-s</code> changes the output, not the traversal cost.</strong></p>
+</div>
+<h3 id="find"><code>find</code><a class="headerlink" href="#find" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>find<span class="w"> </span>data:/project
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>find<span class="w"> </span>--maxdepth<span class="w"> </span><span class="m">2</span><span class="w"> </span>data:/project
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>find<span class="w"> </span>--type<span class="w"> </span>d<span class="w"> </span>data:/project<span class="w">      </span><span class="c1"># directories instead of files</span>
+</span></code></pre></div>
+<p>No predicates, globbing, or <code>-exec</code>. Paths print exactly as the backend
+returned them.</p>
+<h3 id="tree"><code>tree</code><a class="headerlink" href="#tree" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>tree<span class="w"> </span>data:/project
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>tree<span class="w"> </span>--maxdepth<span class="w"> </span><span class="m">2</span><span class="w"> </span>data:/project
+</span></code></pre></div>
+<p>One remote listing request per reached directory — bound it on large trees.</p>
+<h2 id="metadata">Metadata<a class="headerlink" href="#metadata" title="Permanent link">&para;</a></h2>
+<h3 id="size"><code>size</code><a class="headerlink" href="#size" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>size<span class="w"> </span>data:/a.csv
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>size<span class="w"> </span>data:/a.csv<span class="w"> </span>data:/b.csv<span class="w"> </span>archive:/c.csv
+</span></code></pre></div>
+<p>Prints <code>&lt;bytes&gt;\t&lt;operand&gt;</code>. With several operands it batches per filesystem
+into one request each, rather than one request per file. Output keeps the
+source name so identical paths on different filesystems stay distinguishable.</p>
+<h3 id="test"><code>test</code><a class="headerlink" href="#test" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">if</span><span class="w"> </span>myapp<span class="w"> </span>fs<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-e<span class="w"> </span>data:/project/output.csv<span class="p">;</span><span class="w"> </span><span class="k">then</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;already done&quot;</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="k">fi</span>
+</span></code></pre></div>
+<p><code>-e</code> exists, <code>-d</code> is a directory, <code>-f</code> is a regular file. Exactly one is
+required. No output — the answer is the exit status: <strong><code>0</code> for true, <code>1</code> for
+false</strong>.</p>
+<div class="admonition warning">
+<p class="admonition-title">A false predicate exits <code>1</code>, the same code as a real failure</p>
+<p><code>test</code> cannot distinguish "the file is not there" from "the backend
+errored" by status alone. A genuine failure also writes a diagnostic to
+stderr, so check stderr if you need to tell them apart.</p>
+</div>
+<h3 id="info"><code>info</code><a class="headerlink" href="#info" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>info<span class="w"> </span>data:/a.csv
+</span></code></pre></div>
+<p>Everything the backend reports: normalized fields plus backend-specific values
+under <code>extra</code> (checksums, ETags, storage class, VOSpace properties). Sparse
+fields stay <code>None</code>.</p>
+<h3 id="stat"><code>stat</code><a class="headerlink" href="#stat" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>stat<span class="w"> </span>data:/a.csv
+</span></code></pre></div>
+<p>A reduced BSD/macOS-shaped line:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>-rw-r--r-- 1 brars staff 1497 &quot;Jul 17 18:00:00 2026&quot; /a.csv
+</span></code></pre></div>
+<p>Deliberately narrower than <code>info</code>: it needs the full local-rich field set
+(<code>type</code>, a string <code>name</code>, <code>mode</code>, <code>nlink</code>, <code>uid</code>, <code>gid</code>, <code>size</code>, <code>mtime</code>), and
+rejects symlinks. A backend that does not report all of them reports
+<code>incompatible result</code>. Use <code>info</code> for remote backends.</p>
+<h2 id="reading-bytes">Reading bytes<a class="headerlink" href="#reading-bytes" title="Permanent link">&para;</a></h2>
+<h3 id="head-tail"><code>head</code>, <code>tail</code><a class="headerlink" href="#head-tail" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>head<span class="w"> </span>-c<span class="w"> </span><span class="m">512</span><span class="w"> </span>data:/big.log
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>tail<span class="w"> </span>-c<span class="w"> </span><span class="m">512</span><span class="w"> </span>data:/big.log
+</span></code></pre></div>
+<p>Byte counts only — there is no <code>-n</code> line mode.</p>
+<div class="admonition note">
+<p class="admonition-title">Bounded request, not necessarily a bounded transfer</p>
+<p><code>-c N</code> bounds what the CLI <em>asks for</em>. Whether the backend transfers only
+those bytes is up to the backend: <code>vosfs</code> may keep a validated <code>206</code>, or
+fall back to a whole-object body when the endpoint answers <code>200</code>.</p>
+</div>
+<h3 id="cat"><code>cat</code><a class="headerlink" href="#cat" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cat<span class="w"> </span>data:/a.txt<span class="w"> </span>data:/b.txt<span class="w"> </span>&gt;<span class="w"> </span>combined.txt
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cat<span class="w"> </span>data:/archive.tar.gz<span class="w"> </span><span class="p">|</span><span class="w"> </span>tar<span class="w"> </span>-tz
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>cat<span class="w"> </span>local.txt<span class="w"> </span><span class="p">|</span><span class="w"> </span>myapp<span class="w"> </span>fs<span class="w"> </span>cat<span class="w"> </span>-<span class="w"> </span>data:/appendix.txt
+</span></code></pre></div>
+<p>Binary-safe: no decoding, no separators, no newline insertion. A bare <code>-</code> (or
+no operand) reads stdin.</p>
+<p>Each remote object is staged through one local temporary at a time, so memory
+stays bounded no matter how large the file is. Temporaries are always removed —
+after success, failure, cancellation, or a broken pipe.</p>
+<h2 id="copying-and-moving">Copying and moving<a class="headerlink" href="#copying-and-moving" title="Permanent link">&para;</a></h2>
+<h3 id="cp"><code>cp</code><a class="headerlink" href="#cp" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cp<span class="w"> </span>data:/a.csv<span class="w"> </span>data:/backup/a.csv<span class="w">          </span><span class="c1"># one file</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cp<span class="w"> </span>data:/a.csv<span class="w"> </span>data:/b.csv<span class="w"> </span>data:/backup/<span class="w">   </span><span class="c1"># several into a directory</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cp<span class="w"> </span>local:/a.csv<span class="w"> </span>archive:/2026/a.csv<span class="w">        </span><span class="c1"># across filesystems</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>myapp<span class="w"> </span>fs<span class="w"> </span>cp<span class="w"> </span>-R<span class="w"> </span>data:/project<span class="w"> </span>archive:/project<span class="w">       </span><span class="c1"># a whole directory</span>
+</span></code></pre></div>
+<p>Every copy verifies destination metadata after writing. Cross-filesystem copies
+stage through one local temporary.</p>
+<p><code>cp -R</code> requires the <code>recursion.copy</code> capability (on by default). It freezes a
+manifest of the source tree — bounded at 10,000 entries — before mutating
+anything, preserves empty directories, and rejects symlinks and special entries
+<em>before</em> any write.</p>
+<p>It is <strong>not</strong> a snapshot, transaction, mirror, or rollback, and does not
+preserve POSIX metadata.</p>
+<h3 id="mv"><code>mv</code><a class="headerlink" href="#mv" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>mv<span class="w"> </span>data:/draft.csv<span class="w"> </span>data:/final.csv
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>mv<span class="w"> </span>data:/a.csv<span class="w"> </span>data:/b.csv<span class="w"> </span>data:/archive/
+</span></code></pre></div>
+<p>Within <strong>one</strong> filesystem only.</p>
+<div class="admonition failure">
+<p class="admonition-title">Cross-filesystem <code>mv</code> is rejected</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>mv: cross-source move unsupported
+</span></code></pre></div>
+<p>A correct move must delete the same version of the file it copied, and no
+tested backend supplies a change token strong enough to prove that. Rather
+than risk deleting a file that changed mid-move, <code>mv</code> refuses — before
+touching anything.</p>
+<p>Do it explicitly instead: <code>cp</code> then <code>rm</code>, so the delete is your decision.</p>
+</div>
+<h2 id="namespace">Namespace<a class="headerlink" href="#namespace" title="Permanent link">&para;</a></h2>
+<h3 id="mkdir"><code>mkdir</code><a class="headerlink" href="#mkdir" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>mkdir<span class="w"> </span>data:/newdir
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>mkdir<span class="w"> </span>-p<span class="w"> </span>data:/a/b/c<span class="w">        </span><span class="c1"># create parents</span>
+</span></code></pre></div>
+<p>Silent on success.</p>
+<h3 id="rmdir"><code>rmdir</code><a class="headerlink" href="#rmdir" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rmdir<span class="w"> </span>data:/emptydir
+</span></code></pre></div>
+<p>Empty directories only. <code>-p</code> is unsupported.</p>
+<h3 id="unlink"><code>unlink</code><a class="headerlink" href="#unlink" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>unlink<span class="w"> </span>data:/a.csv
+</span></code></pre></div>
+<p>Exactly one file. A directory operand is an error.</p>
+<h3 id="rm"><code>rm</code><a class="headerlink" href="#rm" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rm<span class="w"> </span>data:/a.csv
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rm<span class="w"> </span>-f<span class="w"> </span>data:/maybe-missing.csv<span class="w">    </span><span class="c1"># ignore missing</span>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rm<span class="w"> </span>-v<span class="w"> </span>data:/a.csv<span class="w">                </span><span class="c1"># print what was removed</span>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rm<span class="w"> </span>-d<span class="w"> </span>data:/emptydir<span class="w">             </span><span class="c1"># also remove empty directories</span>
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>myapp<span class="w"> </span>fs<span class="w"> </span>rm<span class="w"> </span>-R<span class="w"> </span>data:/project<span class="w">              </span><span class="c1"># recursive, if enabled</span>
+</span></code></pre></div>
+<p><code>-d</code> cannot be combined with other options. <code>-f</code> cannot be combined with <code>-v</code>
+unless <code>-R</code>/<code>-r</code> is also given. <code>-v</code> may be supplied only once; repeated <code>-f</code>
+is idempotent, and <code>-f</code> with no operands succeeds silently.</p>
+<div class="admonition danger">
+<p class="admonition-title"><code>rm -R</code> is off unless the host enabled it</p>
+<p>It requires the <code>recursion.remove</code> capability. Removal is <strong>sequential and
+non-atomic</strong> — a failure partway through leaves earlier removals done and
+the rest present or uncertain. There is no prompt, undo, or trash.</p>
+<p>Root paths and any path containing <code>.</code> or <code>..</code> are rejected outright.</p>
+</div>
+<h2 id="path-strings">Path strings<a class="headerlink" href="#path-strings" title="Permanent link">&para;</a></h2>
+<h3 id="basename-dirname"><code>basename</code>, <code>dirname</code><a class="headerlink" href="#basename-dirname" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>basename<span class="w"> </span>/a/b/c.txt<span class="w">          </span><span class="c1"># c.txt</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>basename<span class="w"> </span>/a/b/c.txt<span class="w"> </span>.txt<span class="w">     </span><span class="c1"># c</span>
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>myapp<span class="w"> </span>fs<span class="w"> </span>dirname<span class="w"> </span>/a/b/c.txt<span class="w">           </span><span class="c1"># /a/b</span>
+</span></code></pre></div>
+<p>Pure string operations — no filesystem is contacted and no source is required.
+<code>data:/x/y</code> is treated as ordinary text.</p>
+<h2 id="when-something-fails">When something fails<a class="headerlink" href="#when-something-fails" title="Permanent link">&para;</a></h2>
+<p>Failures print one line per operand on stderr:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>ls: data:/missing: not found
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>cp: data:/src: permission denied
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>rm: data:/f: uncertain mutation state
+</span></code></pre></div>
+<p><code>uncertain</code> means the operation was <em>sent</em> but its outcome could not be
+confirmed — it may have applied. Check the actual state before retrying.</p>
+<p>Exit statuses are documented in
+<a href="../integration/#exit-statuses">Integration</a>. The short version: <code>2</code> means
+nothing was touched, <code>1</code> means something went wrong, and <code>141</code> means a pipe
+closed on one of the streaming commands (<code>cat</code>, <code>head</code>, <code>tail</code>, <code>rm -v</code>) — the
+buffered commands report a broken pipe as <code>1</code>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":[],"search":"../../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"provider":"mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7f30b55.min.js"></script>
+      
+    
+  </body>
+</html>
