@@ -1304,9 +1304,16 @@ source name may not start with <code>-</code>.</p>
 </span></code></pre></div>
 <p>A file operand prints itself; a directory prints its sorted children. With
 several operands, files come first, then one headed block per directory.</p>
-<p>Long listing shows <strong>only the columns the backend actually supplies</strong>. Against
-local disk you get a full POSIX-like row; against an object store you get type,
-size, and mtime. Missing values show <code>-</code>; nothing is invented.</p>
+<p>Long listing keeps the shell order: permissions, link count, owner, group,
+size, modification time, and name. Missing values show <code>-</code>; missing permission
+bits show <code>?</code>, for example <code>-?????????</code> for a file without a mode. Recent dates
+show a time; old dates show the year. No allocated-block total is invented.
+Numeric local identities resolve to names when available.</p>
+<p>For VOSpace, the owner is a creator display identity. The group field preserves
+both access lists, for example <code>r=OSSOS,w=NONE</code>; this is not a POSIX owning
+group. Permission characters summarize VOSpace access and do not imply POSIX
+execute or chmod semantics. Use <code>info</code> to inspect lock state, all access fields,
+and the original properties. Direct links show <code>name -&gt; target</code>.</p>
 <p><code>-h</code> means human-readable, not help.</p>
 <h3 id="du"><code>du</code><a class="headerlink" href="#du" title="Permanent link">&para;</a></h3>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>du<span class="w"> </span>data:/project<span class="w">             </span><span class="c1"># per-path usage</span>
@@ -1404,6 +1411,14 @@ stage through one local temporary.</p>
 manifest of the source tree — bounded at 10,000 entries — before mutating
 anything, preserves empty directories, and rejects symlinks and special entries
 <em>before</em> any write.</p>
+<p>Repeating <code>cp -R</code> skips content-identical files. Compatible MD5 checksums avoid
+both download and upload. Otherwise, same-size files are compared using bounded
+local staging and SHA-256; different contents are copied using the staged
+source. Equal sizes or timestamps alone do not authorize a skip. If a candidate
+cannot be read, the copy fails explicitly.</p>
+<p>Without checksums, equality checking reads both files: it saves destination
+writes, not necessarily network traffic. Extra destination files are retained.
+All skipped entries still participate in final verification.</p>
 <p>It is <strong>not</strong> a snapshot, transaction, mirror, or rollback, and does not
 preserve POSIX metadata.</p>
 <h3 id="mv"><code>mv</code><a class="headerlink" href="#mv" title="Permanent link">&para;</a></h3>
