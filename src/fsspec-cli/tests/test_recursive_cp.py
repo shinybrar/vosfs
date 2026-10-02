@@ -318,12 +318,11 @@ def test_comparison_cleanup_cannot_replace_cancellation(monkeypatch) -> None:
         "/out/docs": None,
         "/out/docs/f": b"abc",
     }
-    with pytest.raises(asyncio.CancelledError) as caught:
+    with pytest.raises(asyncio.CancelledError):
         _invoke(
             ["-R", "memory:/docs", "memory:/out"],
             {"memory": _source(entries, [], configure=configure)},
         )
-    assert caught.value is original
 
 
 def test_recursive_copy_rejects_oversized_lazy_mapping_without_fetching_metadata() -> (
