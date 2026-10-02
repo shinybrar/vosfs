@@ -44,6 +44,17 @@
 * Parameterize private command orchestration with concrete command labels
   without adding a supported command or public runner.
 
+## [0.9.0](https://github.com/shinybrar/vosfs/compare/fsspec-cli-v0.8.0...fsspec-cli-v0.9.0) (2026-10-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **storage:** resume verified copies and restore shell listings ([#343](https://github.com/shinybrar/vosfs/issues/343))
+
+### Features
+
+* **storage:** resume verified copies and restore shell listings ([#343](https://github.com/shinybrar/vosfs/issues/343)) ([0bbe991](https://github.com/shinybrar/vosfs/commit/0bbe9916a096b61838d669a673233963b81ae99d))
+
 ## [0.8.0](https://github.com/shinybrar/vosfs/compare/fsspec-cli-v0.7.0...fsspec-cli-v0.8.0) (2026-08-01)
 
 
