@@ -39,8 +39,8 @@ def _unresolvable_owner_group(monkeypatch: pytest.MonkeyPatch) -> None:
     def missing_group(gid: int) -> None:
         raise KeyError(gid)
 
-    monkeypatch.setattr("fsspec_cli._stat.pwd.getpwuid", missing_user)
-    monkeypatch.setattr("fsspec_cli._stat.grp.getgrgid", missing_group)
+    monkeypatch.setattr("fsspec_cli._accounts.pwd.getpwuid", missing_user)
+    monkeypatch.setattr("fsspec_cli._accounts.grp.getgrgid", missing_group)
 
 
 # Goldens use unresolvable uid/gid (see _unresolvable_owner_group).
@@ -231,8 +231,8 @@ def test_stat_falls_back_to_decimal_when_owner_lookup_overflows(
     def overflow_group(gid: int) -> None:
         raise OverflowError(gid)
 
-    monkeypatch.setattr("fsspec_cli._stat.pwd.getpwuid", overflow_user)
-    monkeypatch.setattr("fsspec_cli._stat.grp.getgrgid", overflow_group)
+    monkeypatch.setattr("fsspec_cli._accounts.pwd.getpwuid", overflow_user)
+    monkeypatch.setattr("fsspec_cli._accounts.grp.getgrgid", overflow_group)
     source = _RecordingSource([], info_result=_RICH_FILE)
 
     result = _invoke("stat", ["memory:/stat-file"], sources={"memory": source})

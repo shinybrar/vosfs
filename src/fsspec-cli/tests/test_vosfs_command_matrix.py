@@ -359,14 +359,14 @@ def test_native_vosfs_long_listing_profile_is_remote_and_uses_detail(
         source,
         "/docs",
         exact_directory=(
-            "file     8  Jul 17 18:00  guide.md\n"
-            "file  1536  Jul 17 18:00  notes.txt\n"
-            f"link     0  -             shortcut -> vos://{_AUTHORITY}/docs/guide.md\n"
+            "-?????????  -  -  -     8  Jul 17 18:00  guide.md\n"
+            "-?????????  -  -  -  1536  Jul 17 18:00  notes.txt\n"
+            f"l?????????  -  -  -     0  -             shortcut -> vos://{_AUTHORITY}/docs/guide.md\n"
         ),
         human_directory=(
-            "file    8B  Jul 17 18:00  guide.md\n"
-            "file  1.5K  Jul 17 18:00  notes.txt\n"
-            f"link    0B  -             shortcut -> vos://{_AUTHORITY}/docs/guide.md\n"
+            "-?????????  -  -  -    8B  Jul 17 18:00  guide.md\n"
+            "-?????????  -  -  -  1.5K  Jul 17 18:00  notes.txt\n"
+            f"l?????????  -  -  -    0B  -             shortcut -> vos://{_AUTHORITY}/docs/guide.md\n"
         ),
     )
 

@@ -20,8 +20,9 @@ or all-fsspec compatibility. Supported host platforms are Linux and macOS.
 Two rules make best-effort output safe:
 
 1. **Never fabricate.** A field a backend does not report is omitted, or shown
-   as a neutral `-`. A zero, a synthetic mode, or a substituted timestamp is
-   never invented.
+   as a neutral `-`. A zero, a fabricated POSIX mode, or a substituted timestamp is
+   never invented. Explicit advisory access summaries are labeled in the
+   backend contract and remain separate from real POSIX modes.
 2. **Adaptive richness.** Output is as rich as the backend allows and no
    richer. The command does not change between backends — only the data does.
 
@@ -171,8 +172,9 @@ for work whose outcome was not observed. See
 
 One pure adapter turns an fsspec `info(detail=True)` / `ls(detail=True)`
 mapping — whose shape differs per backend — into a normalized `ListingRow`.
-Every metadata-bearing command renders from it; it is the single place that
-reads heterogeneous fsspec metadata.
+Long listing and info render from it; strict Local-rich stat retains its
+separate required-field validation. It is the shared normalization seam for
+heterogeneous listing metadata.
 
 | `ListingRow` field | fsspec key(s) | Typically present on |
 | --- | --- | --- |
@@ -182,7 +184,8 @@ reads heterogeneous fsspec metadata.
 | `mtime` | `mtime` / `LastModified` / `last_modified` | Local, object stores, vosfs |
 | `mode` | `mode` (st_mode int) | Local only |
 | `nlink` | `nlink` | Local only |
-| `owner` / `group` | `uid` / `gid`, optionally resolved | Local only |
+| `owner` / `group` | explicit `owner` / `group`, then `uid` / `gid`; group may summarize `read_groups` / `write_groups` | Local, vosfs |
+| `permissions` | advisory ten-character access summary, separate from `mode` | vosfs |
 | `link_target` | `destination` / `target` | Local, vosfs |
 | `extra` | every other key (`ETag`, `md5`, `uri`, …) | backend-specific |
 
@@ -192,10 +195,22 @@ strings to epoch seconds. Precedence is `mtime` → `LastModified` /
 strings and naive `datetime` values are interpreted as UTC. An unparseable or
 absent time yields `None`.
 
-**Adaptive columns**: a long listing renders only the columns some row in that
-result supports. If no entry has `mode`, the mode/owner/group/nlink columns are
-dropped entirely rather than shown as placeholders; a per-row gap in an
-otherwise-present column shows `-`.
+**Stable shell columns**: long listing renders mode, link count, owner, group,
+size, modification time, and name in that order, even for sparse metadata.
+Unknown scalar fields show `-`; unknown permission bits show `?` after the
+known file-kind character. No allocated-block total is inferred from bytes.
+Real modes take precedence over advisory `permissions`. Numeric identities
+resolve through the local account databases, falling back to numeric values.
+Resolution is presentation only, not a claim about a remote account namespace.
+
+When no owning group is reported, access group lists render in one field as
+`r=GROUPS,w=GROUPS`. Known empty lists render `NONE`, absent lists render `?`.
+VOSpace group and creator interpretation lives in vosfs, never in this library.
+Full access fields and raw properties remain in info's `extra` mapping.
+All displayed strings MUST be free of NUL, newline, and carriage return.
+
+See [ADR 0008](../../adr/0008-render-shell-shaped-long-listings.md), which
+supersedes adaptive column omission. This is a parsable-output change.
 
 ## 11. Flag conventions
 

@@ -149,12 +149,12 @@ column.
 
 That produced a CLI that said "no" to the things users most wanted. The bar is
 now a shell-compatible *experience*: render what the backend actually supplies,
-in the shape a shell user expects, and omit the rest. The two safety rules in
+in the shape a shell user expects, with unknown markers for missing fields. The two safety rules in
 [`contract.md` §1](contract.md#1-what-fsspec-cli-claims) — never fabricate,
 adaptive richness — are what make "best effort" honest rather than sloppy.
 
 The cost of getting this wrong in either direction is real: fabricating a `0`
-size or a fake mode is worse than omitting the column, and refusing the command
+size or a fake mode is worse than showing an unknown marker, and refusing the command
 is worse than a partial answer.
 
 ## 13. `-h` is human-readable, not help

@@ -8,18 +8,87 @@ from fsspec_cli._listing import to_listing as normalize_listing
 from ._support import _invoke, _RecordingSource
 
 
+def test_sparse_long_listing_keeps_shell_column_positions() -> None:
+    source = _RecordingSource([], {"name": "/notes.txt", "type": "file", "size": 1536})
+    result = _invoke("ls", ["-l", "memory:/notes.txt"], sources={"memory": source})
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "-?????????  -  -  -  1536  -  notes.txt\n",
+        "",
+    )
+
+
+def test_long_listing_renders_access_groups_in_one_shell_column() -> None:
+    source = _RecordingSource(
+        [],
+        {
+            "name": "/test.makefake",
+            "type": "file",
+            "size": 3572465,
+            "owner": "jkavelaars",
+            "read_groups": ("OSSOS",),
+            "write_groups": (),
+            "permissions": "-rw-r--r--",
+        },
+    )
+    result = _invoke("ls", ["-l", "memory:/test.makefake"], sources={"memory": source})
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "-rw-r--r--  -  jkavelaars  r=OSSOS,w=NONE  3572465  -  test.makefake\n",
+        "",
+    )
+
+
+def test_direct_link_long_listing_preserves_its_target() -> None:
+    source = _RecordingSource(
+        [],
+        {
+            "name": "/shortcut",
+            "type": "other",
+            "islink": True,
+            "size": 0,
+            "target": "/target",
+        },
+    )
+    result = _invoke("ls", ["-l", "memory:/shortcut"], sources={"memory": source})
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "l?????????  -  -  -  0  -  shortcut -> /target\n",
+        "",
+    )
+
+
+@pytest.mark.parametrize("field", ["uid", "gid", "target", "name"])
+def test_long_listing_rejects_record_breaking_metadata(field: str) -> None:
+    info = {"name": "/shortcut", "type": "other", "islink": True, "target": "/target"}
+    info[field] = "visible\nFAKE"
+    source = _RecordingSource([], info)
+    result = _invoke("ls", ["-l", "memory:/shortcut"], sources={"memory": source})
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "ls: memory:/shortcut: incompatible result\n",
+    )
+
+
 @pytest.mark.parametrize(
     ("command", "arguments", "stdout"),
     [
         (
             "ls",
             ["-l", "memory:/docs"],
-            "file     2  guide.md\nfile  1536  notes.txt\n",
+            (
+                "-?????????  -  -  -     2  -  guide.md\n"
+                "-?????????  -  -  -  1536  -  notes.txt\n"
+            ),
         ),
         (
             "ls",
             ["-lh", "memory:/docs"],
-            "file    2B  guide.md\nfile  1.5K  notes.txt\n",
+            (
+                "-?????????  -  -  -    2B  -  guide.md\n"
+                "-?????????  -  -  -  1.5K  -  notes.txt\n"
+            ),
         ),
     ],
 )
@@ -63,7 +132,7 @@ def test_long_listing_file_uses_its_info_result_without_calling_ls() -> None:
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
-        "file  2K  report.bin\n",
+        "-?????????  -  -  -  2K  -  report.bin\n",
         "",
     )
     assert [event[0] for event in events] == ["factory", "enter", "info", "exit"]
@@ -85,7 +154,7 @@ def test_long_listing_preserves_almost_all_selection_and_sorting() -> None:
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
-        "file  2  .hidden\nfile  1  visible\n",
+        "-?????????  -  -  -  2  -  .hidden\n-?????????  -  -  -  1  -  visible\n",
         "",
     )
 
@@ -113,7 +182,7 @@ def test_long_listing_does_not_normalize_omitted_hidden_rows(monkeypatch) -> Non
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
-        "file  1  visible\n",
+        "-?????????  -  -  -  1  -  visible\n",
         "",
     )
 
@@ -168,7 +237,14 @@ def test_long_listing_preserves_multi_operand_grouping() -> None:
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
-        ("file  1  b.txt\n\nmemory:/a:\n\nmemory:/z:\nfile  3  c.txt\n"),
+        (
+            "-?????????  -  -  -  1  -  b.txt\n"
+            "\n"
+            "memory:/a:\n"
+            "\n"
+            "memory:/z:\n"
+            "-?????????  -  -  -  3  -  c.txt\n"
+        ),
         "",
     )
 
@@ -197,7 +273,7 @@ def test_long_listing_continues_after_an_incompatible_operand_atomically() -> No
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
-        "memory:/good:\nfile  4  ok.txt\n",
+        "memory:/good:\n-?????????  -  -  -  4  -  ok.txt\n",
         "ls: memory:/bad: incompatible result\n",
     )
     assert [

@@ -89,3 +89,15 @@ all-fsspec compatibility. Supported host platforms are Linux and macOS.
 
 `fsspec-cli` is distributed under the terms of the
 [BSD 3-Clause License](LICENSE) (BSD-3-Clause).
+
+## Long listings and repeated copies
+
+`ls -l` keeps shell column order even when metadata is sparse. Unknown scalar
+fields show `-`, unknown permission bits show `?`, and old dates show the year.
+VOSpace access groups share one field (`r=OSSOS,w=NONE`) rather than implying
+POSIX group ownership; raw access and lock metadata remain available in `info`.
+
+Recursive `cp -R` skips files only after compatible MD5 metadata or staged
+SHA-256 comparison establishes equality. Equal size alone is insufficient.
+Without content checksums, comparing existing files still downloads both
+contents, but avoids unnecessary uploads and reuses a differing staged source.

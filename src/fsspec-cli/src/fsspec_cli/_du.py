@@ -15,6 +15,7 @@ from ._command import (
     _valid_size,
 )
 from ._listing import format_size
+from ._metadata import valid_display_text
 
 if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
@@ -45,8 +46,7 @@ def _render_result(request: _DuRequest, result: object) -> str | _Failure:
         for path, size in result.items():
             if (
                 type(path) is not str
-                or "\0" in path
-                or "\n" in path
+                or not valid_display_text(path)
                 or not _valid_size(size)
             ):
                 return _Failure(operand)

@@ -15,6 +15,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
+from ._accounts import group_name as _group_name
+from ._accounts import owner_name as _owner_name
 from ._command import (
     _binary_stdout,
     _CommandFailureError,
@@ -30,14 +32,6 @@ if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
 
     from ._app import AsyncFilesystemSource
-
-try:
-    import grp
-    import pwd
-
-    _HAS_ACCOUNT_DB = True
-except ImportError:  # pragma: no cover - POSIX-only account databases.
-    _HAS_ACCOUNT_DB = False
 
 _MONTHS = (
     "Jan",
@@ -59,26 +53,6 @@ _MONTHS = (
 class _StatSuccess:
     operand: _MappedOperand
     line: bytes
-
-
-def _owner_name(uid: int) -> str:
-    """Resolve ``uid`` to a local ``pwd`` account name, numeric when unavailable."""
-    if not _HAS_ACCOUNT_DB:
-        return str(uid)
-    try:
-        return pwd.getpwuid(uid).pw_name
-    except (KeyError, OverflowError, OSError):
-        return str(uid)
-
-
-def _group_name(gid: int) -> str:
-    """Resolve ``gid`` to a local ``grp`` account name, numeric when unavailable."""
-    if not _HAS_ACCOUNT_DB:
-        return str(gid)
-    try:
-        return grp.getgrgid(gid).gr_name
-    except (KeyError, OverflowError, OSError):
-        return str(gid)
 
 
 def _format_mtime(mtime: float) -> str:
