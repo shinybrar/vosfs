@@ -13,6 +13,12 @@ Cavern results or trusting advisory headers?
 to one HTTP range. Keep the partial body only on a validated `206`. Treat
 `200`/`204` as a whole-object fallback and slice locally.**
 
+A known total in Content-Range determines the expected clipped interval,
+including suffix and open-ended ranges. Reject bodies whose endpoints or lengths
+do not match it. An unknown total is accepted only for an exactly matching
+closed interval. A 416 is an empty slice only when `bytes */TOTAL` proves the
+requested start is beyond EOF (or the object is empty); otherwise it fails.
+
 Do not treat `Accept-Ranges: bytes` as proof of support. Do not assume a `200`
 body is a partial. Staged `open` stays whole-object. `blockcache::` /
 `cached::` remain unsupported until a separate contract claims them.

@@ -1,6 +1,7 @@
 """Tests for the write contract (section 9)."""
 
 import base64
+import gc
 import gzip
 import hashlib
 import io
@@ -142,6 +143,32 @@ def test_open_wb_uploads_on_close(router: respx.Router) -> None:
         handle.write(b"chunk2")
     assert files["/out.txt"] == b"chunk1chunk2"
     fs.close()
+
+
+def test_compressed_binary_write_is_readable_after_close(router: respx.Router) -> None:
+    mock_transfers(router, {})
+    fs = make_fs(router)
+    try:
+        with fs.open("/out.gz", "wb", compression="gzip") as handle:
+            handle.write(b"payload")
+        assert gzip.decompress(fs.cat_file("/out.gz")) == b"payload"
+    finally:
+        fs.close()
+
+
+def test_abandoned_compressed_write_does_not_create_a_file(
+    router: respx.Router,
+) -> None:
+    mock_transfers(router, {})
+    fs = make_fs(router)
+    try:
+        handle = fs.open("/abandoned.gz", "wb", compression="gzip")
+        handle.write(b"partial")
+        del handle
+        gc.collect()
+        assert not fs.exists("/abandoned.gz")
+    finally:
+        fs.close()
 
 
 def test_open_w_text(router: respx.Router) -> None:

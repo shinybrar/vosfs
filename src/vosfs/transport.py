@@ -46,6 +46,7 @@ HTTP_OK = 200
 HTTP_CREATED = 201
 HTTP_NO_CONTENT = 204
 HTTP_PARTIAL_CONTENT = 206
+HTTP_RANGE_NOT_SATISFIABLE = 416
 HTTP_SEE_OTHER = 303
 HTTP_PRECONDITION_FAILED = 412
 IDENTITY_ENCODING = {"Accept-Encoding": "identity"}
@@ -118,35 +119,27 @@ class ClientPool:
     def _build(self, *, use_cert: bool) -> httpx.AsyncClient:
         """Construct one client for the given TLS configuration."""
         return httpx.AsyncClient(
-            transport=self._transport_for(use_cert=use_cert),
+            transport=self._injected,
+            verify=(
+                self._certificate_context()
+                if use_cert and self._injected is None
+                else True
+            ),
             follow_redirects=False,
             trust_env=self._trust_env,
             timeout=self._timeout,
             auth=None,
         )
 
-    def _transport_for(self, *, use_cert: bool) -> httpx.AsyncBaseTransport:
-        """Return the configured transport: injected, certificate, or plain."""
-        if self._injected is not None:
-            return self._injected
-        # Client-certificate TLS requires genuine PEM material.
-        if use_cert:  # pragma: no cover
-            return self._build_cert_transport()
-        return httpx.AsyncHTTPTransport(
-            verify=True, retries=0, trust_env=self._trust_env
-        )
-
-    def _build_cert_transport(self) -> httpx.AsyncHTTPTransport:  # pragma: no cover
-        """Build a client-certificate transport from the configured PEM."""
+    def _certificate_context(self) -> ssl.SSLContext:  # pragma: no cover
+        """Load the certificate into every direct and proxy TLS transport."""
         certfile = self._certfile
         if certfile is None:
             msg = "no certificate is configured for a certificate transfer"
             raise ValueError(msg)
         context = ssl.create_default_context()
         context.load_cert_chain(certfile)
-        return httpx.AsyncHTTPTransport(
-            verify=context, retries=0, trust_env=self._trust_env
-        )
+        return context
 
     async def send(
         self,

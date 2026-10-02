@@ -312,10 +312,24 @@ async def read_grouped_ranges(
             if status in (transport.HTTP_OK, transport.HTTP_NO_CONTENT):
                 # Whole-object fallback wins for every range on this object.
                 return await _slice_streamed_object(response, ranges)
+            if status == transport.HTTP_RANGE_NOT_SATISFIABLE and _empty_range(
+                response.headers.get("content-range"), range_header
+            ):
+                values.append((index, b""))
+                continue
             await _raise_byte_error(response, path)
         finally:
             await response.aclose()
     return values
+
+
+def _empty_range(content_range: str | None, range_header: str) -> bool:
+    match = re.fullmatch(r"bytes \*/(\d+)", content_range or "", re.IGNORECASE)
+    if match is None:
+        return False
+    total = int(match.group(1))
+    start = range_header.removeprefix("bytes=").split("-", 1)[0]
+    return total == 0 or (bool(start) and int(start) >= total)
 
 
 async def _raise_byte_error(response: httpx.Response, path: str) -> NoReturn:
@@ -351,16 +365,24 @@ def _validate_partial(
     if last < first or len(body) != last - first + 1:
         msg = "206 body does not match Content-Range"
         raise errors.VOSpaceError(msg, status=transport.HTTP_PARTIAL_CONTENT)
+    total = None if match.group(3) == "*" else int(match.group(3))
     spec = range_header.removeprefix("bytes=")
-    if spec.startswith("-"):
-        return
-    if spec.endswith("-"):
-        if first != int(spec[:-1]):
-            msg = "206 Content-Range start does not match request"
+    start, stop = spec.split("-", 1)
+    if not start or not stop:
+        if total is None:
+            msg = "206 suffix or open range requires a known object length"
             raise errors.VOSpaceError(msg, status=transport.HTTP_PARTIAL_CONTENT)
-        return
-    want_first, want_last = spec.split("-", 1)
-    if first != int(want_first) or last != int(want_last):
+        want_first = max(0, total - int(stop)) if not start else int(start)
+        want_last = total - 1
+    else:
+        want_first, want_last = int(start), int(stop)
+        if total is not None:
+            want_last = min(want_last, total - 1)
+    if (
+        (total is not None and last >= total)
+        or first != want_first
+        or last != want_last
+    ):
         msg = "206 Content-Range does not match request"
         raise errors.VOSpaceError(msg, status=transport.HTTP_PARTIAL_CONTENT)
 

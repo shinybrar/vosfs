@@ -20,8 +20,6 @@ from urllib.parse import urlsplit
 import httpx
 from fsspec.asyn import AsyncFileSystem, _run_coros_in_chunks, sync
 from fsspec.callbacks import DEFAULT_CALLBACK
-from fsspec.compression import compr
-from fsspec.core import get_compression
 
 from vosfs import (
     _coordination as coordination,
@@ -660,7 +658,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec public signature
     ) -> io.IOBase:
         """Open a staged file, preserving failed-block discard for text writes."""
-        if "b" in mode or not ("w" in mode or "x" in mode):
+        if not ("w" in mode or "x" in mode) or ("b" in mode and compression is None):
             return super().open(
                 path,
                 mode=mode,
@@ -671,7 +669,9 @@ class VOSpaceFileSystem(AsyncFileSystem):
             )
 
         normalized_path = self._strip_protocol(path)
-        binary_mode = mode.replace("t", "") + "b"
+        binary_mode = (
+            mode.replace("t", "") if "b" in mode else mode.replace("t", "") + "b"
+        )
         text_kwargs = {
             key: kwargs.pop(key)
             for key in ("encoding", "errors", "newline")
@@ -688,14 +688,8 @@ class VOSpaceFileSystem(AsyncFileSystem):
                 **kwargs,
             ),
         )
-        buffer: io.BufferedIOBase = staged
-        if compression is not None:
-            compression = get_compression(normalized_path, compression)
-            buffer = compr[compression](buffer, mode=mode[0])
-        return staging.StagedTextWriteFile(
-            buffer,
-            staged,
-            **text_kwargs,
+        return staging.wrap_write(
+            staged, normalized_path, mode, compression, **text_kwargs
         )
 
     def _open(
