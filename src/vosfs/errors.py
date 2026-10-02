@@ -252,7 +252,7 @@ def http_exception(
         The mapped exception instance.
     """
     snippet = redact(body)
-    location = f" for {path}" if path else ""
+    location = f" for {redact(path)}" if path else ""
     detail = f": {snippet}" if snippet else ""
     base = f"VOSpace request failed{location}{detail}"
 
@@ -284,7 +284,7 @@ def transport_exception(exc: Exception, *, path: str | None = None) -> Exception
     Returns:
         The mapped exception instance.
     """
-    location = f" for {path}" if path else ""
+    location = f" for {redact(path)}" if path else ""
     if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
         return ConnectionError(f"VOSpace connection failed{location}")
     if isinstance(exc, httpx.TimeoutException):

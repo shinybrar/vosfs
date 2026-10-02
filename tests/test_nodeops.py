@@ -161,3 +161,38 @@ def test_created_raises_not_implemented(router: respx.Router) -> None:
     with pytest.raises(NotImplementedError):
         fs.created("/file.txt")
     fs.close()
+
+
+def test_info_preserves_creator_and_distinct_access_groups(router) -> None:
+    from conftest import NODES_URL, make_fs, mock_capabilities
+
+    mock_capabilities(router)
+    router.get(f"{NODES_URL}/f").mock(
+        return_value=httpx.Response(
+            200,
+            content=b"""
+<vos:node xmlns:vos="http://www.ivoa.net/xml/VOSpace/v2.0"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:type="vos:DataNode" uri="vos://example.test!vault/f">
+ <vos:properties>
+  <vos:property uri="ivo://ivoa.net/vospace/core#creator">CN=jkavelaars,OU=cadc</vos:property>
+  <vos:property uri="ivo://ivoa.net/vospace/core#groupread">ivo://cadc.nrc.ca/gms?OSSOS ivo://cadc.nrc.ca/gms#collab</vos:property>
+  <vos:property uri="ivo://ivoa.net/vospace/core#groupwrite">NONE</vos:property>
+  <vos:property uri="ivo://ivoa.net/vospace/core#ispublic">true</vos:property>
+  <vos:property uri="ivo://cadc.nrc.ca/vospace/core#islocked">false</vos:property>
+ </vos:properties>
+</vos:node>""",
+        )
+    )
+    fs = make_fs(router)
+    try:
+        info = fs.info("/f")
+        assert (
+            info["owner"],
+            info["read_groups"],
+            info["write_groups"],
+            info["permissions"],
+            info["locked"],
+        ) == ("jkavelaars", ("OSSOS", "collab"), (), "-rw-r--r--", False)
+    finally:
+        fs.close()

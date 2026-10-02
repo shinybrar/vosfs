@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias, cast
 
 from ._command import _drain_current_operation
+from ._metadata import snapshot_mapping
 from ._path import (
     _has_dot_segment,
     _lexical_join,
@@ -143,7 +144,10 @@ def _entry(
     name = info.get("name")
     if type(name) is not str or not _same_lexical_path(name, path):
         raise _IncompatibleResultError
-    typed_info = cast("Mapping[object, object]", info)
+    try:
+        typed_info = snapshot_mapping(cast("Mapping[object, object]", info))
+    except Exception as error:
+        raise _IncompatibleResultError from error
     islink = typed_info.get("islink", False)
     if type(islink) is not bool:
         raise _IncompatibleResultError
@@ -187,7 +191,13 @@ def _walk_row(
     directory_paths: list[str] = []
     child_names: set[str] = set()
     for collection, kind in ((directories, "directory"), (files, "file")):
-        for name, info in collection.items():
+        if len(collection) > entry_capacity - len(entries):
+            raise _EntryLimitError
+        try:
+            children = snapshot_mapping(collection)
+        except Exception as error:
+            raise _IncompatibleResultError from error
+        for name, info in children.items():
             if (
                 type(name) is not str
                 or not name
@@ -215,65 +225,57 @@ def _walk_row(
     return _WalkRow(root, tuple(entries), tuple(directory_paths))
 
 
-def _accept_walk_row(
-    row: _WalkRow,
-    *,
-    rows: list[_WalkRow],
-    seen_roots: set[str],
-    expected_roots: set[str],
-    seen_relatives: set[str],
-) -> None:
-    relatives = {entry.relative for entry in row.entries}
-    if (
-        row.root in seen_roots
-        or row.root not in expected_roots
-        or seen_relatives.intersection(relatives)
-    ):
-        raise _IncompatibleResultError
-    seen_roots.add(row.root)
-    expected_roots.update(row.directory_paths)
-    seen_relatives.update(relatives)
-    rows.append(row)
+class _ManifestBuilder:
+    """Accept each frozen row once and retain only the final entry index."""
+
+    def __init__(self, root: _ManifestEntry) -> None:
+        self.entries = {"": root}
+        self.roots: set[str] = set()
+        self.expected_roots = {root.path}
+
+    @property
+    def capacity(self) -> int:
+        return _MAX_ENTRIES - len(self.entries)
+
+    def accept(self, row: _WalkRow) -> None:
+        if (
+            row.root in self.roots
+            or row.root not in self.expected_roots
+            or any(entry.relative in self.entries for entry in row.entries)
+        ):
+            raise _IncompatibleResultError
+        self.roots.add(row.root)
+        self.expected_roots.update(row.directory_paths)
+        self.entries.update((entry.relative, entry) for entry in row.entries)
+
+    def finish(self) -> _Manifest:
+        if self.roots != self.expected_roots:
+            raise _IncompatibleResultError
+        return tuple(sorted(self.entries.values(), key=lambda item: item.relative))
 
 
 def _materialize_sync(
     iterator: Iterator[object],
-    source_path: str,
-) -> tuple[_WalkRow, ...]:
-    values: list[_WalkRow] = []
-    count = 1
-    seen_roots: set[str] = set()
-    expected_roots = {source_path}
-    seen_relatives = {""}
+    root: _ManifestEntry,
+) -> _Manifest:
+    builder = _ManifestBuilder(root)
     try:
         for value in iterator:
-            row = _walk_row(
-                source_path,
-                value,
-                entry_capacity=_MAX_ENTRIES - count,
-            )
-            _accept_walk_row(
-                row,
-                rows=values,
-                seen_roots=seen_roots,
-                expected_roots=expected_roots,
-                seen_relatives=seen_relatives,
-            )
-            count += len(row.entries)
+            builder.accept(_walk_row(root.path, value, entry_capacity=builder.capacity))
     except BaseException:
         with suppress(BaseException):
             _close_sync_iterator(iterator)
         raise
     _close_sync_iterator(iterator)
-    return tuple(values)
+    return builder.finish()
 
 
 async def _sync_rows(
     iterator: Iterator[object],
-    source_path: str,
-) -> tuple[_WalkRow, ...]:
+    root: _ManifestEntry,
+) -> _Manifest:
     return await _drain_current_operation(
-        asyncio.to_thread(_materialize_sync, iterator, source_path)
+        asyncio.to_thread(_materialize_sync, iterator, root)
     )
 
 
@@ -288,54 +290,38 @@ async def _close_async_iterator(iterator: AsyncIterator[object]) -> None:
 
 async def _async_rows(
     iterator: AsyncIterator[object],
-    source_path: str,
-) -> tuple[_WalkRow, ...]:
-    values: list[_WalkRow] = []
-    count = 1
-    seen_roots: set[str] = set()
-    expected_roots = {source_path}
-    seen_relatives = {""}
+    root: _ManifestEntry,
+) -> _Manifest:
+    builder = _ManifestBuilder(root)
     try:
         while True:
             try:
                 value = await _drain_current_operation(anext(iterator))
             except StopAsyncIteration:
                 break
-            row = _walk_row(
-                source_path,
-                value,
-                entry_capacity=_MAX_ENTRIES - count,
-            )
-            _accept_walk_row(
-                row,
-                rows=values,
-                seen_roots=seen_roots,
-                expected_roots=expected_roots,
-                seen_relatives=seen_relatives,
-            )
-            count += len(row.entries)
+            builder.accept(_walk_row(root.path, value, entry_capacity=builder.capacity))
     except BaseException:
         with suppress(BaseException):
             await _close_async_iterator(iterator)
         raise
     await _close_async_iterator(iterator)
-    return tuple(values)
+    return builder.finish()
 
 
 async def _walk_rows(
     filesystem: AsyncFileSystem,
     requested_path: str,
-    source_path: str,
-) -> tuple[_WalkRow, ...]:
+    root: _ManifestEntry,
+) -> _Manifest:
     method = getattr(filesystem, "_walk", None)
     if not callable(method):
         raise NotImplementedError
     result = method(requested_path, detail=True, on_error="raise")
     if isinstance(result, AsyncIterator):
-        return await _async_rows(result, source_path)
+        return await _async_rows(result, root)
     if not inspect.isawaitable(result):
         raise _IncompatibleResultError
-    return await _sync_rows(await _resolve_sync_iterator(result), source_path)
+    return await _sync_rows(await _resolve_sync_iterator(result), root)
 
 
 def _relative_path(root: str, path: str) -> str:
@@ -343,29 +329,6 @@ def _relative_path(root: str, path: str) -> str:
     if relative is None:
         raise _IncompatibleResultError
     return relative
-
-
-def _manifest_from_rows(
-    root_entry: _ManifestEntry,
-    values: tuple[_WalkRow, ...],
-) -> _Manifest:
-    entries = {"": root_entry}
-    rows: dict[str, _WalkRow] = {}
-    for row in values:
-        if row.root in rows:
-            raise _IncompatibleResultError
-        rows[row.root] = row
-
-    expected_roots = {root_entry.path}
-    for row in rows.values():
-        for entry in row.entries:
-            if entry.relative in entries:
-                raise _IncompatibleResultError
-            entries[entry.relative] = entry
-        expected_roots.update(row.directory_paths)
-    if set(rows) != expected_roots:
-        raise _IncompatibleResultError
-    return tuple(sorted(entries.values(), key=lambda item: item.relative))
 
 
 async def _manifest(
@@ -379,7 +342,4 @@ async def _manifest(
     if type(reported_path) is not str or not _same_lexical_path(reported_path, path):
         raise _IncompatibleResultError
     root_entry = _entry("", reported_path, source_info, expected_kind="directory")
-    return _manifest_from_rows(
-        root_entry,
-        await _walk_rows(filesystem, path, reported_path),
-    )
+    return await _walk_rows(filesystem, path, root_entry)

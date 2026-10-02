@@ -15,6 +15,7 @@ from ._command import (
     _MappedOperand,
     _run_single_operand_text,
 )
+from ._metadata import valid_display_text
 from ._path import _lexical_join, _lexical_root
 
 if TYPE_CHECKING:
@@ -39,7 +40,7 @@ class _WalkRow:
 
 
 def _valid_root(value: object) -> TypeGuard[str]:
-    return type(value) is str and "\0" not in value and "\n" not in value
+    return type(value) is str and valid_display_text(value)
 
 
 def _valid_entry(value: object, *, root_file: bool = False) -> TypeGuard[str]:
@@ -47,8 +48,7 @@ def _valid_entry(value: object, *, root_file: bool = False) -> TypeGuard[str]:
         type(value) is str
         and (bool(value) or root_file)
         and "/" not in value
-        and "\0" not in value
-        and "\n" not in value
+        and valid_display_text(value)
     )
 
 

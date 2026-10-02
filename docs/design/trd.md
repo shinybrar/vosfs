@@ -245,7 +245,18 @@ Generated node and transfer documents **MUST** use the
 | --- | --- | ---: | --- |
 | `DataNode` | `file` | Required integer byte length | `mtime`, `md5`, `content_type`, `uri`, `properties` when available. |
 | `ContainerNode` | `directory` | `0` | `mtime`, `uri`, `properties` when available. |
-| `LinkNode` | `other` | `0` | `islink=True`, `target`, `uri`; LinkNode properties are not promised. |
+| `LinkNode` | `other` | `0` | `islink=True`, `target`, `uri`, `properties` and access fields when available. |
+
+Every node kind can additionally expose `owner` (creator display identity),
+`read_groups` and `write_groups` (tuples, including known empty tuples), `public`,
+`locked`, and `permissions` when corresponding properties are available.
+Missing properties remain unknown. Simple unescaped initial creator CNs are
+shown as the CN; other identities remain verbatim. Raw identities and group
+URIs remain in properties. Only recognized CADC GMS query/fragment prefixes are
+shortened. The ten-character permission summary is advisory: owner read/write,
+separate group access, public reading, no execute claim; locks remove displayed
+write permission. It **MUST NOT** be reported as a real POSIX `mode` or `gid`.
+See [ADR 0008](../adr/0008-render-shell-shaped-long-listings.md).
 
 `name` **MUST** be the full normalized filesystem path. URI-keyed node
 properties, including unknown properties, **MUST** be preserved in a read-only
@@ -346,6 +357,12 @@ Python half-open `[start, end)` **MUST** map to inclusive HTTP
 `bytes=start-(end-1)` (and to standard open/suffix forms when one bound is
 absent).
 
+206 validation checks the full interval against the reported total, including
+EOF clipping, suffixes, and open-ended requests. Unknown totals permit only
+exactly matching closed intervals. A 416 yields an empty slice only when its
+`Content-Range: bytes */TOTAL` proves the object empty or start beyond EOF.
+Malformed or inconsistent responses fail without returning unvalidated bytes.
+
 `block_size`, `cache_type`, and `cache_options` are accepted for call
 compatibility. They do not turn staged `open` into a ranged transport, and
 `vosfs` **MUST NOT** advertise `blockcache::` / `cached::` support.
@@ -385,6 +402,11 @@ the target. `vosfs` **MUST NOT** issue a cleanup DELETE.
 Append modes, every mode containing `+`, `autocommit=False`, transactions,
 offset writes, conditional create, atomic replacement, resumable upload, and
 multipart upload are unsupported.
+
+Binary and text compression wrappers **MUST** own the full staged-write close
+operation: finish compression before one upload, discard on a failed context,
+and discard abandoned wrappers during collection. Compression does not alter
+these ownership guarantees.
 
 ## 10. Namespace and mutation contract
 

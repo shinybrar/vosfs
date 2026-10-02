@@ -214,7 +214,10 @@ def test_render_listing_drops_columns_unsupported_by_every_row() -> None:
         to_listing({"name": "/sub", "type": "directory"}),
     ]
 
-    assert render_listing(rows) == "file  a.txt\ndir   sub\n"
+    assert (
+        render_listing(rows)
+        == "-?????????  -  -  -  -  -  a.txt\nd?????????  -  -  -  -  -  sub\n"
+    )
 
 
 def test_render_listing_uses_union_columns_and_neutral_per_row_gaps(
@@ -248,14 +251,14 @@ def test_render_listing_uses_union_columns_and_neutral_per_row_gaps(
 
     assert render_listing(rows, human_readable=True) == (
         "-rw-r--r--  1  brars  staff  1K  Jul 17 22:06  report.txt\n"
-        "link        -  -      -       -  -             shortcut -> /report.txt\n"
+        "l?????????  -  -      -       -  -             shortcut -> /report.txt\n"
     )
 
 
 @pytest.mark.parametrize(
     ("mode", "indicator"),
     [
-        (0o100777, "link"),
+        (0o100777, "l?????????"),
         (0o120777, "lrwxrwxrwx"),
     ],
 )
@@ -273,7 +276,7 @@ def test_render_listing_uses_kind_when_link_and_mode_type_disagree(
         }
     )
 
-    assert render_listing([row]) == f"{indicator}  shortcut -> /target\n"
+    assert render_listing([row]) == f"{indicator}  -  -  -  -  -  shortcut -> /target\n"
 
 
 def test_render_listing_empty_rows_is_empty() -> None:

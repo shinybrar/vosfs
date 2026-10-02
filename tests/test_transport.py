@@ -2,6 +2,7 @@
 
 import pickle
 
+import httpcore
 import httpx
 import pytest
 import respx
@@ -58,6 +59,43 @@ async def test_plain_production_client_builds_without_network() -> None:
     client = await pool.client()
     assert isinstance(client, httpx.AsyncClient)
     await pool.aclose()
+
+
+def test_filesystem_requests_use_the_environment_proxy(monkeypatch) -> None:
+    used = []
+
+    async def proxy_request(_self, request):
+        used.append(request.url.host)
+        message = "offline proxy"
+        raise httpcore.ProxyError(message)
+
+    async def direct_request(_self, _request):
+        message = "request bypassed configured proxy"
+        raise AssertionError(message)
+
+    for name in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:8080")
+    monkeypatch.setattr(httpcore.AsyncHTTPProxy, "handle_async_request", proxy_request)
+    monkeypatch.setattr(
+        httpcore.AsyncConnectionPool, "handle_async_request", direct_request
+    )
+    fs = VOSpaceFileSystem(BASE_URL, trust_env=True, skip_instance_cache=True)
+    try:
+        with pytest.raises(ConnectionError):
+            fs.info("/f")
+        assert used == [b"staging.canfar.net"]
+    finally:
+        fs.close()
 
 
 async def test_cert_client_requested_without_certfile_raises() -> None:

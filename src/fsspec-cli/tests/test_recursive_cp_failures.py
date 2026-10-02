@@ -724,7 +724,12 @@ def test_recursive_cp_accepts_matching_shared_tokens() -> None:
             "checksum": "same",
         }
     }
-    destination_entries: dict[str, bytes | None] = {"/": None, "/out": None}
+    destination_entries: dict[str, bytes | None] = {
+        "/": None,
+        "/out": None,
+        "/out/copy": None,
+        "/out/copy/file": b"x",
+    }
     destination_metadata = {
         "/out/copy/file": {
             "name": "/out/copy/file",

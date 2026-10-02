@@ -265,7 +265,9 @@ def _ranged_response(request: httpx.Request, content: bytes) -> httpx.Response |
         start = int(start_s)
         end = int(end_s)
     if start < 0 or end < start or start >= size:
-        return httpx.Response(416)
+        return httpx.Response(416, headers={"Content-Range": f"bytes */{size}"})
+
+    end = min(end, size - 1)
 
     body = content[start : end + 1]
     return httpx.Response(

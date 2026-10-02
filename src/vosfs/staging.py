@@ -20,6 +20,9 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from fsspec.compression import compr
+from fsspec.core import get_compression
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
     from types import TracebackType
@@ -165,26 +168,22 @@ class StagedWriteFile(io.BufferedRandom):
                 self.discard()
 
 
-class StagedTextWriteFile(io.TextIOWrapper):
-    """Text wrapper that owns its staged buffer's terminal upload decision."""
+class _CommitOnClose(io.IOBase):
+    """Own commit/discard after the complete outer IO stack closes."""
 
-    def __init__(
-        self,
-        buffer: Any,  # noqa: ANN401 - fsspec compression wrappers are file-like
-        staged: StagedWriteFile,
-        *,
-        encoding: str | None = None,
-        errors: str | None = None,
-        newline: str | None = None,
-    ) -> None:
-        """Wrap ``buffer`` and take ownership of staged commit or discard."""
+    def _take_ownership(self, staged: StagedWriteFile) -> None:
         self._staged = staged
         self._discard_on_close = False
         staged._handoff_to_outer()  # noqa: SLF001 - same-module lifecycle peer
-        super().__init__(buffer, encoding=encoding, errors=errors, newline=newline)
+
+    def __del__(self) -> None:
+        """Discard abandoned wrappers instead of committing during collection."""
+        self._discard_on_close = True
+        with contextlib.suppress(Exception):
+            self.close()
 
     def close(self) -> None:
-        """Commit only after the complete outer text stack closes cleanly."""
+        """Commit only after the complete outer stack closes cleanly."""
         try:
             super().close()
         except BaseException:
@@ -205,3 +204,56 @@ class StagedTextWriteFile(io.TextIOWrapper):
         if exc_type is not None:
             self._discard_on_close = True
         super().__exit__(exc_type, exc_val, exc_tb)
+
+
+class StagedTextWriteFile(_CommitOnClose, io.TextIOWrapper):
+    """Text wrapper that owns its staged buffer's terminal upload decision."""
+
+    def __init__(
+        self,
+        buffer: Any,  # noqa: ANN401 - fsspec compression wrappers are file-like
+        staged: StagedWriteFile,
+        *,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> None:
+        """Wrap ``buffer`` and take ownership of staged commit or discard."""
+        self._take_ownership(staged)
+        super().__init__(buffer, encoding=encoding, errors=errors, newline=newline)
+
+
+class StagedBinaryWriteFile(_CommitOnClose, io.BufferedWriter):
+    """Binary compression wrapper with explicit staging ownership."""
+
+    def __init__(self, buffer: io.BufferedIOBase, staged: StagedWriteFile) -> None:
+        """Own the complete binary compression stack."""
+        self._take_ownership(staged)
+        super().__init__(buffer)
+
+
+def wrap_write(  # noqa: PLR0913 - explicit compression and TextIOWrapper settings.
+    staged: StagedWriteFile,
+    path: str,
+    mode: str,
+    compression: str | None,
+    *,
+    encoding: str | None = None,
+    errors: str | None = None,
+    newline: str | None = None,
+) -> io.IOBase:
+    """Build the complete write stack, discarding if assembly fails."""
+    try:
+        buffer: io.BufferedIOBase = staged
+        resolved = get_compression(path, compression)
+        if resolved is not None:
+            buffer = compr[resolved](buffer, mode=mode[0])
+        if "b" in mode:
+            return StagedBinaryWriteFile(buffer, staged)
+        return StagedTextWriteFile(
+            buffer, staged, encoding=encoding, errors=errors, newline=newline
+        )
+    except BaseException:
+        with contextlib.suppress(BaseException):
+            staged.discard()
+        raise

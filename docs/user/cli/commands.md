@@ -42,9 +42,17 @@ myapp fs ls -lh data:/project         # long form, human-readable sizes
 A file operand prints itself; a directory prints its sorted children. With
 several operands, files come first, then one headed block per directory.
 
-Long listing shows **only the columns the backend actually supplies**. Against
-local disk you get a full POSIX-like row; against an object store you get type,
-size, and mtime. Missing values show `-`; nothing is invented.
+Long listing keeps the shell order: permissions, link count, owner, group,
+size, modification time, and name. Missing values show `-`; missing permission
+bits show `?`, for example `-?????????` for a file without a mode. Recent dates
+show a time; old dates show the year. No allocated-block total is invented.
+Numeric local identities resolve to names when available.
+
+For VOSpace, the owner is a creator display identity. The group field preserves
+both access lists, for example `r=OSSOS,w=NONE`; this is not a POSIX owning
+group. Permission characters summarize VOSpace access and do not imply POSIX
+execute or chmod semantics. Use `info` to inspect lock state, all access fields,
+and the original properties. Direct links show `name -> target`.
 
 `-h` means human-readable, not help.
 
@@ -190,6 +198,16 @@ stage through one local temporary.
 manifest of the source tree — bounded at 10,000 entries — before mutating
 anything, preserves empty directories, and rejects symlinks and special entries
 *before* any write.
+
+Repeating `cp -R` skips content-identical files. Compatible MD5 checksums avoid
+both download and upload. Otherwise, same-size files are compared using bounded
+local staging and SHA-256; different contents are copied using the staged
+source. Equal sizes or timestamps alone do not authorize a skip. If a candidate
+cannot be read, the copy fails explicitly.
+
+Without checksums, equality checking reads both files: it saves destination
+writes, not necessarily network traffic. Extra destination files are retained.
+All skipped entries still participate in final verification.
 
 It is **not** a snapshot, transaction, mirror, or rollback, and does not
 preserve POSIX metadata.

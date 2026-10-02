@@ -122,8 +122,11 @@ def test_adapted_local_long_listing_profile_is_rich_and_uses_detail(
             asynchronous=True,
         )
     )
-    owner = os.getuid()
-    group = os.getgid()
+    import grp
+    import pwd
+
+    owner = pwd.getpwuid(os.getuid()).pw_name
+    group = grp.getgrgid(os.getgid()).gr_name
 
     _exercise_long_listing_profile(
         "local",
@@ -152,8 +155,14 @@ def test_adapted_memory_long_listing_profile_is_sparse_and_uses_detail(
         "memory",
         source,
         "/docs",
-        exact_directory="file  8  guide.md\nfile  9  notes.txt\n",
-        human_directory="file  8B  guide.md\nfile  9B  notes.txt\n",
+        exact_directory=(
+            "-?????????  -  -  -  8  -  guide.md\n"
+            "-?????????  -  -  -  9  -  notes.txt\n"
+        ),
+        human_directory=(
+            "-?????????  -  -  -  8B  -  guide.md\n"
+            "-?????????  -  -  -  9B  -  notes.txt\n"
+        ),
     )
 
     assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)

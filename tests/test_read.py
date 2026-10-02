@@ -7,10 +7,63 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
-from conftest import BASE_URL, make_fs, mock_transfers
+from conftest import BASE_URL, SYNC_URL, make_fs, mock_transfers, stream_body
 from vospace_sim import VOSpaceSim
 
 from vosfs import staging
+from vosfs.errors import VOSpaceError
+
+
+def test_signed_byte_url_is_redacted_in_connection_errors(router: respx.Router) -> None:
+    endpoint = f"{BASE_URL}/files/preauth:SYNTHETIC_TOKEN/f"
+    router.get(endpoint).mock(side_effect=httpx.ConnectError("simulated"))
+    mock_transfers(router, {"/f": b"abc"})
+    router.post(SYNC_URL).mock(
+        return_value=httpx.Response(303, headers={"Location": endpoint})
+    )
+    fs = make_fs(router)
+    try:
+        with pytest.raises(ConnectionError) as caught:
+            fs.cat_file("/f")
+        assert "SYNTHETIC_TOKEN" not in str(caught.value)
+    finally:
+        fs.close()
+
+
+def test_ranged_read_clips_at_eof(router: respx.Router) -> None:
+    mock_transfers(router, {"/f": b"abcdefghij"}, honour_range=True)
+    fs = make_fs(router)
+    try:
+        assert fs.cat_file("/f", start=8, end=20) == b"ij"
+    finally:
+        fs.close()
+
+
+@pytest.mark.parametrize("start", [-2, 2])
+def test_ranged_read_rejects_incomplete_intervals(
+    router: respx.Router, start: int
+) -> None:
+    router.get(f"{BASE_URL}/files", params={"p": "/f"}).mock(
+        return_value=httpx.Response(
+            206, content=stream_body(b"ab"), headers={"Content-Range": "bytes 0-1/10"}
+        )
+    )
+    mock_transfers(router, {"/f": b"abcdefghij"})
+    fs = make_fs(router)
+    try:
+        with pytest.raises(VOSpaceError, match="does not match request"):
+            fs.cat_file("/f", start=start)
+    finally:
+        fs.close()
+
+
+def test_ranged_read_past_eof_is_empty(router: respx.Router) -> None:
+    mock_transfers(router, {"/f": b"abcdefghij"}, honour_range=True)
+    fs = make_fs(router)
+    try:
+        assert fs.cat_file("/f", start=20) == b""
+    finally:
+        fs.close()
 
 
 async def test_get_file_streams_to_disk(router: respx.Router, tmp_path: Path) -> None:

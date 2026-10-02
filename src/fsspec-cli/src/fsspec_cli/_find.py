@@ -13,6 +13,7 @@ from ._command import (
     _MappedOperand,
     _run_single_operand_text,
 )
+from ._metadata import valid_display_text
 
 if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
@@ -68,7 +69,7 @@ def _directory_paths(result: object) -> list[str] | None:
 
 
 def _valid_path(path: object) -> TypeGuard[str]:
-    return type(path) is str and "\0" not in path and "\n" not in path
+    return type(path) is str and valid_display_text(path)
 
 
 async def _search(

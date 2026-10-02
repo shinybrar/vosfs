@@ -58,7 +58,7 @@ guide.md
 
 ### `ls -l` / `ls -lh`
 
-Long listing through the §10 normalization layer with adaptive columns. `-h`
+Long listing through the §10 normalization layer with stable shell columns. `-h`
 requires a long listing:
 
 ```text
@@ -71,12 +71,17 @@ for that operand; other operands keep their complete results and the final
 status is `1`.
 
 ```text
-file  12  report.txt
+-?????????  -  -  -  12  -  report.txt
 
 memory:/docs:
-file  1K  guide.md
-dir    -  sub
+-?????????  -  -  -  1K  -  guide.md
+d?????????  -  -  -   -  -  sub
 ```
+
+Direct link operands render their own metadata and target without following
+it. Recent timestamps use local month/day/time; timestamps older than 180 days
+or more than one hour in the future show the year. Neither layout changes the
+underlying timestamp or substitutes creation time.
 
 ### `du`
 
@@ -235,9 +240,8 @@ whatever both ends happen to report, not a content hash.
 
 The source temporary is the transfer bridge, **not** a verification download.
 There is no destination download, FIFO, pipe, worker thread, synchronous open,
-or second temporary. Any future byte comparison would require a separately
-profiled explicit opt-in and a blocking comparison through
-`asyncio.to_thread`.
+or second temporary. Recursive copy has the separately profiled content comparison described below;
+non-recursive file copy does not download the destination.
 
 Staging cleanup runs after success, ordinary failure, and escaping control
 flow. An ordinary cleanup failure is reported only when no transfer or
@@ -260,6 +264,31 @@ before any mutation. Preserves empty directories. Rejects links and special
 entries *before* mutating. Verifies the source manifest and destination
 metadata before reporting success. Supports same-source and cross-source
 routes through one backend-neutral runner over required async hooks.
+
+After validating a walk row and its collection shapes, the advertised child
+count is checked against remaining capacity before child metadata is fetched.
+An oversized collection reports the entry limit before inspecting individual
+children. Enumeration is also bounded by the advertised length, so an
+inconsistent mapping cannot cause an unlimited snapshot.
+
+Existing destination files are skipped only after content validation. A shared
+explicit MD5 hexadecimal value or base64 Content-MD5 can prove equality, with
+matching size. ETags, generic checksum tokens of unknown algorithm, sizes, and
+timestamps alone never authorize a skip. MD5 is an accidental-corruption check,
+not an authenticity guarantee.
+
+Without compatible content checksums, same-size candidates are downloaded to
+bounded disk staging and compared using SHA-256 off the event loop. Different
+sizes bypass comparison. A differing candidate reuses its staged source for
+upload; it is not downloaded twice. An unreadable candidate fails rather than
+being silently skipped or overwritten. Missing files are copied normally.
+Destination preflight metadata is reused, avoiding a second pre-transfer info
+request per file. Skips retain source revalidation and destination verification.
+Without checksums, skipping saves writes but still reads both objects.
+
+This policy is specific to recursive copy; the preceding non-recursive profile
+keeps its existing metadata proof. See
+[ADR 0009](../../adr/0009-skip-content-identical-recursive-copies.md).
 
 Dot segments and a source root operand are rejected up front:
 

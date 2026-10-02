@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import MethodType
@@ -139,6 +141,222 @@ def _invoke(
     sources: dict[str, object],
 ):
     return CliRunner().invoke(App(sources).typer_app, ["cp", *arguments])  # type: ignore[arg-type]
+
+
+def test_recursive_copy_does_not_omit_entries_hidden_by_items() -> None:
+    class HiddenItems(dict):
+        def items(self):
+            return []
+
+    entries = {"/": None, "/docs": None, "/docs/important": b"payload", "/out": None}
+
+    def configure(filesystem):
+        async def walk(_self, path, **_kwargs):
+            yield (
+                path,
+                {},
+                HiddenItems(
+                    {
+                        "important": {
+                            "name": "/docs/important",
+                            "type": "file",
+                            "size": 7,
+                        }
+                    }
+                ),
+            )
+
+        filesystem._walk = MethodType(walk, filesystem)
+
+    source = _source(entries, [], configure=configure)
+    result = _invoke(["-R", "memory:/docs", "memory:/out/copy"], {"memory": source})
+    assert result.exit_code == 0
+    copied = CliRunner().invoke(
+        App({"memory": source}).typer_app, ["size", "memory:/out/copy/important"]
+    )
+    assert (copied.exit_code, copied.stdout) == (0, "7\tmemory:/out/copy/important\n")
+
+
+def test_repeating_recursive_copy_skips_identical_contents() -> None:
+    entries = {"/": None, "/docs": None, "/docs/f": b"payload", "/out": None}
+    calls = []
+    source = _source(entries, calls)
+    first = _invoke(["-R", "memory:/docs", "memory:/out"], {"memory": source})
+    assert first.exit_code == 0
+    calls.clear()
+    repeated = _invoke(["-R", "memory:/docs", "memory:/out"], {"memory": source})
+    assert repeated.exit_code == 0
+    assert not any(call[0] == "put_file" for call in calls)
+
+
+def test_recursive_copy_skips_matching_content_checksums_without_downloads() -> None:
+    entries = {
+        "/": None,
+        "/docs": None,
+        "/docs/f": b"abc",
+        "/out": None,
+        "/out/docs": None,
+        "/out/docs/f": b"abc",
+    }
+    metadata = {
+        path: {
+            "name": path,
+            "type": "file",
+            "size": 3,
+            "md5": "900150983cd24fb0d6963f7d28e17f72",
+        }
+        for path in ("/docs/f", "/out/docs/f")
+    }
+    calls = []
+    source = _source(entries, calls, metadata=metadata)
+    result = _invoke(["-R", "memory:/docs", "memory:/out"], {"memory": source})
+    assert result.exit_code == 0
+    assert not any(call[0] in {"get_file", "put_file"} for call in calls)
+
+
+def test_recursive_copy_replaces_same_size_different_contents() -> None:
+    entries = {
+        "/": None,
+        "/docs": None,
+        "/docs/f": b"new",
+        "/out": None,
+        "/out/docs": None,
+        "/out/docs/f": b"old",
+    }
+    calls = []
+    source = _source(entries, calls)
+    result = _invoke(["-R", "memory:/docs", "memory:/out"], {"memory": source})
+    assert result.exit_code == 0
+    assert [call for call in calls if call[0] == "put_file"] == [
+        ("put_file", "/out/docs/f", "overwrite")
+    ]
+    assert [
+        call for call in calls if call[0] == "get_file" and call[1] == "/docs/f"
+    ] == [("get_file", "/docs/f")]
+
+
+def test_recursive_copy_does_not_trust_equal_etags_as_content_checksums() -> None:
+    entries = {
+        "/": None,
+        "/docs": None,
+        "/docs/f": b"new",
+        "/out": None,
+        "/out/docs": None,
+        "/out/docs/f": b"old",
+    }
+    metadata = {
+        path: {"name": path, "type": "file", "size": 3, "ETag": "opaque"}
+        for path in ("/docs/f", "/out/docs/f")
+    }
+    calls = []
+    result = _invoke(
+        ["-R", "memory:/docs", "memory:/out"],
+        {"memory": _source(entries, calls, metadata=metadata)},
+    )
+    assert result.exit_code == 0
+    assert any(call[0] == "put_file" for call in calls)
+
+
+@pytest.mark.parametrize(
+    "tokens",
+    [
+        (
+            {"md5": "900150983cd24fb0d6963f7d28e17f72"},
+            {"md5": "900150983CD24FB0D6963F7D28E17F72"},
+        ),
+        ({"ETag": "source-version"}, {"ETag": "destination-version"}),
+    ],
+)
+def test_verified_skips_accept_compatible_content_with_distinct_tokens(tokens) -> None:
+    entries = {
+        "/": None,
+        "/docs": None,
+        "/docs/f": b"abc",
+        "/out": None,
+        "/out/docs": None,
+        "/out/docs/f": b"abc",
+    }
+    metadata = {
+        path: {"name": path, "type": "file", "size": 3, **token}
+        for path, token in zip(("/docs/f", "/out/docs/f"), tokens, strict=True)
+    }
+    calls = []
+    result = _invoke(
+        ["-R", "memory:/docs", "memory:/out"],
+        {"memory": _source(entries, calls, metadata=metadata)},
+    )
+    assert (result.exit_code, result.stderr) == (0, "")
+    assert not any(call[0] == "put_file" for call in calls)
+
+
+def test_comparison_cleanup_cannot_replace_cancellation(monkeypatch) -> None:
+    original = asyncio.CancelledError()
+    directory_type = tempfile.TemporaryDirectory
+
+    class FailingCleanup(directory_type):
+        def cleanup(self):
+            super().cleanup()
+            message = "cleanup failed"
+            raise OSError(message)
+
+    def configure(filesystem):
+        download = filesystem._get_file
+
+        async def get_file(_self, remote, local, **kwargs):
+            if remote == "/out/docs/f":
+                raise original
+            await download(remote, local, **kwargs)
+
+        filesystem._get_file = MethodType(get_file, filesystem)
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", FailingCleanup)
+    entries = {
+        "/": None,
+        "/docs": None,
+        "/docs/f": b"abc",
+        "/out": None,
+        "/out/docs": None,
+        "/out/docs/f": b"abc",
+    }
+    with pytest.raises(asyncio.CancelledError):
+        _invoke(
+            ["-R", "memory:/docs", "memory:/out"],
+            {"memory": _source(entries, [], configure=configure)},
+        )
+
+
+def test_recursive_copy_rejects_oversized_lazy_mapping_without_fetching_metadata() -> (
+    None
+):
+    fetched = []
+
+    class Children(Mapping):
+        def __len__(self):
+            return 20_000
+
+        def __iter__(self):
+            return (f"f{index}" for index in range(20_000))
+
+        def __getitem__(self, name):
+            fetched.append(name)
+            return {"name": f"/docs/{name}", "type": "file", "size": 1}
+
+    def configure(filesystem):
+        async def walk(_self, path, **_kwargs):
+            yield path, {}, Children()
+
+        filesystem._walk = MethodType(walk, filesystem)
+
+    entries = {"/": None, "/docs": None, "/out": None}
+    result = _invoke(
+        ["-R", "memory:/docs", "memory:/out"],
+        {"memory": _source(entries, [], configure=configure)},
+    )
+    assert (result.exit_code, result.stderr, fetched) == (
+        1,
+        "cp: memory:/docs: source tree exceeds 10000 entries\n",
+        [],
+    )
 
 
 def test_recursive_cp_reports_source_factory_failure() -> None:
