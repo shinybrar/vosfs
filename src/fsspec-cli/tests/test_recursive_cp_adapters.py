@@ -435,7 +435,7 @@ def test_async_walk_rows_are_frozen_before_requesting_the_next_row() -> None:
     assert destination_entries["/landing/copy/file.bin"] == b"payload"
 
 
-def test_walk_validation_precedes_aggregate_limit_during_consumption() -> None:
+def test_walk_capacity_precedes_fetching_oversized_child_metadata() -> None:
     source_entries: dict[str, bytes | None] = {"/": None, "/dataset": None}
     destination_entries: dict[str, bytes | None] = {"/": None, "/landing": None}
     destination_events: list[tuple[object, ...]] = []
@@ -460,7 +460,7 @@ def test_walk_validation_precedes_aggregate_limit_during_consumption() -> None:
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
         "",
-        "cp: source:/dataset: incompatible result\n",
+        "cp: source:/dataset: source tree exceeds 10000 entries\n",
     )
     assert not [
         event for event in destination_events if event[0] in {"mkdir", "put_file"}

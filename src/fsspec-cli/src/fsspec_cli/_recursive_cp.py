@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
 from ._command import (
@@ -18,6 +19,7 @@ from ._command import (
     _render_operand_diagnostic,
     _usage_error,
 )
+from ._content import matching_checksum, same_contents
 from ._diagnostics import _render_diagnostic_value
 from ._manifest import (
     _MAX_ENTRIES,
@@ -50,6 +52,12 @@ class _RecursiveCpFailure:
     backend_error: Exception | None = None
     residue: bool = False
     rendered: bool = False
+
+
+@dataclass(frozen=True)
+class _DestinationPlan:
+    missing_directories: tuple[_ManifestEntry, ...]
+    files: Mapping[str, _ManifestEntry]
 
 
 def _canonical_operand(
@@ -275,32 +283,43 @@ class _RecursiveCopy:
         self,
         root: str,
         manifest: _Manifest,
-    ) -> tuple[tuple[_ManifestEntry, ...], _RecursiveCpFailure | None]:
+    ) -> tuple[_DestinationPlan, _RecursiveCpFailure | None]:
         missing: list[_ManifestEntry] = []
+        files: dict[str, _ManifestEntry] = {}
+        empty = _DestinationPlan((), MappingProxyType({}))
         for entry in manifest:
             path = _destination_path(root, entry.relative)
             info, error = await _optional_info(self.destination_filesystem, path)
             if error is not None:
-                return (), _read_failure(self.destination, error)
+                return empty, _read_failure(self.destination, error)
             if info is None:
                 if entry.kind == "directory":
                     missing.append(entry)
                 continue
             existing = _classify_existing(self.destination, path, info)
             if isinstance(existing, _RecursiveCpFailure):
-                return (), existing
+                return empty, existing
             if existing.kind != entry.kind:
-                return (), _RecursiveCpFailure(
+                return empty, _RecursiveCpFailure(
                     self.destination,
                     "destination type conflict",
                 )
-        return tuple(missing), None
+            if existing.kind == "file":
+                files[path] = existing
+        return _DestinationPlan(tuple(missing), MappingProxyType(files)), None
 
     async def _transfer(  # noqa: C901, PLR0912
         self,
         source_entry: _ManifestEntry,
         destination_path: str,
-    ) -> _RecursiveCpFailure | None:
+        existing: _ManifestEntry | None,
+    ) -> _ManifestEntry | _RecursiveCpFailure | None:
+        if (
+            existing is not None
+            and existing.size == source_entry.size
+            and matching_checksum(source_entry.tokens, existing.tokens)
+        ):
+            return existing
         temporary = None
         try:
             descriptor, temporary = tempfile.mkstemp(prefix="fsspec-cli-cp-recursive-")
@@ -343,7 +362,25 @@ class _RecursiveCopy:
                             residue=True,
                         )
 
-            if failure is None:
+            identical = False
+            if (
+                failure is None
+                and existing is not None
+                and existing.size == source_entry.size
+            ):
+                try:
+                    identical = await same_contents(
+                        self.destination_filesystem, destination_path, temporary
+                    )
+                except Exception as error:  # noqa: BLE001 - content verification boundary.
+                    failure = _RecursiveCpFailure(
+                        self.destination,
+                        "verification failure",
+                        backend_error=error,
+                        residue=True,
+                    )
+
+            if failure is None and not identical:
                 try:
                     await _call(
                         self.destination_filesystem,
@@ -380,16 +417,17 @@ class _RecursiveCopy:
             return _RecursiveCpFailure(
                 self.source, backend_error=cleanup_error, rendered=True
             )
-        return None
+        return existing if identical else None
 
     async def _mutate(
         self,
         root: str,
         manifest: _Manifest,
-        missing_directories: tuple[_ManifestEntry, ...],
-    ) -> _RecursiveCpFailure | None:
+        plan: _DestinationPlan,
+    ) -> dict[str, _ManifestEntry] | _RecursiveCpFailure:
+        skipped: dict[str, _ManifestEntry] = {}
         for entry in sorted(
-            missing_directories,
+            plan.missing_directories,
             key=lambda item: (item.relative.count("/"), item.relative),
         ):
             try:
@@ -410,13 +448,16 @@ class _RecursiveCopy:
         for entry in manifest:
             if entry.kind != "file":
                 continue
-            failure = await self._transfer(
+            result = await self._transfer(
                 entry,
                 _destination_path(root, entry.relative),
+                plan.files.get(_destination_path(root, entry.relative)),
             )
-            if failure is not None:
-                return failure
-        return None
+            if isinstance(result, _RecursiveCpFailure):
+                return result
+            if result is not None:
+                skipped[entry.relative] = result
+        return skipped
 
     async def _revalidate_source(self, frozen: _Manifest) -> _RecursiveCpFailure | None:
         try:
@@ -445,6 +486,7 @@ class _RecursiveCopy:
         self,
         root: str,
         manifest: _Manifest,
+        skipped: Mapping[str, _ManifestEntry],
     ) -> _RecursiveCpFailure | None:
         try:
             for source_entry in manifest:
@@ -456,13 +498,15 @@ class _RecursiveCopy:
                     info,
                     expected_kind=source_entry.kind,
                 )
-                if (
-                    destination_entry.size != source_entry.size
-                    or not _shared_tokens_match(
-                        source_entry.tokens,
-                        dict(destination_entry.tokens),
+                proof = skipped.get(source_entry.relative)
+                tokens_match = (
+                    destination_entry.tokens == proof.tokens
+                    if proof is not None
+                    else _shared_tokens_match(
+                        source_entry.tokens, dict(destination_entry.tokens)
                     )
-                ):
+                )
+                if destination_entry.size != source_entry.size or not tokens_match:
                     return _RecursiveCpFailure(
                         self.destination,
                         "verification failure",
@@ -520,13 +564,13 @@ class _RecursiveCopy:
         missing, failure = await self._preflight_destination(root, manifest)
         if failure is not None:
             return failure
-        failure = await self._mutate(root, manifest, missing)
-        if failure is not None:
-            return failure
+        skipped = await self._mutate(root, manifest, missing)
+        if isinstance(skipped, _RecursiveCpFailure):
+            return skipped
         failure = await self._revalidate_source(manifest)
         if failure is not None:
             return failure
-        return await self._verify_destination(root, manifest)
+        return await self._verify_destination(root, manifest, skipped)
 
 
 async def _run_recursive_cp(

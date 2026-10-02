@@ -11,6 +11,7 @@ from ._command import (
     _call,
     _render_operand_diagnostic,
 )
+from ._metadata import snapshot_mapping
 from ._path import (
     _has_dot_segment,
     _lexical_parent,
@@ -64,7 +65,7 @@ def _freeze_mapping(value: object) -> Mapping[object, object]:
     if not isinstance(value, Mapping):
         raise _IncompatibleManifestError
     try:
-        return cast("Mapping[object, object]", dict(value))
+        return cast("Mapping[object, object]", snapshot_mapping(value))
     except Exception as error:
         raise _IncompatibleManifestError from error
 
