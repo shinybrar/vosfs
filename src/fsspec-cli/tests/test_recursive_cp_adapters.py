@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import fields
 from pathlib import Path
@@ -16,7 +17,7 @@ from fsspec_cli import App
 from typer.testing import CliRunner
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator
+    from collections.abc import Awaitable
 
 
 def _metadata(entries: dict[str, bytes | None], path: str) -> dict[str, object]:
@@ -47,27 +48,6 @@ def _listing(
     return children
 
 
-def _walk_rows(
-    entries: dict[str, bytes | None],
-    path: str,
-) -> tuple[object, ...]:
-    pending = [path]
-    rows = []
-    while pending:
-        root = pending.pop(0)
-        directories: dict[str, object] = {}
-        files: dict[str, object] = {}
-        for info in _listing(entries, root):
-            name = str(info["name"]).rsplit("/", 1)[-1]
-            if info["type"] == "directory":
-                directories[name] = info
-                pending.append(str(info["name"]))
-            else:
-                files[name] = info
-        rows.append((root, directories, files))
-    return tuple(rows)
-
-
 class _NativeAdapter(AsyncFileSystem):
     cachable = False
 
@@ -76,52 +56,48 @@ class _NativeAdapter(AsyncFileSystem):
         entries: dict[str, bytes | None],
         events: list[tuple[object, ...]],
         *,
-        walk_form: Literal["async-generator", "awaitable"] = "async-generator",
-        walk_failure: Exception | None = None,
-        mutate_yielded_metadata: bool = False,
+        ls_form: Literal["coroutine", "awaitable"] = "coroutine",
+        ls_failure: Exception | None = None,
+        mutate_returned_metadata: bool = False,
     ) -> None:
         super().__init__(asynchronous=True)
         self.entries = entries
         self.events = events
-        self.walk_form = walk_form
-        self.walk_failure = walk_failure
-        self.mutate_yielded_metadata = mutate_yielded_metadata
+        self.ls_form = ls_form
+        self.ls_failure = ls_failure
+        self.mutate_returned_metadata = mutate_returned_metadata
+        self.returned: list[dict[str, object]] = []
 
     async def _info(self, path: str, **kwargs: object) -> dict[str, object]:
         del kwargs
         self.events.append(("info", path))
         return _metadata(self.entries, path)
 
-    def _walk(
+    def _ls(
         self,
         path: str,
-        *,
-        detail: bool,
-        on_error: str,
+        detail: bool = True,  # noqa: FBT002 - fsspec hook signature.
         **kwargs: object,
-    ) -> AsyncIterator[object] | object:
+    ) -> Awaitable[list[dict[str, object]]]:
         del kwargs
-        self.events.append(("walk", path, detail, on_error))
-        if self.walk_failure is not None:
-            raise self.walk_failure
-        rows = _walk_rows(self.entries, path)
-        if self.walk_form == "awaitable":
+        self.events.append(("ls", path, detail))
+        if self.ls_failure is not None:
+            raise self.ls_failure
+        if self.mutate_returned_metadata:
+            # Rewrite every mapping handed out earlier: retained references
+            # would change the frozen manifest.
+            for info in self.returned:
+                info["type"] = "directory"
+                info["size"] = 999
+        listing = _listing(self.entries, path)
+        self.returned.extend(listing)
 
-            async def resolve() -> Iterator[object]:
-                return iter(rows)
+        async def resolve() -> list[dict[str, object]]:
+            return listing
 
-            return resolve()
-
-        async def generate() -> AsyncIterator[object]:
-            for row in rows:
-                yield row
-                if self.mutate_yielded_metadata:
-                    _root, _directories, files = row
-                    for info in files.values():
-                        assert isinstance(info, dict)
-                        info["type"] = "directory"
-
-        return generate()
+        if self.ls_form == "awaitable":
+            return asyncio.ensure_future(resolve())
+        return resolve()
 
     async def _mkdir(
         self,
@@ -167,6 +143,7 @@ class _NativeAdapter(AsyncFileSystem):
         message = "public sync facade called"
         raise AssertionError(message)
 
+    ls = info
     walk = info
     mkdir = info
     get_file = info
@@ -176,67 +153,53 @@ class _NativeAdapter(AsyncFileSystem):
     rm = info
 
 
-class _MissingWalkAdapter(_NativeAdapter):
-    _walk = None  # type: ignore[assignment]
+class _MissingListingAdapter(_NativeAdapter):
+    _ls = None  # type: ignore[assignment]
 
 
-class _MalformedOversizedWalkAdapter(_NativeAdapter):
-    def _walk(
+class _OversizedListingAdapter(_NativeAdapter):
+    async def _ls(  # type: ignore[override]
         self,
         path: str,
-        *,
-        detail: bool,
-        on_error: str,
+        detail: bool = True,  # noqa: FBT002 - fsspec hook signature.
         **kwargs: object,
-    ) -> AsyncIterator[object]:
+    ) -> list[dict[str, object]]:
         del kwargs
-        self.events.append(("walk", path, detail, on_error))
-
-        async def generate() -> AsyncIterator[object]:
-            files = {
-                "bad": {
-                    "name": f"{path}/bad",
+        self.events.append(("ls", path, detail))
+        bad: dict[str, object] = {
+            "name": f"{path}/bad",
+            "type": "file",
+            "size": True,
+            "islink": False,
+        }
+        return [
+            bad,
+            *(
+                {
+                    "name": f"{path}/file-{index}",
                     "type": "file",
-                    "size": True,
+                    "size": 0,
                     "islink": False,
                 }
-            }
-            files.update(
-                {
-                    f"file-{index}": {
-                        "name": f"{path}/file-{index}",
-                        "type": "file",
-                        "size": 0,
-                        "islink": False,
-                    }
-                    for index in range(9_999)
-                }
-            )
-            yield (path, {}, files)
-
-        return generate()
+                for index in range(9_999)
+            ),
+        ]
 
 
-class _DuplicateThenFailureWalkAdapter(_NativeAdapter):
-    def _walk(
+class _DuplicateThenFailureListingAdapter(_NativeAdapter):
+    async def _ls(  # type: ignore[override]
         self,
         path: str,
-        *,
-        detail: bool,
-        on_error: str,
+        detail: bool = True,  # noqa: FBT002 - fsspec hook signature.
         **kwargs: object,
-    ) -> AsyncIterator[object]:
+    ) -> list[dict[str, object]]:
         del kwargs
-        self.events.append(("walk", path, detail, on_error))
-
-        async def generate() -> AsyncIterator[object]:
-            row = (path, {}, {})
-            yield row
-            yield row
+        self.events.append(("ls", path, detail))
+        if path != "/dataset":
             message = "later backend failure"
             raise OSError(message)
-
-        return generate()
+        child = {"name": "/dataset/a", "type": "directory", "size": 0}
+        return [child, dict(child)]
 
 
 class _SyncAdapter(AbstractFileSystem):
@@ -309,22 +272,22 @@ def _native_source(  # noqa: PLR0913 - explicit adapter failure controls.
     entries: dict[str, bytes | None],
     events: list[tuple[object, ...]],
     *,
-    walk_form: Literal["async-generator", "awaitable"] = "async-generator",
-    walk_failure: Exception | None = None,
-    missing_walk: bool = False,
-    mutate_yielded_metadata: bool = False,
+    ls_form: Literal["coroutine", "awaitable"] = "coroutine",
+    ls_failure: Exception | None = None,
+    missing_ls: bool = False,
+    mutate_returned_metadata: bool = False,
 ):
     @asynccontextmanager
     async def source():
         adapter = (
-            _MissingWalkAdapter(entries, events)
-            if missing_walk
+            _MissingListingAdapter(entries, events)
+            if missing_ls
             else _NativeAdapter(
                 entries,
                 events,
-                walk_form=walk_form,
-                walk_failure=walk_failure,
-                mutate_yielded_metadata=mutate_yielded_metadata,
+                ls_form=ls_form,
+                ls_failure=ls_failure,
+                mutate_returned_metadata=mutate_returned_metadata,
             )
         )
         yield adapter
@@ -378,7 +341,7 @@ def test_backend_neutral_harness_copies_between_minimal_adapters(
     assert not [event for event in destination_events if event[0] == "get_file"]
 
 
-def test_backend_neutral_harness_accepts_awaitable_sync_iterator_walk() -> None:
+def test_backend_neutral_harness_accepts_awaitable_returning_listing() -> None:
     source_entries: dict[str, bytes | None] = {
         "/": None,
         "/dataset": None,
@@ -392,7 +355,7 @@ def test_backend_neutral_harness_accepts_awaitable_sync_iterator_walk() -> None:
                 "arbitrary-source": _native_source(
                     source_entries,
                     [],
-                    walk_form="awaitable",
+                    ls_form="awaitable",
                 ),
                 "arbitrary-target": _native_source(destination_entries, []),
             }
@@ -409,7 +372,7 @@ def test_backend_neutral_harness_accepts_awaitable_sync_iterator_walk() -> None:
     assert destination_entries["/landing/copy/file.bin"] == b"payload"
 
 
-def test_async_walk_rows_are_frozen_before_requesting_the_next_row() -> None:
+def test_listing_metadata_is_frozen_before_requesting_the_next_listing() -> None:
     source_entries: dict[str, bytes | None] = {
         "/": None,
         "/dataset": None,
@@ -423,7 +386,7 @@ def test_async_walk_rows_are_frozen_before_requesting_the_next_row() -> None:
                 "source": _native_source(
                     source_entries,
                     [],
-                    mutate_yielded_metadata=True,
+                    mutate_returned_metadata=True,
                 ),
                 "destination": _native_source(destination_entries, []),
             }
@@ -435,14 +398,14 @@ def test_async_walk_rows_are_frozen_before_requesting_the_next_row() -> None:
     assert destination_entries["/landing/copy/file.bin"] == b"payload"
 
 
-def test_walk_capacity_precedes_fetching_oversized_child_metadata() -> None:
+def test_listing_capacity_precedes_reading_oversized_listing_entries() -> None:
     source_entries: dict[str, bytes | None] = {"/": None, "/dataset": None}
     destination_entries: dict[str, bytes | None] = {"/": None, "/landing": None}
     destination_events: list[tuple[object, ...]] = []
 
     @asynccontextmanager
     async def source():
-        yield _MalformedOversizedWalkAdapter(source_entries, [])
+        yield _OversizedListingAdapter(source_entries, [])
 
     result = CliRunner().invoke(
         App(
@@ -467,13 +430,14 @@ def test_walk_capacity_precedes_fetching_oversized_child_metadata() -> None:
     ]
 
 
-def test_duplicate_walk_root_precedes_later_iterator_failure() -> None:
+def test_duplicate_listing_entry_precedes_deeper_listing_failure() -> None:
     source_entries: dict[str, bytes | None] = {"/": None, "/dataset": None}
     destination_entries: dict[str, bytes | None] = {"/": None, "/landing": None}
+    source_events: list[tuple[object, ...]] = []
 
     @asynccontextmanager
     async def source():
-        yield _DuplicateThenFailureWalkAdapter(source_entries, [])
+        yield _DuplicateThenFailureListingAdapter(source_entries, source_events)
 
     result = CliRunner().invoke(
         App(
@@ -490,13 +454,17 @@ def test_duplicate_walk_root_precedes_later_iterator_failure() -> None:
         "",
         "cp: source:/dataset: incompatible result\n",
     )
+    # The malformed listing stops the walk before the next depth is listed.
+    assert [event for event in source_events if event[0] == "ls"] == [
+        ("ls", "/dataset", True)
+    ]
 
 
 @pytest.mark.parametrize(
     ("source", "diagnostic"),
     [
         ("read-failure", "permission denied"),
-        ("missing-walk", "unsupported operation"),
+        ("missing-listing", "unsupported operation"),
     ],
 )
 def test_backend_neutral_read_phase_failures_are_stable_and_pre_mutation(
@@ -513,8 +481,8 @@ def test_backend_neutral_read_phase_failures_are_stable_and_pre_mutation(
     source_factory = _native_source(
         source_entries,
         [],
-        walk_failure=PermissionError("denied") if source == "read-failure" else None,
-        missing_walk=source == "missing-walk",
+        ls_failure=PermissionError("denied") if source == "read-failure" else None,
+        missing_ls=source == "missing-listing",
     )
 
     result = CliRunner().invoke(
@@ -575,6 +543,7 @@ def test_recursive_copy_production_has_no_backend_dispatch_or_sync_facades() -> 
     assert not {"protocol", "sync_fs"}.intersection(attributes)
     assert not {
         "info",
+        "ls",
         "walk",
         "mkdir",
         "get_file",

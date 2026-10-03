@@ -15,8 +15,9 @@ not deleted is recoverable while one that deleted without copying is not.
 from __future__ import annotations
 
 import errno
+import functools
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from vosfs import _coordination as coordination
 from vosfs import errors
@@ -86,6 +87,8 @@ async def plan(  # noqa: PLR0913 - one parameter per resolved move policy.
         recursive=recursive,
         maxdepth=maxdepth,
     )
+    # ``_expand_path`` lists every container it walks, so each entry's info is
+    # answered from the directory cache rather than one node GET per entry.
     source_manifest = [
         (
             path,
@@ -160,14 +163,43 @@ async def verify_destinations(
     filesystem: VOSpaceFileSystem,
     move_plan: MovePlan,
 ) -> tuple[list[str], list[str]]:
-    """Return destination paths whose type and file size did or did not verify."""
+    """Return destination paths whose type and file size did or did not verify.
+
+    A moved tree is re-listed fresh (one listing per container, walked
+    concurrently) instead of one metadata request per entry; an entry the
+    listing does not show, or a single moved file, is looked up directly.
+    """
+    filesystem._invalidate(move_plan.destination)
+    listed: dict[str, dict[str, Any]] = {}
+    if any(entry.kind == "directory" for entry in move_plan.entries):
+        try:
+            listed = cast(
+                "dict[str, dict[str, Any]]",
+                await filesystem._find(
+                    move_plan.destination,
+                    withdirs=True,
+                    detail=True,
+                ),
+            )
+        except OSError:
+            listed = {}
+
+    async def observed(entry: MoveEntry) -> dict[str, Any] | None:
+        info = listed.get(entry.destination)
+        if info:
+            return info
+        try:
+            return await filesystem._info(entry.destination)
+        except OSError:
+            return None
+
+    infos = await coordination.run_bounded(
+        [functools.partial(observed, entry) for entry in move_plan.entries],
+        coordination.effective_limit(filesystem.batch_size, len(move_plan.entries)),
+    )
     completed: list[str] = []
     failed: list[str] = []
-    for entry in move_plan.entries:
-        try:
-            copied = await filesystem._info(entry.destination)
-        except OSError:
-            copied = None
+    for entry, copied in zip(move_plan.entries, infos, strict=True):
         type_matches = copied is not None and copied["type"] == entry.kind
         size_matches = type_matches and (
             entry.kind == "directory" or copied["size"] == entry.size
@@ -185,24 +217,47 @@ async def remove_sources(
     *,
     allow_nonempty: bool,
 ) -> None:
-    """Remove verified moved entries leaves-first, retaining bounded descendants."""
+    """Remove verified moved entries leaves-first, retaining bounded descendants.
+
+    Entries of one depth are removed concurrently; a depth starts only after
+    every deeper entry is gone. After a failure no further entry starts.
+    """
     completed: list[str] = []
-    for entry in sorted(
-        entries,
-        key=lambda item: item.source.count("/"),
-        reverse=True,
-    ):
-        path = entry.source
+    failed: list[str] = []
+    causes: list[OSError] = []
+    limit = coordination.effective_limit(filesystem.batch_size, len(entries))
+    depths = sorted({entry.source.count("/") for entry in entries}, reverse=True)
+
+    async def remove(path: str) -> None:
+        if failed:
+            return
         try:
             await filesystem._rm_one(path, recursive=False)
         except OSError as exc:
             if allow_nonempty and exc.errno == errno.ENOTEMPTY:
-                continue
+                return
             filesystem._invalidate(path)
-            msg = f"move source deletion failed ({len(completed)} completed, 1 failed)"
+            failed.append(path)
+            causes.append(exc)
+            return
+        completed.append(path)
+
+    for depth in depths:
+        await coordination.run_bounded(
+            [
+                functools.partial(remove, entry.source)
+                for entry in entries
+                if entry.source.count("/") == depth
+            ],
+            limit,
+        )
+        if failed:
+            msg = (
+                f"move source deletion failed ({len(completed)} completed, "
+                f"{len(failed)} failed)"
+            )
             raise errors.VOSpaceError(
                 msg,
                 completed=completed,
-                failed=[path],
-            ) from exc
-        completed.append(path)
+                failed=failed,
+            ) from causes[0]

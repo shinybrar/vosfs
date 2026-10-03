@@ -1,24 +1,23 @@
-"""Walk normalization and Unicode rendering for the central ``tree`` callback."""
+"""Walk validation and Unicode rendering for the central ``tree`` callback."""
 
 from __future__ import annotations
 
-import asyncio
-import inspect
-from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeGuard
 
 from ._command import (
     _collate,
-    _drain_current_operation,
     _Failure,
     _MappedOperand,
     _run_single_operand_text,
 )
 from ._metadata import valid_display_text
 from ._path import _lexical_join, _lexical_root
+from ._walk import _IncompatibleListingError, _walk
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     from fsspec.asyn import AsyncFileSystem
 
     from ._app import AsyncFilesystemSource
@@ -185,48 +184,23 @@ def _render_tree(request: _TreeRequest, rows: Mapping[str, _WalkRow]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _materialize_rows(iterator: Iterator[object]) -> list[object]:
-    return list(iterator)
-
-
-async def _consume_walk(result: object) -> list[object] | None:
-    if isinstance(result, AsyncIterator):
-        values = []
-        while True:
-            has_value, value = await _next_async(result)
-            if not has_value:
-                return values
-            values.append(value)
-    if not inspect.isawaitable(result):
-        return None
-    resolved = await _drain_current_operation(result)
-    if not isinstance(resolved, Iterator):
-        return None
-    return await _drain_current_operation(
-        asyncio.to_thread(_materialize_rows, resolved)
-    )
-
-
-async def _next_async(iterator: AsyncIterator[object]) -> tuple[bool, object]:
+async def _walk_tree(
+    request: _TreeRequest,
+    filesystem: AsyncFileSystem,
+) -> str | _Failure:
     try:
-        return True, await _drain_current_operation(anext(iterator))
-    except StopAsyncIteration:
-        return False, None
-
-
-async def _walk(request: _TreeRequest, filesystem: AsyncFileSystem) -> str | _Failure:
-    try:
-        result = filesystem._walk(
+        listed = await _walk(
+            filesystem,
             request.operand.path,
             maxdepth=1 if request.maxdepth == 0 else request.maxdepth,
-            detail=False,
-            on_error="raise",
         )
-        values = await _consume_walk(result)
-    except Exception as error:  # noqa: BLE001 - invoke/await/iteration boundary.
-        return _Failure(request.operand, backend_error=error)
-    if values is None:
+    except _IncompatibleListingError:
         return _Failure(request.operand)
+    except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
+        return _Failure(request.operand, backend_error=error)
+    values: list[object] = [
+        (row.root, list(row.directories), list(row.files)) for row in listed
+    ]
     rows = _validated_rows(request, values)
     if rows is None:
         return _Failure(request.operand)
@@ -242,5 +216,5 @@ async def _run_tree(
         command,
         request.operand,
         sources,
-        lambda filesystem: _walk(request, filesystem),
+        lambda filesystem: _walk_tree(request, filesystem),
     )

@@ -144,7 +144,8 @@ class VOSpaceSim:
     def _node_op(self, request: httpx.Request) -> httpx.Response:  # noqa: PLR0911
         path = self._node_path(request)
         if request.method == "GET":
-            return self._node_get(path)
+            # Cavern honours ``limit=0`` by omitting a container's children.
+            return self._node_get(path, children=request.url.params.get("limit") != "0")
         if request.method == "PUT":
             self._transition_node(path, wire_type="ContainerNode")
             return httpx.Response(201)
@@ -171,12 +172,14 @@ class VOSpaceSim:
         self.properties.setdefault(path, {}).update(_properties(request.content))
         return httpx.Response(200)
 
-    def _node_get(self, path: str) -> httpx.Response:
+    def _node_get(self, path: str, *, children: bool = True) -> httpx.Response:
         kind = self.nodes.get(path)
         if kind is None:
             return httpx.Response(404)
         if kind == "container":
-            return httpx.Response(200, content=self._container_document(path))
+            return httpx.Response(
+                200, content=self._container_document(path, children=children)
+            )
         return httpx.Response(200, content=self._data_document(path))
 
     def _node_path(self, request: httpx.Request) -> str:
@@ -187,16 +190,16 @@ class VOSpaceSim:
         authority = self.authorities.get(path, AUTHORITY)
         return f"vos://{authority}" if path == "/" else f"vos://{authority}{path}"
 
-    def _container_document(self, path: str) -> bytes:
-        children = "".join(
+    def _container_document(self, path: str, *, children: bool = True) -> bytes:
+        children_xml = "".join(
             self._child_element(child)
-            for child in sorted(self.nodes)
+            for child in (sorted(self.nodes) if children else ())
             if child != path and paths.parent(child) == path
         )
         return (
             f'<vos:node {_NS} xsi:type="vos:ContainerNode" uri="{self._uri(path)}">'
             f"<vos:properties>{self._property_elements(path)}</vos:properties>"
-            f"<vos:nodes>{children}</vos:nodes></vos:node>"
+            f"<vos:nodes>{children_xml}</vos:nodes></vos:node>"
         ).encode()
 
     def _child_element(self, path: str) -> str:

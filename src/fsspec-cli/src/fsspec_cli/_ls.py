@@ -20,6 +20,7 @@ from ._command import (
     _render_output_failure,
     _run_mapped_command,
 )
+from ._concurrent import _gather_bounded
 from ._listing import ListingRow, render_listing, to_listing
 from ._metadata import valid_display_text
 
@@ -150,14 +151,23 @@ async def _trace_operands(
     tuple[_FileResult[_PayloadT] | _DirectoryResult[_PayloadT], ...],
     tuple[_Failure, ...],
 ]:
+    # Operands are independent reads, so they overlap under the shared bound;
+    # results come back in operand order and nothing is written until all are
+    # in, so output and diagnostics are unchanged by completion order.
+    results = await _gather_bounded(
+        [
+            partial(
+                read,
+                operand,
+                filesystems[operand.name],
+                include_almost_all=request.include_almost_all,
+            )
+            for operand in request.operands
+        ]
+    )
     successes: list[_FileResult[_PayloadT] | _DirectoryResult[_PayloadT]] = []
     failures = []
-    for operand in request.operands:
-        result = await read(
-            operand,
-            filesystems[operand.name],
-            include_almost_all=request.include_almost_all,
-        )
+    for result in results:
         if isinstance(result, _Failure):
             failures.append(result)
         else:

@@ -207,7 +207,7 @@ def mock_transfers(
     """
     mock_capabilities(router)
 
-    router.get(url__regex=rf"^{re.escape(NODES_URL)}(?:/.*)?$").mock(
+    router.get(url__regex=rf"^{re.escape(NODES_URL)}(?:/[^?]*)?(?:\?.*)?$").mock(
         side_effect=lambda request: data_node_response(request, files)
     )
 

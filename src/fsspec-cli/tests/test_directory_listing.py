@@ -361,7 +361,7 @@ def test_ls_preserves_directory_listing_control_flow_unchanged(
     assert traceback is not None
 
 
-def test_ls_drains_current_operation_then_stops_on_cancellation(
+def test_ls_drains_started_operations_then_stops_on_cancellation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[tuple[object, ...]] = []
@@ -405,13 +405,18 @@ def test_ls_drains_current_operation_then_stops_on_cancellation(
             sources={"alpha": alpha, "beta": beta},
         )
 
-    assert [event[0] for event in events] == [
-        "factory",
-        "enter",
-        "factory",
-        "enter",
-        "info-start",
-        "info-done",
-        "exit",
-        "exit",
+    # Operand reads overlap, so both are in flight when cancellation arrives;
+    # each started read is still drained before the sources exit.
+    hooks = {"info-start", "info-done"}
+    assert [event[:2] if event[0] in hooks else event[:1] for event in events] == [
+        ("factory",),
+        ("enter",),
+        ("factory",),
+        ("enter",),
+        ("info-start", "/one"),
+        ("info-start", "/two"),
+        ("info-done", "/one"),
+        ("info-done", "/two"),
+        ("exit",),
+        ("exit",),
     ]

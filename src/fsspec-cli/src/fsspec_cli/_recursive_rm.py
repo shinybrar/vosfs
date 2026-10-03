@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, cast
 
 from ._command import (
@@ -11,6 +12,7 @@ from ._command import (
     _call,
     _render_operand_diagnostic,
 )
+from ._concurrent import _gather_bounded, _outcome_value, _run_bounded
 from ._metadata import snapshot_mapping
 from ._path import (
     _has_dot_segment,
@@ -113,46 +115,74 @@ def _listed_entry(parent: str, root: str, value: object) -> _ManifestEntry:
     return _ManifestEntry(name, kind)
 
 
+def _frozen_listing(
+    directory: str,
+    root: str,
+    result: object,
+    seen: set[str],
+) -> list[_ManifestEntry]:
+    """Validate one directory's ``_ls(detail=True)`` result into child entries."""
+    if not isinstance(result, list):
+        raise _IncompatibleManifestError
+    frozen: list[_ManifestEntry] = []
+    expected_length = len(result)
+    try:
+        for value in result:
+            entry = _listed_entry(directory, root, value)
+            if entry.path in seen:
+                raise _IncompatibleManifestError  # noqa: TRY301
+            seen.add(entry.path)
+            frozen.append(entry)
+    except (_IncompatibleManifestError, _UnsupportedEntryError):
+        raise
+    except Exception as error:
+        raise _IncompatibleManifestError from error
+    if len(result) != expected_length or len(frozen) != expected_length:
+        raise _IncompatibleManifestError
+    return frozen
+
+
 async def _manifest(
     filesystem: AsyncFileSystem,
     root: str,
     root_info: object,
 ) -> _Manifest:
+    """List the tree breadth-first, then freeze it in leaves-first order.
+
+    Every directory of one depth is listed concurrently under the shared
+    bound; a listing failure at any depth fails the plan. Entries are emitted
+    depth-first in path order with each directory after its children.
+    """
     root_entry = _root_entry(root, root_info)
     seen = {root}
+    children: dict[str, list[_ManifestEntry]] = {}
+    level = [root_entry]
+    while level:
+        listings = await _gather_bounded(
+            [
+                partial(_call, filesystem, "_ls", directory.path, detail=True)
+                for directory in level
+            ]
+        )
+        next_level: list[_ManifestEntry] = []
+        for directory, result in zip(level, listings, strict=True):
+            frozen = _frozen_listing(directory.path, root, result, seen)
+            children[directory.path] = frozen
+            next_level.extend(entry for entry in frozen if entry.kind == "directory")
+        level = next_level
+
     entries: list[_ManifestEntry] = []
     stack = [(root_entry, False)]
-
     while stack:
         candidate, visited = stack.pop()
         if candidate.kind == "file" or visited:
             entries.append(candidate)
             continue
-
-        result = await _call(filesystem, "_ls", candidate.path, detail=True)
-        if not isinstance(result, list):
-            raise _IncompatibleManifestError
-        frozen: list[_ManifestEntry] = []
-        expected_length = len(result)
-        try:
-            for value in result:
-                entry = _listed_entry(candidate.path, root, value)
-                if entry.path in seen:
-                    raise _IncompatibleManifestError  # noqa: TRY301
-                seen.add(entry.path)
-                frozen.append(entry)
-        except (_IncompatibleManifestError, _UnsupportedEntryError):
-            raise
-        except Exception as error:
-            raise _IncompatibleManifestError from error
-        if len(result) != expected_length or len(frozen) != expected_length:
-            raise _IncompatibleManifestError
-
         stack.append((candidate, True))
         stack.extend(
             (entry, False)
             for entry in sorted(
-                frozen,
+                children[candidate.path],
                 key=lambda item: item.path,
                 reverse=True,
             )
@@ -220,42 +250,79 @@ async def _plan(
         return _read_failure(operand, error)
 
 
+async def _remove_entry(
+    operand: _MappedOperand,
+    filesystem: AsyncFileSystem,
+    manifest: _Manifest,
+    entry: _ManifestEntry,
+) -> _RecursiveRmFailure | None:
+    """Remove one entry, then prove its absence."""
+    if not _is_contained(manifest.root, entry.path):
+        return _RecursiveRmFailure(operand, "incompatible result")
+    operation = "_rm_file" if entry.kind == "file" else "_rmdir"
+    try:
+        await _call(filesystem, operation, entry.path)
+    except Exception as error:  # noqa: BLE001 - mutation may be partial.
+        return _RecursiveRmFailure(
+            operand,
+            "recursive removal incomplete; residue possible",
+            backend_error=error,
+        )
+    try:
+        await _call(filesystem, "_info", entry.path)
+    except FileNotFoundError:
+        return None
+    except Exception as error:  # noqa: BLE001 - absence remains uncertain.
+        return _RecursiveRmFailure(
+            operand,
+            "recursive removal incomplete; residue possible",
+            backend_error=error,
+        )
+    return _RecursiveRmFailure(
+        operand,
+        "recursive removal incomplete; residue possible",
+    )
+
+
+def _depth(manifest: _Manifest, entry: _ManifestEntry) -> int:
+    return entry.path[len(manifest.root) :].count("/")
+
+
 async def _mutate(
     operand: _MappedOperand,
     filesystem: AsyncFileSystem,
     manifest: _Manifest,
 ) -> _RecursiveRmFailure | None:
+    """Remove the manifest leaves-first, one depth at a time.
+
+    Every entry of the deepest remaining depth is removed and proven absent
+    concurrently under the shared bound, so a directory is removed only after
+    all of its children are confirmed gone. After the first failure no new
+    removal starts; in-flight ones finish and the first failure in manifest
+    order is reported.
+    """
     try:
         _revalidate_manifest(manifest)
     except _IncompatibleManifestError:
         return _RecursiveRmFailure(operand, "incompatible result")
 
+    levels: dict[int, list[_ManifestEntry]] = {}
     for entry in manifest.entries:
-        if not _is_contained(manifest.root, entry.path):
-            return _RecursiveRmFailure(operand, "incompatible result")
-        operation = "_rm_file" if entry.kind == "file" else "_rmdir"
-        try:
-            await _call(filesystem, operation, entry.path)
-        except Exception as error:  # noqa: BLE001 - mutation may be partial.
-            return _RecursiveRmFailure(
-                operand,
-                "recursive removal incomplete; residue possible",
-                backend_error=error,
-            )
-        try:
-            await _call(filesystem, "_info", entry.path)
-        except FileNotFoundError:
-            continue
-        except Exception as error:  # noqa: BLE001 - absence remains uncertain.
-            return _RecursiveRmFailure(
-                operand,
-                "recursive removal incomplete; residue possible",
-                backend_error=error,
-            )
-        return _RecursiveRmFailure(
-            operand,
-            "recursive removal incomplete; residue possible",
+        levels.setdefault(_depth(manifest, entry), []).append(entry)
+    for depth in sorted(levels, reverse=True):
+        outcomes = await _run_bounded(
+            [
+                partial(_remove_entry, operand, filesystem, manifest, entry)
+                for entry in levels[depth]
+            ],
+            stop=lambda failure: failure is not None,
         )
+        for outcome in outcomes:
+            if outcome is None:
+                continue
+            failure = _outcome_value(outcome)
+            if failure is not None:
+                return failure
     return None
 
 

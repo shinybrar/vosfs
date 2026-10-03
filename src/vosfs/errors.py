@@ -197,6 +197,17 @@ def bounded_text(data: bytes, limit: int = MAX_ERROR_BODY) -> str:
     return data[:limit].decode("utf-8", errors="replace").strip()
 
 
+def loggable_url(url: str) -> str:
+    """Return ``url`` safe for a log record: no query, fragment, or token.
+
+    Query values and fragments are dropped outright rather than pattern-matched,
+    so an unrecognised signed-URL parameter can never reach a log, and the
+    remaining text is passed through :func:`redact` for path-embedded tokens
+    such as OpenCADC's ``preauth:`` segment.
+    """
+    return redact(url.split("#", 1)[0].split("?", 1)[0])
+
+
 def redact(text: str) -> str:
     """Replace credentials, cookies, and URL tokens in ``text``.
 

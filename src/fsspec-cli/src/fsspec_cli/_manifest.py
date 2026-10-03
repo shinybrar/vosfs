@@ -1,7 +1,7 @@
 """Frozen, validated manifests built from a backend directory walk.
 
 Recursive copy plans the whole transfer before it mutates anything, so this
-module turns a backend's ``_walk``/``_ls`` output into an immutable manifest of
+module turns a backend's breadth-first ``_ls`` listings into an immutable manifest of
 entries — or refuses. Per
 :doc:`ADR 0006 <../../../docs/adr/0006-treat-backend-results-as-untrusted-input>`,
 every field of every returned row is validated here: a malformed path or a
@@ -15,14 +15,10 @@ file), and a tree larger than the bound.
 
 from __future__ import annotations
 
-import asyncio
-import inspect
-from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping
-from contextlib import suppress
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias, cast
 
-from ._command import _drain_current_operation
 from ._metadata import snapshot_mapping
 from ._path import (
     _has_dot_segment,
@@ -30,6 +26,7 @@ from ._path import (
     _lexical_relative,
     _same_lexical_path,
 )
+from ._walk import _IncompatibleListingError, _ListedRow, _ListingLimitError, _walk
 
 if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
@@ -74,36 +71,6 @@ class _WalkRow:
     root: str
     entries: tuple[_ManifestEntry, ...]
     directory_paths: tuple[str, ...]
-
-
-def _close_sync_iterator(iterator: Iterator[object]) -> None:
-    close = getattr(iterator, "close", None)
-    if callable(close):
-        close()
-
-
-async def _resolve_sync_iterator(
-    awaitable: Awaitable[object],
-) -> Iterator[object]:
-    resolved: object | None = None
-
-    async def resolve() -> object:
-        nonlocal resolved
-        resolved = await awaitable
-        return resolved
-
-    try:
-        resolved = await _drain_current_operation(resolve())
-    except BaseException:
-        if isinstance(resolved, Iterator):
-            with suppress(BaseException):
-                await _drain_current_operation(
-                    asyncio.to_thread(_close_sync_iterator, resolved)
-                )
-        raise
-    if not isinstance(resolved, Iterator):
-        raise _IncompatibleResultError
-    return resolved
 
 
 def _shared_tokens_match(
@@ -254,74 +221,33 @@ class _ManifestBuilder:
         return tuple(sorted(self.entries.values(), key=lambda item: item.relative))
 
 
-def _materialize_sync(
-    iterator: Iterator[object],
-    root: _ManifestEntry,
-) -> _Manifest:
-    builder = _ManifestBuilder(root)
-    try:
-        for value in iterator:
-            builder.accept(_walk_row(root.path, value, entry_capacity=builder.capacity))
-    except BaseException:
-        with suppress(BaseException):
-            _close_sync_iterator(iterator)
-        raise
-    _close_sync_iterator(iterator)
-    return builder.finish()
-
-
-async def _sync_rows(
-    iterator: Iterator[object],
-    root: _ManifestEntry,
-) -> _Manifest:
-    return await _drain_current_operation(
-        asyncio.to_thread(_materialize_sync, iterator, root)
-    )
-
-
-async def _close_async_iterator(iterator: AsyncIterator[object]) -> None:
-    close = getattr(iterator, "aclose", None)
-    if not callable(close):
-        return
-    result = close()
-    if inspect.isawaitable(result):
-        await _drain_current_operation(result)
-
-
-async def _async_rows(
-    iterator: AsyncIterator[object],
-    root: _ManifestEntry,
-) -> _Manifest:
-    builder = _ManifestBuilder(root)
-    try:
-        while True:
-            try:
-                value = await _drain_current_operation(anext(iterator))
-            except StopAsyncIteration:
-                break
-            builder.accept(_walk_row(root.path, value, entry_capacity=builder.capacity))
-    except BaseException:
-        with suppress(BaseException):
-            await _close_async_iterator(iterator)
-        raise
-    await _close_async_iterator(iterator)
-    return builder.finish()
-
-
 async def _walk_rows(
     filesystem: AsyncFileSystem,
-    requested_path: str,
     root: _ManifestEntry,
 ) -> _Manifest:
-    method = getattr(filesystem, "_walk", None)
-    if not callable(method):
-        raise NotImplementedError
-    result = method(requested_path, detail=True, on_error="raise")
-    if isinstance(result, AsyncIterator):
-        return await _async_rows(result, root)
-    if not inspect.isawaitable(result):
-        raise _IncompatibleResultError
-    return await _sync_rows(await _resolve_sync_iterator(result), root)
+    builder = _ManifestBuilder(root)
+
+    def accept(row: _ListedRow) -> None:
+        builder.accept(
+            _walk_row(
+                root.path,
+                (row.root, row.directories, row.files),
+                entry_capacity=builder.capacity,
+            )
+        )
+
+    try:
+        await _walk(
+            filesystem,
+            root.path,
+            accept=accept,
+            capacity=lambda: builder.capacity,
+        )
+    except _IncompatibleListingError as error:
+        raise _IncompatibleResultError from error
+    except _ListingLimitError as error:
+        raise _EntryLimitError from error
+    return builder.finish()
 
 
 def _relative_path(root: str, path: str) -> str:
@@ -342,4 +268,4 @@ async def _manifest(
     if type(reported_path) is not str or not _same_lexical_path(reported_path, path):
         raise _IncompatibleResultError
     root_entry = _entry("", reported_path, source_info, expected_kind="directory")
-    return await _walk_rows(filesystem, path, root_entry)
+    return await _walk_rows(filesystem, root_entry)

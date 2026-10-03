@@ -113,9 +113,12 @@ for*; the physical transfer follows the backend: `vosfs` may send `Range` and
 keep a `206`, or fall back to a whole-object body when the endpoint answers
 `200`.
 
-Likewise one `_walk` for `tree`, or one `_find`, may perform one listing
-request per reached directory. `du -s` changes the output, not the traversal
-cost.
+Likewise a recursive command performs one listing request per reached
+directory. fsspec's inherited `_walk` awaits those one at a time and forwards
+`on_error` only to the top level, so the CLI walks breadth-first itself: one
+bounded concurrent batch of `_ls(detail=True)` per depth, failing on an
+unreadable directory at any depth. `du -s` changes the output, not the
+traversal cost.
 
 Document the *request the CLI makes*, never the network behavior it cannot
 control.
@@ -131,9 +134,9 @@ Building the plan first means the rejection happens before, not during, the
 mutation. It also makes the entry bound a clean refusal rather than an
 out-of-memory failure halfway through a tree.
 
-## 11. Recursive removal is sequential and non-atomic — say so
+## 11. Recursive removal is non-atomic — say so
 
-`rm -R` can leave earlier confirmed removals in place and the rest present or
+`rm -R` removes leaves-first, concurrently within one depth, and can leave earlier confirmed removals in place and the rest present or
 uncertain if it fails or is cancelled. There is no prompt, rollback, retry,
 trash, or recovery.
 

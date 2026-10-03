@@ -12,6 +12,7 @@ import pytest
 from click.utils import strip_ansi
 from fsspec.asyn import AsyncFileSystem
 
+from ._matrix_support import _memory_source
 from ._support import _invoke
 
 if TYPE_CHECKING:
@@ -145,7 +146,7 @@ def test_byte_count_rejects_the_interpreter_configured_digit_limit(
 
 @pytest.mark.parametrize(
     ("count", "expected_start", "payload"),
-    [("2", 4, b"ef"), ("20", -14, b"abcdef"), ("0", 6, b"")],
+    [("2", 4, b"ef"), ("20", 0, b"abcdef"), ("0", 6, b"")],
 )
 def test_tail_reads_size_then_requests_exact_suffix_range(
     count: str,
@@ -161,6 +162,118 @@ def test_tail_reads_size_then_requests_exact_suffix_range(
         _ReadCall("info", "/blob"),
         _ReadCall("cat_file", "/blob", expected_start, None),
     ]
+
+
+@pytest.mark.parametrize(
+    ("count", "expected"),
+    [("8", b"ABCDEF"), ("6", b"ABCDEF"), ("20", b"ABCDEF"), ("2", b"EF")],
+)
+def test_tail_count_beyond_size_emits_the_whole_memory_object(
+    monkeypatch: pytest.MonkeyPatch,
+    count: str,
+    expected: bytes,
+) -> None:
+    # A negative start is an fsspec suffix offset: 8 of 6 bytes once gave "EF".
+    source = _memory_source(monkeypatch, {"/blob": b"ABCDEF"}, directories=())
+
+    result = _invoke("tail", ["-c", count, "memory:/blob"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout_bytes, result.stderr) == (0, expected, "")
+
+
+@pytest.mark.parametrize("command", ["head", "tail"])
+def test_zero_count_on_a_file_reads_metadata_but_no_bytes(
+    command: Literal["head", "tail"],
+) -> None:
+    source = _ReadSource(info_result={"size": 6, "type": "file"})
+
+    result = _invoke(command, ["-c", "0", "memory:/a"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout_bytes, result.stderr) == (0, b"", "")
+    assert source.calls == [_ReadCall("info", "/a")]
+
+
+@pytest.mark.parametrize("command", ["head", "tail"])
+@pytest.mark.parametrize("kind", ["directory", "other", None, True])
+def test_zero_count_on_a_non_file_keeps_the_backend_read_diagnostic(
+    command: Literal["head", "tail"],
+    kind: object,
+) -> None:
+    source = _ReadSource(
+        info_result={"size": 6, "type": kind},
+        payload=b"",
+        cat_error=IsADirectoryError(),
+    )
+
+    result = _invoke(command, ["-c", "0", "memory:/a"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout_bytes, result.stderr) == (
+        1,
+        b"",
+        f"{command}: memory:/a: is a directory\n",
+    )
+    start = 0 if command == "head" else 6
+    end = 0 if command == "head" else None
+    assert source.calls == [
+        _ReadCall("info", "/a"),
+        _ReadCall("cat_file", "/a", start, end),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("info_result", "info_error", "diagnostic"),
+    [
+        (None, FileNotFoundError(), "not found"),
+        (None, PermissionError(), "permission denied"),
+        (["file"], None, "incompatible result"),
+    ],
+)
+def test_head_zero_count_reports_metadata_failures_without_reading(
+    info_result: object,
+    info_error: Exception | None,
+    diagnostic: str,
+) -> None:
+    source = _ReadSource(info_error=info_error)
+    if info_result is not None:
+        source.info_result = info_result
+
+    result = _invoke("head", ["-c", "0", "memory:/a"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout_bytes, result.stderr) == (
+        1,
+        b"",
+        f"head: memory:/a: {diagnostic}\n",
+    )
+    assert source.calls == [_ReadCall("info", "/a")]
+
+
+@pytest.mark.parametrize("command", ["head", "tail"])
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/blob", (0, b"", "")),
+        ("/missing", (1, b"", "{command}: memory:/missing: not found\n")),
+        ("/dir", (1, b"", "{command}: memory:/dir: not found\n")),
+    ],
+)
+def test_zero_count_on_memory_keeps_existing_operand_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+    command: Literal["head", "tail"],
+    path: str,
+    expected: tuple[int, bytes, str],
+) -> None:
+    # Memory's own read diagnostic for a directory is "not found"; the zero
+    # count must not turn a failing operand into a silent success.
+    source = _memory_source(monkeypatch, {"/blob": b"ABCDEF"}, directories=("/dir",))
+
+    result = _invoke(command, ["-c", "0", f"memory:{path}"], sources={"memory": source})
+
+    status, stdout, stderr = expected
+    assert (result.exit_code, result.stdout_bytes, result.stderr) == (
+        status,
+        stdout,
+        stderr.format(command=command),
+    )
 
 
 @pytest.mark.parametrize(

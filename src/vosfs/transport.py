@@ -42,6 +42,11 @@ def build_timeout(overrides: Mapping[str, float] | None) -> httpx.Timeout:
     )
 
 
+#: Connection limits. httpx keeps only 20 idle connections by default, so a
+#: burst of concurrent transfers reconnects (and repeats TLS handshakes) for
+#: every request beyond 20; keeping as many idle as may be open avoids that.
+POOL_LIMITS = httpx.Limits(max_connections=100, max_keepalive_connections=100)
+
 HTTP_OK = 200
 HTTP_CREATED = 201
 HTTP_NO_CONTENT = 204
@@ -128,6 +133,7 @@ class ClientPool:
             follow_redirects=False,
             trust_env=self._trust_env,
             timeout=self._timeout,
+            limits=POOL_LIMITS,
             auth=None,
         )
 

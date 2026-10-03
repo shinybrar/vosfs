@@ -15,17 +15,20 @@ adapter in :mod:`vosfs.filesystem`.
 
 from __future__ import annotations
 
+import logging
 import re
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlsplit
 
 import httpx
 
+from vosfs import _coordination as coordination
 from vosfs import _integrity, capabilities, errors, negotiate, nodes, staging, transport
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from vosfs.filesystem import VOSpaceFileSystem
     from vosfs.negotiate import NegotiatedEndpoint
@@ -33,6 +36,10 @@ if TYPE_CHECKING:
 
 DEFAULT_CONTENT_TYPE = "application/octet-stream"
 _CONTENT_RANGE = re.compile(r"bytes\s+(\d+)-(\d+)/(\d+|\*)\s*$", re.IGNORECASE)
+#: Ranged GETs issued together for one object once the endpoint has proven 206.
+RANGE_CONCURRENCY = 8
+
+logger = logging.getLogger(__name__)
 
 
 async def negotiate_endpoint(
@@ -69,7 +76,11 @@ async def negotiate_endpoint(
             raise errors.VOSpaceError(msg)
         seen.add(location)
         if negotiate.is_direct_byte_endpoint(location):
-            return negotiate.NegotiatedEndpoint(location, capabilities.ANONYMOUS_METHOD)
+            return _negotiated(
+                path,
+                direction,
+                negotiate.NegotiatedEndpoint(location, capabilities.ANONYMOUS_METHOD),
+            )
         location = negotiate.validate_redirect(
             location,
             base=location,
@@ -85,9 +96,13 @@ async def negotiate_endpoint(
             details, path=path, allowed=(transport.HTTP_OK, transport.HTTP_SEE_OTHER)
         )
         if details.status_code == transport.HTTP_OK:
-            return negotiate.choose_protocol(
-                negotiate.parse_transfer_details(details.content),
-                filesystem._security_method(),
+            return _negotiated(
+                path,
+                direction,
+                negotiate.choose_protocol(
+                    negotiate.parse_transfer_details(details.content),
+                    filesystem._security_method(),
+                ),
             )
         location = negotiate.validate_redirect(
             details.headers.get("location"),
@@ -96,6 +111,20 @@ async def negotiate_endpoint(
         )
     msg = "synchronous-transfer negotiation returned more than five redirects"
     raise errors.VOSpaceError(msg)
+
+
+def _negotiated(
+    path: str, direction: str, endpoint: NegotiatedEndpoint
+) -> NegotiatedEndpoint:
+    """Record the negotiated endpoint at DEBUG without query or token material."""
+    logger.debug(
+        "negotiated %s for %s: endpoint %s, security method %s",
+        direction,
+        path,
+        errors.loggable_url(endpoint.url),
+        endpoint.security_method or "anonymous",
+    )
+    return endpoint
 
 
 def byte_routing(
@@ -180,15 +209,34 @@ async def byte_send(  # noqa: PLR0913 - one parameter per HTTP request element.
 
 
 async def validate_read_target(filesystem: VOSpaceFileSystem, path: str) -> Node:
-    """Reject external LinkNodes before synchronous transfer negotiation."""
-    authority = await filesystem._require_authority()
-    node = filesystem._parse_and_note(await filesystem._get_node_document(path))
+    """Reject external LinkNodes before synchronous transfer negotiation.
+
+    The node is fetched first and without its child listing: parsing it
+    records the VOSpace authority, so a first read needs no separate root GET.
+    """
+    node = filesystem._parse_and_note(
+        await filesystem._get_node_document(path, children=False)
+    )
     if node.node_type == "link":
-        target = urlsplit(cast("str", node.target))
-        if target.scheme != "vos" or target.netloc != authority:
-            msg = "external LinkNode byte reads are unsupported"
-            raise NotImplementedError(msg)
+        await reject_external_link(filesystem, cast("str", node.target))
     return node
+
+
+async def reject_external_link_info(
+    filesystem: VOSpaceFileSystem, info: Mapping[str, Any]
+) -> None:
+    """Apply :func:`reject_external_link` to an fsspec info dict, if a link."""
+    if info.get("islink"):
+        await reject_external_link(filesystem, info.get("target") or "")
+
+
+async def reject_external_link(filesystem: VOSpaceFileSystem, target: str) -> None:
+    """Raise ``NotImplementedError`` unless ``target`` is in this VOSpace."""
+    authority = await filesystem._require_authority()
+    parts = urlsplit(target)
+    if parts.scheme != "vos" or parts.netloc != authority:
+        msg = "external LinkNode byte reads are unsupported"
+        raise NotImplementedError(msg)
 
 
 async def preflight_read_target(filesystem: VOSpaceFileSystem, path: str) -> Node:
@@ -261,6 +309,9 @@ async def read_slice(
     end: int | None = None,
 ) -> bytes:
     """Return one object slice, using ``Range`` when the byte endpoint agrees."""
+    if _is_empty_slice(start, end):
+        await preflight_read_target(filesystem, path)
+        return b""
     range_header = http_range_header(start, end)
     if range_header is None:
         return (await read_whole(filesystem, path))[start:end]
@@ -273,7 +324,14 @@ async def read_grouped_ranges(
     path: str,
     ranges: Sequence[tuple[int, int | None, int | None]],
 ) -> list[tuple[int, bytes]]:
-    """Return indexed slices for one object, ranging while responses are ``206``."""
+    """Return indexed slices for one object, ranging while responses are ``206``.
+
+    The first range is requested alone. Once it returns a validated ``206`` the
+    endpoint has proven Range support, so the remaining ranges are requested
+    concurrently (bounded by :data:`RANGE_CONCURRENCY`) on the same negotiated
+    endpoint. Any ``200``/``204`` falls back to one whole-object read sliced
+    locally for every range of the object.
+    """
     await preflight_read_target(filesystem, path)
     if not ranges:
         return []
@@ -281,9 +339,10 @@ async def read_grouped_ranges(
     async def download(temp_path: str) -> None:
         await filesystem._download_file(path, temp_path, target_validated=True)
 
-    first_range = http_range_header(ranges[0][1], ranges[0][2])
-    if first_range is None:
+    range_headers = [http_range_header(start, end) for _index, start, end in ranges]
+    if any(header is None for header in range_headers):
         return await staging.read_ranges(download, ranges)
+    headers = cast("list[str]", range_headers)
 
     endpoint = await negotiate_endpoint(
         filesystem,
@@ -291,36 +350,68 @@ async def read_grouped_ranges(
         direction=negotiate.DIRECTION_PULL,
         protocol_uri=negotiate.PROTOCOL_HTTPS_GET,
     )
-    values: list[tuple[int, bytes]] = []
-    for index, start, end in ranges:
-        range_header = http_range_header(start, end)
-        if range_header is None:
-            return await staging.read_ranges(download, ranges)
-        headers = {**transport.IDENTITY_ENCODING, "Range": range_header}
-        response = await byte_send(
-            filesystem, endpoint, "GET", headers=headers, stream=True
-        )
+    first = await _ranged_get(filesystem, endpoint, path, headers[0])
+    if isinstance(first, httpx.Response):
         try:
-            status = response.status_code
-            if status == transport.HTTP_PARTIAL_CONTENT:
-                body = await _raw_body(response)
-                _validate_partial(
-                    body, response.headers.get("content-range"), range_header
-                )
-                values.append((index, body))
-                continue
-            if status in (transport.HTTP_OK, transport.HTTP_NO_CONTENT):
-                # Whole-object fallback wins for every range on this object.
-                return await _slice_streamed_object(response, ranges)
-            if status == transport.HTTP_RANGE_NOT_SATISFIABLE and _empty_range(
-                response.headers.get("content-range"), range_header
-            ):
-                values.append((index, b""))
-                continue
-            await _raise_byte_error(response, path)
+            # Whole-object fallback wins for every range on this object.
+            return await _slice_streamed_object(first, ranges)
         finally:
+            await first.aclose()
+
+    async def fetch(range_header: str) -> bytes | None:
+        result = await _ranged_get(filesystem, endpoint, path, range_header)
+        if isinstance(result, httpx.Response):
+            await result.aclose()
+            return None
+        return result
+
+    rest = await coordination.run_bounded(
+        [partial(fetch, header) for header in headers[1:]],
+        RANGE_CONCURRENCY,
+    )
+    if any(body is None for body in rest):
+        logger.debug("byte endpoint stopped honouring Range for %s", path)
+        return await staging.read_ranges(download, ranges)
+    bodies = [first, *cast("list[bytes]", rest)]
+    return [(index, body) for (index, _s, _e), body in zip(ranges, bodies, strict=True)]
+
+
+async def _ranged_get(
+    filesystem: VOSpaceFileSystem,
+    endpoint: NegotiatedEndpoint,
+    path: str,
+    range_header: str,
+) -> bytes | httpx.Response:
+    """Issue one ranged GET: validated bytes, or the open whole-object response."""
+    headers = {**transport.IDENTITY_ENCODING, "Range": range_header}
+    response = await byte_send(
+        filesystem, endpoint, "GET", headers=headers, stream=True
+    )
+    keep_open = False
+    try:
+        status = response.status_code
+        if status == transport.HTTP_PARTIAL_CONTENT:
+            body = await _raw_body(response)
+            _validate_partial(body, response.headers.get("content-range"), range_header)
+            return body
+        if status in (transport.HTTP_OK, transport.HTTP_NO_CONTENT):
+            logger.debug("byte endpoint ignored Range for %s; reading whole", path)
+            keep_open = True
+            return response
+        if status == transport.HTTP_RANGE_NOT_SATISFIABLE and _empty_range(
+            response.headers.get("content-range"), range_header
+        ):
+            return b""
+        await _raise_byte_error(response, path)
+    finally:
+        if not keep_open:
             await response.aclose()
-    return values
+
+
+def _is_empty_slice(start: int | None, end: int | None) -> bool:
+    """Whether non-negative bounds select no bytes regardless of object size."""
+    first = 0 if start is None else start
+    return first >= 0 and end is not None and 0 <= end <= first
 
 
 def _empty_range(content_range: str | None, range_header: str) -> bool:
@@ -412,9 +503,13 @@ async def write_whole(  # noqa: PLR0913 - one parameter per PUT request element.
     *,
     size: int | None,
     content_type: str | None,
-    expected_digest: bytes | None,
+    expected_digest: bytes | Callable[[], bytes] | None,
 ) -> None:
-    """Perform one negotiated whole PUT, validating status and integrity."""
+    """Perform one negotiated whole PUT, validating status and integrity.
+
+    ``expected_digest`` may be a callable resolved only after the PUT returns,
+    so a digest accumulated while the body streams is compared once complete.
+    """
     endpoint = await negotiate_endpoint(
         filesystem,
         path,
@@ -442,7 +537,12 @@ async def write_whole(  # noqa: PLR0913 - one parameter per PUT request element.
                 f"target may have been truncated. {detail}"
             )
             raise errors.VOSpaceError(msg, status=response.status_code)
-        _integrity.verify_returned_digest(response, expected_digest, path)
+        expected = (
+            expected_digest
+            if expected_digest is None or isinstance(expected_digest, bytes)
+            else expected_digest()
+        )
+        _integrity.verify_returned_digest(response, expected, path)
     finally:
         # Once PUT dispatch begins, success, failure, and cancellation can all
         # leave remote state changed. Never promise rollback; evict stale views.

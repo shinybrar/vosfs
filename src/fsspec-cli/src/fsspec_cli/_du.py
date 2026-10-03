@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ._command import (
     _collate,
-    _drain_current_operation,
     _Failure,
     _MappedOperand,
     _run_single_operand_text,
@@ -16,8 +14,11 @@ from ._command import (
 )
 from ._listing import format_size
 from ._metadata import valid_display_text
+from ._walk import _IncompatibleListingError, _ListedRow, _walk
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from fsspec.asyn import AsyncFileSystem
 
     from ._app import AsyncFilesystemSource
@@ -30,35 +31,38 @@ class _DuRequest:
     operand: _MappedOperand
 
 
-def _render_result(request: _DuRequest, result: object) -> str | _Failure:
-    operand = request.operand
-    if request.summarize:
-        if not _valid_size(result):
-            return _Failure(operand)
-        size = format_size(result, human_readable=request.human_readable)
-        return f"{size}\t{operand.path}\n"
+def _file_sizes(rows: list[_ListedRow]) -> dict[str, int] | None:
+    """Collect each listed file's size by reported name, or ``None`` if invalid.
 
-    if not isinstance(result, Mapping):
-        return _Failure(operand)
-
+    Like fsspec's ``_du``, every non-directory entry counts and a name listed
+    twice counts once.
+    """
+    sizes: dict[str, int] = {}
     try:
-        entries: list[tuple[str, int]] = []
-        for path, size in result.items():
-            if (
-                type(path) is not str
-                or not valid_display_text(path)
-                or not _valid_size(size)
-            ):
-                return _Failure(operand)
-            entries.append((path, size))
-
-        entries.sort(key=lambda entry: _collate(entry[0]))
-        return "".join(
-            f"{format_size(size, human_readable=request.human_readable)}\t{path}\n"
-            for path, size in entries
-        )
+        for row in rows:
+            for info in row.files.values():
+                path = info.get("name")
+                size = info.get("size")
+                if (
+                    type(path) is not str
+                    or not valid_display_text(path)
+                    or not _valid_size(size)
+                ):
+                    return None
+                sizes[path] = size
     except Exception:  # noqa: BLE001 - fail closed on hostile mapping behavior.
-        return _Failure(operand)
+        return None
+    return sizes
+
+
+def _render_sizes(request: _DuRequest, sizes: Mapping[str, int]) -> str:
+    if request.summarize:
+        size = format_size(sum(sizes.values()), human_readable=request.human_readable)
+        return f"{size}\t{request.operand.path}\n"
+    return "".join(
+        f"{format_size(size, human_readable=request.human_readable)}\t{path}\n"
+        for path, size in sorted(sizes.items(), key=lambda entry: _collate(entry[0]))
+    )
 
 
 async def _measure(
@@ -66,15 +70,15 @@ async def _measure(
     filesystem: AsyncFileSystem,
 ) -> str | _Failure:
     try:
-        result = await _drain_current_operation(
-            filesystem._du(
-                request.operand.path,
-                total=request.summarize,
-            )
-        )
+        rows = await _walk(filesystem, request.operand.path)
+    except _IncompatibleListingError:
+        return _Failure(request.operand)
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _Failure(request.operand, backend_error=error)
-    return _render_result(request, result)
+    sizes = _file_sizes(rows)
+    if sizes is None:
+        return _Failure(request.operand)
+    return _render_sizes(request, sizes)
 
 
 async def _run_du(

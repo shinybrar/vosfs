@@ -1239,13 +1239,14 @@ def _exercise_stat_locked_profile(
         "stat",
         [f"{source_name}:{file_path}", f"{source_name}:{directory_path}"],
     )
+    # Operands are read concurrently, so results are paired by reported name
+    # rather than by completion order.
     recorded: dict[str, object] = {}
-    info_index = info_before
-    for call in source.calls[calls_before:]:
-        if call.operation != "info":
-            continue
-        recorded[call.path] = source.info_results[info_index][1]
-        info_index += 1
+    for _source_id, info in source.info_results[info_before:]:
+        assert isinstance(info, Mapping)
+        for path in (file_path, directory_path):
+            if Path(str(info["name"])) == Path(path):
+                recorded[path] = info
 
     assert result.exit_code == 0
     assert result.stderr == ""

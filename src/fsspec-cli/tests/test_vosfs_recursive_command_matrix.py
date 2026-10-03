@@ -228,8 +228,11 @@ def test_native_vosfs_recursive_rm_reports_concurrent_disappearance() -> None:
         "",
         "rm: vos:/docs: recursive removal incomplete; residue possible\n",
     )
+    # Leaves-first by depth: the deeper file is removed before the vanished
+    # sibling directory fails; the root is never removed.
     assert "/docs/empty" not in transports[0].nodes
-    assert "/docs/nested/a.txt" in transports[0].nodes
+    assert "/docs/nested/a.txt" not in transports[0].nodes
+    assert "/docs" in transports[0].nodes
     assert transports[0].closed
 
 
@@ -253,7 +256,8 @@ def test_native_vosfs_recursive_rm_reports_partial_delete_success() -> None:
         "",
         "rm: vos:/docs: recursive removal incomplete; residue possible\n",
     )
-    assert "/docs/empty" not in transports[0].nodes
+    # The deepest level fails first, so no shallower entry is removed.
+    assert "/docs/empty" in transports[0].nodes
     assert "/docs/nested/a.txt" in transports[0].nodes
     assert transports[0].closed
 
@@ -299,8 +303,10 @@ def test_native_vosfs_recursive_rm_drains_cancelled_delete() -> None:
         )
 
     assert transports[0].events == ["delete-drained", "closed"]
+    # The cancelled delete was drained after the deeper level was removed.
     assert "/docs/empty" not in transports[0].nodes
-    assert "/docs/nested/a.txt" in transports[0].nodes
+    assert "/docs/nested/a.txt" not in transports[0].nodes
+    assert "/docs" in transports[0].nodes
 
 
 def test_native_vosfs_recursive_cp_profile_uses_only_mocked_transport() -> None:

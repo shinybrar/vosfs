@@ -15,18 +15,18 @@ the gate wins.
 | --- | --- | --- |
 | `ls` | `ls [-A] [--] name:/path...` | `_info`, `_ls` |
 | `ls -l` | `ls [-Alh] [--] name:/path...` | `_info`, `_ls(detail=True)` |
-| `du` | `du [-sh] [--] name:/path` | `_du` |
-| `find` | `find [--maxdepth N] [--type f\|d] [--] name:/path` | `_find` |
-| `tree` | `tree [--maxdepth N] [--] name:/path` | `_walk` |
+| `du` | `du [-sh] [--] name:/path` | `_ls(detail=True)` |
+| `find` | `find [--maxdepth N] [--type f\|d] [--] name:/path` | `_ls(detail=True)`; `--type d` also `_info` |
+| `tree` | `tree [--maxdepth N] [--] name:/path` | `_ls(detail=True)` |
 | `size` | `size [--] name:/path...` | `_size` or `_sizes` |
 | `test` | `test -e\|-d\|-f [--] name:/path` | `_exists` / `_isdir` / `_isfile` |
 | `info` | `info [--] name:/path` | `_info` |
 | `stat` | `stat [--] name:/path...` | `_info` |
-| `head` | `head -c N [--] name:/path` | `_cat_file` |
+| `head` | `head -c N [--] name:/path` | `_cat_file`; `-c 0` uses `_info` |
 | `tail` | `tail -c N [--] name:/path` | `_info`, `_cat_file` |
 | `cat` | `cat [--] name:/path\|-...` | `_info`, `_get_file` |
 | `cp` | `cp [--] SOURCE... DESTINATION` | `_info`, `_cp_file` or `_get_file`+`_put_file` |
-| `cp -R` | `cp -R\|-r [--] name:/dir name:/target` | `_info`, `_walk`, transfer hooks |
+| `cp -R` | `cp -R\|-r [--] name:/dir name:/target` | `_info`, `_ls(detail=True)`, transfer hooks |
 | `mv` | `mv [--] name:/path... name:/path` | `_info`, `_mv` |
 | `mkdir` | `mkdir [-p] [--] name:/path...` | `_mkdir` or `_makedirs`, `_info` |
 | `rmdir` | `rmdir [--] name:/path...` | `_info`, `_rmdir` |
@@ -85,20 +85,33 @@ underlying timestamp or substitutes creation time.
 
 ### `du`
 
-Recursive exact-byte usage from one `_du` call. `-s` passes `total=True` and
-renders one record for the operand path as spelled; without `-s`, the returned
-mapping is rendered as `<size>\t<path>` per entry, collated. `-h` renders sizes
-through the shared 1024-base helper and changes no other field.
+Recursive exact-byte usage summed from the shared concurrent walk (see
+below): each non-directory entry contributes its listed `size`, which must be
+an exact non-negative integer. `-s` renders one record for the operand path as
+spelled; without `-s`, the per-entry sizes are rendered as `<size>\t<path>`,
+collated. `-h` renders sizes through the shared 1024-base helper and changes no
+other field.
 
-`du` is recursive on the default async hook: it can traverse the whole subtree
-and read metadata for every file. `-s` changes the output, not the traversal
-cost.
+`du` costs one listing per directory and no per-file metadata request. `-s`
+changes the output, not the traversal cost. A missing operand reports
+`not found`.
+
+**Shared walk.** `du`, `find`, `tree`, and the `cp -R` manifest list the tree
+breadth-first with `_ls(detail=True)`, issuing the listings of one depth
+together under a bound of 16. A listing failure at *any* depth fails the
+command; fsspec's inherited `_walk` forwards `on_error` only to the top level
+and would report an unreadable subdirectory as empty. Entries must be exact
+mappings with string `name` and `type`, lexical children of the listed
+directory, unique, and free of `.`/`..` segments. Backends' own `_find` and
+`_du` are deliberately not used, trading any backend-specific optimization for
+one consistent, fail-closed traversal.
 
 ### `find`
 
-Recursive paths, one per line, collated. `--type f` (default) awaits `_find`;
-`--type d` awaits `_find(withdirs=True, detail=True)` and selects entries whose
-`type` is `directory`. `--maxdepth 0` is implemented as `maxdepth=1` plus a
+Recursive paths, one per line, collated, from the shared walk. `--type f`
+(default) selects non-directory entries; `--type d` selects entries whose
+`type` is `directory` and adds the operand itself when one `_info` reports it
+as a directory. `--maxdepth 0` is implemented as `maxdepth=1` plus a
 post-filter to the operand itself.
 
 Each returned spelling is rendered exactly. The command adds no source name and
@@ -107,12 +120,10 @@ globbing, or `-exec`.
 
 ### `tree`
 
-One buffered Unicode hierarchy rendered from `_walk`. `--maxdepth N` bounds
-recursion. fsspec's own `tree()` returns a synchronous string, so this command
-renders from `_walk` instead.
-
-One top-level `_walk` invocation is not one remote request: remote sources may
-perform one listing request per reached directory.
+One buffered Unicode hierarchy rendered from the shared walk. `--maxdepth N`
+bounds recursion. fsspec's own `tree()` returns a synchronous string, so this
+command renders from listings instead. The walk performs one listing request
+per reached directory.
 
 ## Metadata
 
@@ -184,15 +195,17 @@ any of them yields `incompatible result`. `info` is the backend-neutral view;
 ### `head` / `tail`
 
 `head -c N` awaits one `_cat_file(path, 0, N)`. `tail -c N` awaits `_info` for
-the size, then one bounded `_cat_file(path, size - N)`.
+the size, then one bounded `_cat_file(path, max(0, size - N))`; the clamp keeps
+a count larger than the object from becoming a negative (suffix) offset.
+`head -c 0` and `tail -c 0` read no content when `_info` reports a file.
 
 The result MUST be exact `bytes` no longer than `N`. Byte arrays, memory views,
 and text are incompatible. Compatible bytes are written unchanged to binary
 stdout with no newline, encoding, or text conversion.
 
 A bounded `_cat_file` request is **not** a promise of a ranged physical
-transfer. Backends may read a whole object and slice locally — `vosfs` does,
-because OpenCADC Cavern serves no HTTP Range.
+transfer. Backends may read a whole object and slice locally — `vosfs` does
+when the byte endpoint answers `200` (OpenCADC Cavern serves no HTTP Range).
 
 ### `cat`
 
@@ -260,7 +273,7 @@ Verified two-operand directory copy, available only when
 `capabilities.recursion.copy` is enabled (default on).
 
 Builds a **frozen manifest** of the source tree, bounded at **10,000 entries**,
-before any mutation. Preserves empty directories. Rejects links and special
+before any mutation, through the shared walk. Preserves empty directories. Rejects links and special
 entries *before* mutating. Verifies the source manifest and destination
 metadata before reporting success. Supports same-source and cross-source
 routes through one backend-neutral runner over required async hooks.
@@ -360,8 +373,11 @@ rejects roots, dot segments, links, special entries, and containment failures,
 then removes leaves-first through `_rm_file` and `_rmdir`. Success requires an
 absence check after every primitive plus a final root-absence proof.
 
-Recursive removal is **sequential and non-atomic**: failure or cancellation can
-leave earlier confirmed removals in place and the rest present or uncertain.
+Recursive removal is **leaves-first and non-atomic**. Entries of one depth are
+removed concurrently (bound 16), deepest depth first, so a directory is
+removed only after every child is confirmed absent; after the first failure,
+in manifest order, nothing new starts. Failure or cancellation can leave
+earlier confirmed removals in place and the rest present or uncertain.
 There is no prompt, rollback, retry, trash, or recovery. A root operand and any
 dot segment are rejected as `rejected path`.
 

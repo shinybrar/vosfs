@@ -226,6 +226,8 @@ def test_ls_cleans_up_then_propagates_info_control_flow_unchanged(
         "enter",
         "factory",
         "enter",
+        # Both operands' reads start concurrently; beta's is drained too.
+        "info",
         "info",
         "exit",
         "exit",

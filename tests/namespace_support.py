@@ -21,7 +21,7 @@ def _install_percent_mutation_routes(
     data_nodes = data_nodes or set(files)
 
     def node_op(request: httpx.Request) -> httpx.Response:
-        encoded = str(request.url).split(NODES_URL, 1)[1]
+        encoded = str(request.url).split(NODES_URL, 1)[1].split("?", 1)[0]
         internal = unquote(encoded)
         if request.method == "GET":
             document = listings.get(internal)

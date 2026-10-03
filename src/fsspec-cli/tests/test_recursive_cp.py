@@ -17,7 +17,7 @@ from fsspec_cli import App
 from typer.testing import CliRunner
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable
+    from collections.abc import Callable
 
 
 class _TreeFileSystem(AsyncFileSystem):
@@ -55,35 +55,29 @@ class _TreeFileSystem(AsyncFileSystem):
         self.calls.append(("info", path))
         return self._metadata(path)
 
-    async def _walk(
+    def _children(self, path: str) -> list[dict[str, object]]:
+        prefix = path.rstrip("/")
+        return [
+            self._metadata(candidate)
+            for candidate in sorted(self.entries)
+            if candidate != path
+            and candidate.startswith(f"{prefix}/")
+            and "/" not in candidate[len(prefix) + 1 :]
+        ]
+
+    async def _ls(
         self,
         path: str,
-        *,
-        detail: bool,
-        on_error: str,
+        detail: bool = True,  # noqa: FBT002 - fsspec hook signature.
         **kwargs: object,
-    ) -> AsyncIterator[object]:
-        del kwargs
-        self.calls.append(("walk", path, detail, on_error))
-        pending = [path]
-        while pending:
-            root = pending.pop(0)
-            prefix = f"{root.rstrip('/')}"
-            directories: dict[str, object] = {}
-            files: dict[str, object] = {}
-            for candidate in sorted(self.entries):
-                if candidate == root or not candidate.startswith(f"{prefix}/"):
-                    continue
-                relative = candidate[len(prefix) + 1 :]
-                if "/" in relative:
-                    continue
-                metadata = self._metadata(candidate)
-                if metadata["type"] == "directory":
-                    directories[relative] = metadata
-                    pending.append(candidate)
-                else:
-                    files[relative] = metadata
-            yield root, directories, files
+    ) -> list[dict[str, object]]:
+        del detail, kwargs
+        self.calls.append(("ls", path))
+        if path not in self.entries:
+            raise FileNotFoundError(path)
+        if self.entries[path] is not None:
+            return [self._metadata(path)]
+        return self._children(path)
 
     async def _mkdir(
         self,
@@ -143,7 +137,7 @@ def _invoke(
     return CliRunner().invoke(App(sources).typer_app, ["cp", *arguments])  # type: ignore[arg-type]
 
 
-def test_recursive_copy_does_not_omit_entries_hidden_by_items() -> None:
+def test_recursive_copy_does_not_omit_fields_hidden_by_items() -> None:
     class HiddenItems(dict):
         def items(self):
             return []
@@ -151,22 +145,14 @@ def test_recursive_copy_does_not_omit_entries_hidden_by_items() -> None:
     entries = {"/": None, "/docs": None, "/docs/important": b"payload", "/out": None}
 
     def configure(filesystem):
-        async def walk(_self, path, **_kwargs):
-            yield (
-                path,
-                {},
-                HiddenItems(
-                    {
-                        "important": {
-                            "name": "/docs/important",
-                            "type": "file",
-                            "size": 7,
-                        }
-                    }
-                ),
-            )
+        original = filesystem._ls
 
-        filesystem._walk = MethodType(walk, filesystem)
+        async def ls(_self, path, *args, **kwargs):
+            if path != "/docs":
+                return await original(path, *args, **kwargs)
+            return [HiddenItems({"name": "/docs/important", "type": "file", "size": 7})]
+
+        filesystem._ls = MethodType(ls, filesystem)
 
     source = _source(entries, [], configure=configure)
     result = _invoke(["-R", "memory:/docs", "memory:/out/copy"], {"memory": source})
@@ -325,27 +311,31 @@ def test_comparison_cleanup_cannot_replace_cancellation(monkeypatch) -> None:
         )
 
 
-def test_recursive_copy_rejects_oversized_lazy_mapping_without_fetching_metadata() -> (
-    None
-):
+def test_recursive_copy_rejects_oversized_listing_without_reading_entries() -> None:
     fetched = []
 
-    class Children(Mapping):
+    class Info(Mapping):
+        def __init__(self, index):
+            self.index = index
+
         def __len__(self):
-            return 20_000
+            fetched.append(self.index)
+            return 3
 
         def __iter__(self):
-            return (f"f{index}" for index in range(20_000))
+            fetched.append(self.index)
+            return iter(("name", "type", "size"))
 
         def __getitem__(self, name):
-            fetched.append(name)
-            return {"name": f"/docs/{name}", "type": "file", "size": 1}
+            fetched.append(self.index)
+            return {"name": f"/docs/f{self.index}", "type": "file", "size": 1}[name]
 
     def configure(filesystem):
-        async def walk(_self, path, **_kwargs):
-            yield path, {}, Children()
+        async def ls(_self, path, *_args, **_kwargs):
+            del path
+            return [Info(index) for index in range(20_000)]
 
-        filesystem._walk = MethodType(walk, filesystem)
+        filesystem._ls = MethodType(ls, filesystem)
 
     entries = {"/": None, "/docs": None, "/out": None}
     result = _invoke(
@@ -470,11 +460,24 @@ def test_recursive_cp_copies_nested_and_empty_directories_through_host_staging()
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     assert entries["/target/docs/empty"] is None
     assert entries["/target/docs/nested/notes.txt"] == b"notes"
-    assert [call[0] for call in calls].count("walk") == 2
-    assert [call for call in calls if call[0] in {"mkdir", "get_file", "put_file"}] == [
-        ("mkdir", "/target/docs", False),
+    # One breadth-first listing per directory, for the manifest and again for
+    # source revalidation.
+    assert sorted(call for call in calls if call[0] == "ls") == [
+        ("ls", "/docs"),
+        ("ls", "/docs"),
+        ("ls", "/docs/empty"),
+        ("ls", "/docs/empty"),
+        ("ls", "/docs/nested"),
+        ("ls", "/docs/nested"),
+    ]
+    mutations = [call for call in calls if call[0] in {"mkdir", "get_file", "put_file"}]
+    # The root is created first; siblings at one depth are issued together.
+    assert mutations[0] == ("mkdir", "/target/docs", False)
+    assert sorted(mutations[1:3]) == [
         ("mkdir", "/target/docs/empty", False),
         ("mkdir", "/target/docs/nested", False),
+    ]
+    assert mutations[3:] == [
         ("get_file", "/docs/nested/notes.txt"),
         ("put_file", "/target/docs/nested/notes.txt", "overwrite"),
     ]
@@ -586,7 +589,7 @@ def test_recursive_cp_rejects_missing_file_or_link_resolved_parent(
         "",
         f"cp: destination:/parent/copy: {diagnostic}\n",
     )
-    assert not [call for call in calls if call[0] in {"walk", "mkdir", "put_file"}]
+    assert not [call for call in calls if call[0] in {"ls", "mkdir", "put_file"}]
 
 
 @pytest.mark.parametrize(
@@ -635,7 +638,7 @@ def test_recursive_cp_rejects_existing_resolved_root_file_or_link(
         "",
         f"cp: destination:/out/copy: {diagnostic}\n",
     )
-    assert not [call for call in calls if call[0] in {"walk", "mkdir", "put_file"}]
+    assert not [call for call in calls if call[0] in {"ls", "mkdir", "put_file"}]
 
 
 def test_recursive_cp_merges_existing_tree_and_replaces_files() -> None:
@@ -663,7 +666,7 @@ def test_recursive_cp_merges_existing_tree_and_replaces_files() -> None:
     assert entries["/target/docs/empty"] is None
     assert ("info", "/docs/") in calls
     assert ("info", "/target//") in calls
-    assert ("walk", "/docs/", True, "raise") in calls
+    assert ("ls", "/docs/") in calls
 
 
 @pytest.mark.parametrize(
@@ -807,19 +810,20 @@ def test_recursive_cp_detects_source_mutation_before_transfer() -> None:
     destination_calls: list[tuple[object, ...]] = []
 
     def configure(filesystem: _TreeFileSystem) -> None:
-        original = filesystem._info
+        original = filesystem._mkdir
 
-        async def info(
+        async def mkdir(
             self: _TreeFileSystem,
             path: str,
+            create_parents: bool = True,  # noqa: FBT002 - fsspec hook signature.
             **kwargs: object,
-        ) -> dict[str, object]:
+        ) -> None:
             del self
-            if path == "/out/copy/file":
+            await original(path, create_parents, **kwargs)
+            if path == "/out/copy":
                 source_entries["/docs/file"] = b"changed"
-            return await original(path, **kwargs)
 
-        filesystem._info = MethodType(info, filesystem)  # type: ignore[method-assign]
+        filesystem._mkdir = MethodType(mkdir, filesystem)  # type: ignore[method-assign]
 
     result = _invoke(
         ["-R", "source:/docs", "destination:/out/copy"],
@@ -982,26 +986,25 @@ def test_recursive_cp_enforces_exact_manifest_entry_limit(
         entries[f"/source/d{index:05d}"] = None
     calls: list[tuple[object, ...]] = []
 
+    children = [
+        {"name": path, "type": "directory", "size": 0}
+        for path in sorted(entries)
+        if path.startswith("/source/")
+    ]
+
     def configure(filesystem: _TreeFileSystem) -> None:
-        async def walk(
+        async def ls(
             self: _TreeFileSystem,
             path: str,
-            *,
-            detail: bool,
-            on_error: str,
+            detail: bool = True,  # noqa: FBT002 - fsspec hook signature.
             **kwargs: object,
-        ) -> AsyncIterator[object]:
-            del detail, on_error, kwargs
-            directories = {
-                child.rsplit("/", 1)[-1]: self._metadata(child)
-                for child in sorted(self.entries)
-                if child.startswith(f"{path}/") and "/" not in child[len(path) + 1 :]
-            }
-            yield path, directories, {}
-            for name in directories:
-                yield f"{path}/{name}", {}, {}
+        ) -> list[dict[str, object]]:
+            del detail, kwargs
+            self.calls.append(("ls", path))
+            # Avoid rescanning every entry for each of the leaf directories.
+            return [dict(child) for child in children] if path == "/source" else []
 
-        filesystem._walk = MethodType(walk, filesystem)  # type: ignore[method-assign]
+        filesystem._ls = MethodType(ls, filesystem)  # type: ignore[method-assign]
 
     result = _invoke(
         ["-R", "memory:/source", "memory:/out/copy"],
@@ -1012,6 +1015,8 @@ def test_recursive_cp_enforces_exact_manifest_entry_limit(
     assert result.stdout == ""
     if entry_count == 10_001:
         assert not [call for call in calls if call[0] in {"mkdir", "put_file"}]
+        # The oversized root listing is refused before any child is listed.
+        assert [call for call in calls if call[0] == "ls"] == [("ls", "/source")]
 
 
 def test_recursive_cp_rejects_shared_token_mismatch_during_final_proof() -> None:
@@ -1103,3 +1108,145 @@ def test_recursive_cp_orders_transfer_and_staging_cleanup_failures(
     )
     assert len(temporary_paths) == 1
     real_unlink(Path(temporary_paths[0]), missing_ok=True)
+
+
+def test_recursive_cp_skips_entry_preflight_when_destination_root_is_missing() -> None:
+    source_entries: dict[str, bytes | None] = {
+        "/": None,
+        "/docs": None,
+        "/docs/nested": None,
+        "/docs/nested/notes.txt": b"notes",
+        "/docs/top.txt": b"top",
+    }
+    destination_entries: dict[str, bytes | None] = {"/": None, "/out": None}
+    destination_calls: list[tuple[object, ...]] = []
+
+    result = _invoke(
+        ["-R", "source:/docs", "destination:/out/copy"],
+        {
+            "source": _source(source_entries, []),
+            "destination": _source(destination_entries, destination_calls),
+        },
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    first_mutation = next(
+        index for index, call in enumerate(destination_calls) if call[0] == "mkdir"
+    )
+    # Only target resolution reads metadata before mutation: nothing under the
+    # missing root can exist, so no per-entry preflight is issued.
+    assert destination_calls[:first_mutation] == [
+        ("info", "/out/copy"),
+        ("info", "/out"),
+    ]
+    # Each entry is read exactly once, by the final destination proof.
+    assert sorted(
+        call[1]
+        for call in destination_calls
+        if call[0] == "info" and str(call[1]).startswith("/out/copy")
+    ) == [
+        "/out/copy",
+        "/out/copy",
+        "/out/copy/nested",
+        "/out/copy/nested/notes.txt",
+        "/out/copy/top.txt",
+    ]
+
+
+def test_recursive_cp_overlaps_transfers_within_the_concurrency_bound() -> None:
+    source_entries: dict[str, bytes | None] = {"/": None, "/docs": None}
+    for index in range(20):
+        source_entries[f"/docs/f{index:02d}"] = f"payload-{index:02d}".encode()
+    destination_entries: dict[str, bytes | None] = {"/": None, "/out": None}
+    in_flight = 0
+    peak = 0
+
+    def configure(filesystem: _TreeFileSystem) -> None:
+        original = filesystem._get_file
+
+        async def get_file(
+            self: _TreeFileSystem,
+            remote: str,
+            local: str,
+            **kwargs: object,
+        ) -> None:
+            nonlocal in_flight, peak
+            del self
+            in_flight += 1
+            peak = max(peak, in_flight)
+            for _ in range(5):
+                await asyncio.sleep(0)
+            await original(remote, local, **kwargs)
+            in_flight -= 1
+
+        filesystem._get_file = MethodType(get_file, filesystem)  # type: ignore[method-assign]
+
+    result = _invoke(
+        ["-R", "source:/docs", "destination:/out/copy"],
+        {
+            "source": _source(source_entries, [], configure=configure),
+            "destination": _source(destination_entries, []),
+        },
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert peak == 16
+    for index in range(20):
+        assert destination_entries[f"/out/copy/f{index:02d}"] == (
+            f"payload-{index:02d}".encode()
+        )
+
+
+def test_recursive_cp_creates_missing_directories_parents_first_by_depth() -> None:
+    source_entries: dict[str, bytes | None] = {
+        "/": None,
+        "/docs": None,
+        "/docs/a": None,
+        "/docs/a/x": None,
+        "/docs/a/y": None,
+        "/docs/b": None,
+        "/docs/b/z": None,
+        "/docs/c": None,
+    }
+    destination_entries: dict[str, bytes | None] = {"/": None, "/out": None}
+    calls: list[tuple[object, ...]] = []
+    parent_missing: list[str] = []
+    in_flight: set[str] = set()
+    batches: list[frozenset[str]] = []
+
+    def configure(filesystem: _TreeFileSystem) -> None:
+        async def mkdir(
+            self: _TreeFileSystem,
+            path: str,
+            create_parents: bool = True,  # noqa: FBT002 - fsspec hook signature.
+            **kwargs: object,
+        ) -> None:
+            del kwargs
+            self.calls.append(("mkdir", path, create_parents))
+            if path.rsplit("/", 1)[0] not in self.entries:
+                parent_missing.append(path)
+            in_flight.add(path)
+            batches.append(frozenset(in_flight))
+            for _ in range(3):
+                await asyncio.sleep(0)
+            in_flight.discard(path)
+            self.entries[path] = None
+
+        filesystem._mkdir = MethodType(mkdir, filesystem)  # type: ignore[method-assign]
+
+    result = _invoke(
+        ["-R", "source:/docs", "destination:/out/copy"],
+        {
+            "source": _source(source_entries, []),
+            "destination": _source(destination_entries, calls, configure=configure),
+        },
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
+    assert parent_missing == []
+    assert all(call[2] is False for call in calls if call[0] == "mkdir")
+    assert next(call[1] for call in calls if call[0] == "mkdir") == "/out/copy"
+    # Siblings of one depth are all in flight together; depths never overlap.
+    assert frozenset({"/out/copy/a", "/out/copy/b", "/out/copy/c"}) in batches
+    assert frozenset({"/out/copy/a/x", "/out/copy/a/y", "/out/copy/b/z"}) in batches
+    assert all(len({path.count("/") for path in batch}) == 1 for batch in batches)

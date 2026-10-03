@@ -77,7 +77,7 @@ def test_recursive_cp_rejects_invalid_recognized_tokens(
     )
 
 
-def test_recursive_cp_closes_late_sync_walk_iterator_before_source_exit() -> None:
+def test_recursive_cp_drains_late_listing_before_source_exit() -> None:
     entries: dict[str, bytes | None] = {
         "/": None,
         "/docs": None,
@@ -85,36 +85,25 @@ def test_recursive_cp_closes_late_sync_walk_iterator_before_source_exit() -> Non
     }
     events: list[str] = []
 
-    class Rows:
-        def __iter__(self):
-            return self
-
-        def __next__(self) -> object:
-            raise StopIteration
-
-        def close(self) -> None:
-            events.append("iterator close")
-
     @asynccontextmanager
     async def source():
         filesystem = _TreeFileSystem(entries, [])
         owner = asyncio.current_task()
         assert owner is not None
 
-        async def walk(
+        async def ls(
             self: _TreeFileSystem,
             path: str,
-            *,
-            detail: bool,
-            on_error: str,
+            *args: object,
             **kwargs: object,
-        ) -> Rows:
-            del self, path, detail, on_error, kwargs
+        ) -> list[object]:
+            del self, path, args, kwargs
             owner.cancel()
             await asyncio.sleep(0)
-            return Rows()
+            events.append("listing drained")
+            return []
 
-        filesystem._walk = MethodType(walk, filesystem)  # type: ignore[method-assign]
+        filesystem._ls = MethodType(ls, filesystem)  # type: ignore[method-assign]
         try:
             yield filesystem
         finally:
@@ -126,7 +115,7 @@ def test_recursive_cp_closes_late_sync_walk_iterator_before_source_exit() -> Non
             {"memory": source},
         )
 
-    assert events == ["iterator close", "source exit"]
+    assert events == ["listing drained", "source exit"]
 
 
 def test_recursive_cp_cleans_staging_when_primary_rendering_escapes(
@@ -478,22 +467,26 @@ def test_recursive_cp_keeps_acquisition_failure_primary_before_exit_failure() ->
     )
 
 
-@pytest.mark.parametrize("phase", ["invocation", "await", "iteration"])
-def test_recursive_cp_classifies_walk_failures(phase: str) -> None:
-    entries: dict[str, bytes | None] = {"/": None, "/docs": None, "/out": None}
+@pytest.mark.parametrize("phase", ["invocation", "await", "nested"])
+def test_recursive_cp_classifies_listing_failures(phase: str) -> None:
+    entries: dict[str, bytes | None] = {
+        "/": None,
+        "/docs": None,
+        "/docs/nested": None,
+        "/out": None,
+    }
+    calls: list[tuple[object, ...]] = []
 
     def configure(filesystem: _TreeFileSystem) -> None:
         if phase == "invocation":
 
-            def walk(
-                self: _TreeFileSystem, *args: object, **kwargs: object
-            ) -> NoReturn:
+            def ls(self: _TreeFileSystem, *args: object, **kwargs: object) -> NoReturn:
                 del self, args, kwargs
                 raise OSError(phase)
 
         elif phase == "await":
 
-            async def walk(
+            async def ls(
                 self: _TreeFileSystem,
                 *args: object,
                 **kwargs: object,
@@ -502,22 +495,24 @@ def test_recursive_cp_classifies_walk_failures(phase: str) -> None:
                 raise OSError(phase)
 
         else:
+            original = filesystem._ls
 
-            async def walk(  # type: ignore[misc]
+            async def ls(  # type: ignore[misc]
                 self: _TreeFileSystem,
+                path: str,
                 *args: object,
                 **kwargs: object,
-            ):
-                del self, args, kwargs
-                if False:  # pragma: no cover - makes an async iterator.
-                    yield None
-                raise OSError(phase)
+            ) -> object:
+                del self
+                if path == "/docs/nested":
+                    raise OSError(phase)
+                return await original(path, *args, **kwargs)
 
-        filesystem._walk = MethodType(walk, filesystem)  # type: ignore[method-assign, possibly-unbound-attribute]
+        filesystem._ls = MethodType(ls, filesystem)  # type: ignore[method-assign, possibly-unbound-attribute]
 
     result = _invoke(
         ["-R", "memory:/docs", "memory:/out/copy"],
-        {"memory": _source(entries, [], configure=configure)},
+        {"memory": _source(entries, calls, configure=configure)},
     )
 
     assert (result.exit_code, result.stdout, result.stderr) == (
@@ -525,36 +520,43 @@ def test_recursive_cp_classifies_walk_failures(phase: str) -> None:
         "",
         f"cp: memory:/docs: backend failure (OSError): {phase}\n",
     )
+    assert not [call for call in calls if call[0] in {"mkdir", "put_file"}]
 
 
-def test_recursive_cp_closes_failed_sync_walk_before_source_exit() -> None:
-    entries: dict[str, bytes | None] = {"/": None, "/docs": None, "/out": None}
+def test_recursive_cp_drains_sibling_listings_after_failure_before_source_exit() -> (
+    None
+):
+    entries: dict[str, bytes | None] = {
+        "/": None,
+        "/docs": None,
+        "/docs/a": None,
+        "/docs/b": None,
+        "/out": None,
+    }
     events: list[str] = []
-
-    class Rows:
-        def __iter__(self):
-            return self
-
-        def __next__(self) -> object:
-            message = "iteration"
-            raise OSError(message)
-
-        def close(self) -> None:
-            events.append("iterator close")
 
     @asynccontextmanager
     async def source():
         filesystem = _TreeFileSystem(entries, [])
+        original = filesystem._ls
 
-        async def walk(
+        async def ls(
             self: _TreeFileSystem,
+            path: str,
             *args: object,
             **kwargs: object,
-        ) -> Rows:
-            del self, args, kwargs
-            return Rows()
+        ) -> object:
+            del self
+            if path == "/docs/a":
+                message = "listing"
+                raise OSError(message)
+            if path == "/docs/b":
+                for _ in range(3):
+                    await asyncio.sleep(0)
+                events.append("sibling drained")
+            return await original(path, *args, **kwargs)
 
-        filesystem._walk = MethodType(walk, filesystem)  # type: ignore[method-assign]
+        filesystem._ls = MethodType(ls, filesystem)  # type: ignore[method-assign]
         try:
             yield filesystem
         finally:
@@ -568,6 +570,6 @@ def test_recursive_cp_closes_failed_sync_walk_before_source_exit() -> None:
     assert (result.exit_code, result.stdout, result.stderr) == (
         1,
         "",
-        "cp: memory:/docs: backend failure (OSError): iteration\n",
+        "cp: memory:/docs: backend failure (OSError): listing\n",
     )
-    assert events == ["iterator close", "source exit"]
+    assert events == ["sibling drained", "source exit"]
