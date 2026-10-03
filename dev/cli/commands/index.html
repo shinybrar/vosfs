@@ -1322,10 +1322,13 @@ and the original properties. Direct links show <code>name -&gt; target</code>.</
 </span></code></pre></div>
 <div class="admonition warning">
 <p class="admonition-title"><code>du</code> is recursive and can be expensive</p>
-<p>On backends using fsspec's default hook, <code>du</code> walks the whole subtree and
-reads metadata for every file. Against a remote store that is many
-requests. <strong><code>-s</code> changes the output, not the traversal cost.</strong></p>
+<p><code>du</code> lists the whole subtree, one listing per directory, and sums the
+sizes those listings report. Directories at the same depth are listed
+concurrently, but against a remote store that is still one request per
+directory. <strong><code>-s</code> changes the output, not the traversal cost.</strong></p>
 </div>
+<p><code>du</code>, <code>find</code>, and <code>tree</code> fail if any directory in the subtree cannot be
+listed, rather than treating it as empty.</p>
 <h3 id="find"><code>find</code><a class="headerlink" href="#find" title="Permanent link">&para;</a></h3>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>find<span class="w"> </span>data:/project
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>find<span class="w"> </span>--maxdepth<span class="w"> </span><span class="m">2</span><span class="w"> </span>data:/project
@@ -1381,7 +1384,8 @@ rejects symlinks. A backend that does not report all of them reports
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>myapp<span class="w"> </span>fs<span class="w"> </span>head<span class="w"> </span>-c<span class="w"> </span><span class="m">512</span><span class="w"> </span>data:/big.log
 </span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>myapp<span class="w"> </span>fs<span class="w"> </span>tail<span class="w"> </span>-c<span class="w"> </span><span class="m">512</span><span class="w"> </span>data:/big.log
 </span></code></pre></div>
-<p>Byte counts only — there is no <code>-n</code> line mode.</p>
+<p>Byte counts only — there is no <code>-n</code> line mode. A count larger than the file
+prints the whole file; <code>-c 0</code> checks the file exists and prints nothing.</p>
 <div class="admonition note">
 <p class="admonition-title">Bounded request, not necessarily a bounded transfer</p>
 <p><code>-c N</code> bounds what the CLI <em>asks for</em>. Whether the backend transfers only
@@ -1419,6 +1423,9 @@ cannot be read, the copy fails explicitly.</p>
 <p>Without checksums, equality checking reads both files: it saves destination
 writes, not necessarily network traffic. Extra destination files are retained.
 All skipped entries still participate in final verification.</p>
+<p>Files are transferred concurrently, up to 16 at a time. After the first
+failure no new transfer starts; transfers already running finish, and the
+failure reported is the first one in source-tree order.</p>
 <p>It is <strong>not</strong> a snapshot, transaction, mirror, or rollback, and does not
 preserve POSIX metadata.</p>
 <h3 id="mv"><code>mv</code><a class="headerlink" href="#mv" title="Permanent link">&para;</a></h3>
@@ -1462,9 +1469,11 @@ unless <code>-R</code>/<code>-r</code> is also given. <code>-v</code> may be sup
 is idempotent, and <code>-f</code> with no operands succeeds silently.</p>
 <div class="admonition danger">
 <p class="admonition-title"><code>rm -R</code> is off unless the host enabled it</p>
-<p>It requires the <code>recursion.remove</code> capability. Removal is <strong>sequential and
-non-atomic</strong> — a failure partway through leaves earlier removals done and
-the rest present or uncertain. There is no prompt, undo, or trash.</p>
+<p>It requires the <code>recursion.remove</code> capability. Removal is <strong>leaves-first
+and non-atomic</strong>: entries at the same depth are removed concurrently, a
+directory only after all its children are confirmed gone. A failure
+partway through leaves earlier removals done and the rest present or
+uncertain. There is no prompt, undo, or trash.</p>
 <p>Root paths and any path containing <code>.</code> or <code>..</code> are rejected outright.</p>
 </div>
 <h2 id="when-something-fails">When something fails<a class="headerlink" href="#when-something-fails" title="Permanent link">&para;</a></h2>

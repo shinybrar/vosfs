@@ -569,6 +569,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Logging
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#shell-completion" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -853,6 +864,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Logging
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#shell-completion" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -983,9 +1005,10 @@ The command never infers this from a backend type or protocol.</p>
 <div class="admonition danger">
 <p class="admonition-title"><code>recursion.remove</code> is your assertion, not a default</p>
 <p>Enabling recursive removal asserts that every configured target satisfies
-the guarded-removal contract. Removal is <strong>sequential and non-atomic</strong>: a
-failure or cancellation can leave earlier confirmed removals in place and
-the rest present or uncertain. There is no prompt, rollback, retry, trash,
+the guarded-removal contract. Removal is <strong>leaves-first and non-atomic</strong>,
+with entries at one depth removed concurrently: a failure or cancellation
+can leave earlier confirmed removals in place and the rest present or
+uncertain. There is no prompt, rollback, retry, trash,
 or recovery.</p>
 </div>
 <h2 id="extensions">Extensions<a class="headerlink" href="#extensions" title="Permanent link">&para;</a></h2>
@@ -1092,12 +1115,61 @@ it as a plain failure and blindly retry — a retry can double-apply.</p>
 </div>
 <p>Control characters in an operand are escaped as <code>\xNN</code> before rendering, so a
 hostile or malformed path cannot inject terminal escapes.</p>
+<h2 id="logging">Logging<a class="headerlink" href="#logging" title="Permanent link">&para;</a></h2>
+<p>Commands emit standard-library log records under the <code>fsspec_cli</code> logger
+hierarchy. The library installs only a <code>NullHandler</code>, so nothing is printed
+unless your host configures a handler:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;fsspec_cli&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>  <span class="c1"># or DEBUG</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;fsspec_cli&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">StreamHandler</span><span class="p">())</span>
+</span></code></pre></div>
+<p>At <strong>INFO</strong>, <code>cp</code>, <code>cp -R</code>, and <code>mv</code> emit one record per file with the source
+and destination (as <code>name:/path</code>), the byte count, the duration, and an
+outcome:</p>
+<table>
+<thead>
+<tr>
+<th>Outcome</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>copied</code></td>
+<td>Same-filesystem <code>cp</code>, verified</td>
+</tr>
+<tr>
+<td><code>staged</code></td>
+<td>Copied through a local temporary file (cross-filesystem <code>cp</code>, every <code>cp -R</code> write)</td>
+</tr>
+<tr>
+<td><code>skipped</code></td>
+<td><code>cp -R</code> found identical content and wrote nothing</td>
+</tr>
+<tr>
+<td><code>moved</code></td>
+<td><code>mv</code>, verified</td>
+</tr>
+<tr>
+<td><code>verified</code></td>
+<td>One record per <code>cp -R</code>, after the whole tree passed final verification</td>
+</tr>
+</tbody>
+</table>
+<p>The same values are attached to each record as the <code>outcome</code>, <code>source</code>,
+<code>destination</code>, <code>bytes</code>, and <code>duration</code> attributes. At <strong>DEBUG</strong>, <code>cp -R</code> also
+records its content-identity decisions (which checksum tokens were compared and
+whether they matched) and staging paths.</p>
+<p>Logged locations drop any URL user information, query string, and fragment,
+and escape control characters. Storage options and credentials are never
+logged.</p>
 <h2 id="shell-completion">Shell completion<a class="headerlink" href="#shell-completion" title="Permanent link">&para;</a></h2>
 <p><code>App.typer_app</code> is built with <code>add_completion=False</code>, because a mounted
 sub-app is the wrong place to install completion. Enable it on <strong>your</strong> root
 app instead:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">app</span> <span class="o">=</span> <span class="n">typer</span><span class="o">.</span><span class="n">Typer</span><span class="p">(</span><span class="n">add_completion</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">app</span><span class="o">.</span><span class="n">add_typer</span><span class="p">(</span><span class="n">App</span><span class="p">(</span><span class="n">sources</span><span class="p">)</span><span class="o">.</span><span class="n">typer_app</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;fs&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">app</span> <span class="o">=</span> <span class="n">typer</span><span class="o">.</span><span class="n">Typer</span><span class="p">(</span><span class="n">add_completion</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">app</span><span class="o">.</span><span class="n">add_typer</span><span class="p">(</span><span class="n">App</span><span class="p">(</span><span class="n">sources</span><span class="p">)</span><span class="o">.</span><span class="n">typer_app</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;fs&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="reference">Reference<a class="headerlink" href="#reference" title="Permanent link">&para;</a></h2>
 <p>The full normative contract lives in

@@ -385,6 +385,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Logging
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#closing" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -821,6 +832,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Errors
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Logging
       </span>
     </span>
   </a>
@@ -1277,6 +1299,27 @@ retry guidance, and — for partial failures — the completed and failed paths.
 and log. <code>vosfs</code> never retries automatically; callers own higher-level retry
 policy.</p>
 </div>
+<h2 id="logging">Logging<a class="headerlink" href="#logging" title="Permanent link">&para;</a></h2>
+<p><code>vosfs</code> reports transfer progress through the standard-library <code>logging</code>
+module under the <code>vosfs</code> logger. It installs only a <code>NullHandler</code>, so nothing
+is printed unless your application configures logging.</p>
+<ul>
+<li><code>INFO</code>: one record per completed file operation, for example
+  <code>downloaded /data/a.fits -&gt; /tmp/a.fits (2880 bytes, 0.214 s)</code>. Outcomes are
+  <code>downloaded</code>, <code>uploaded</code>, <code>copied</code>, <code>staged</code> (an <code>open("rb")</code> download),
+  <code>removed</code>, and <code>moved</code>. Each record also carries the structured attributes
+  <code>vosfs_outcome</code>, <code>vosfs_source</code>, <code>vosfs_destination</code>, <code>vosfs_bytes</code>, and
+  <code>vosfs_seconds</code> where they apply.</li>
+<li><code>DEBUG</code>: the negotiated byte endpoint and security method, Range fallbacks,
+  and MD5 comparisons after uploads.</li>
+</ul>
+<p>Logged URLs never include a query string or fragment, and pre-authorized
+tokens are redacted.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;vosfs&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">)</span>
+</span></code></pre></div>
 <h2 id="closing">Closing<a class="headerlink" href="#closing" title="Permanent link">&para;</a></h2>
 <p><code>aclose()</code> (async) and <code>close()</code> (sync) release every HTTP client, evict the
 instance from fsspec's cache, and make later I/O fail as closed. Both calls are
@@ -1288,11 +1331,11 @@ fresh event-loop, lock, HTTP-client, service-binding, and cache state. Dask
 tokenization depends only on the serialized constructor options, not that live
 runtime state.</p>
 <p>Close a filesystem deterministically when its work is finished:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">fs</span> <span class="o">=</span> <span class="n">fsspec</span><span class="o">.</span><span class="n">filesystem</span><span class="p">(</span><span class="s2">&quot;vos&quot;</span><span class="p">,</span> <span class="n">endpoint_url</span><span class="o">=</span><span class="s2">&quot;https://staging.canfar.net/arc&quot;</span><span class="p">)</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="k">try</span><span class="p">:</span>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="n">data</span> <span class="o">=</span> <span class="n">fs</span><span class="o">.</span><span class="n">cat_file</span><span class="p">(</span><span class="s2">&quot;/project/data.csv&quot;</span><span class="p">)</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="k">finally</span><span class="p">:</span>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>    <span class="n">fs</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">fs</span> <span class="o">=</span> <span class="n">fsspec</span><span class="o">.</span><span class="n">filesystem</span><span class="p">(</span><span class="s2">&quot;vos&quot;</span><span class="p">,</span> <span class="n">endpoint_url</span><span class="o">=</span><span class="s2">&quot;https://staging.canfar.net/arc&quot;</span><span class="p">)</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="k">try</span><span class="p">:</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>    <span class="n">data</span> <span class="o">=</span> <span class="n">fs</span><span class="o">.</span><span class="n">cat_file</span><span class="p">(</span><span class="s2">&quot;/project/data.csv&quot;</span><span class="p">)</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="k">finally</span><span class="p">:</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>    <span class="n">fs</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
 </span></code></pre></div>
 
 

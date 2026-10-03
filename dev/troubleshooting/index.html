@@ -1078,6 +1078,10 @@ than the retry count:</p>
 </span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="n">timeouts</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;read&quot;</span><span class="p">:</span> <span class="mf">600.0</span><span class="p">},</span>
 </span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="p">)</span>
 </span></code></pre></div>
+<p>A bulk <code>get</code>, <code>put</code>, <code>copy</code>, or <code>cat</code> runs at most <code>batch_size</code> transfers at
+once (32 by default). If you raise <code>batch_size</code> far above the HTTP pool's 100
+connections, queued transfers can wait past the <code>pool</code> timeout and fail; keep
+it at or below 100.</p>
 <h2 id="oserror-with-errnoenospc"><code>OSError</code> with <code>errno.ENOSPC</code><a class="headerlink" href="#oserror-with-errnoenospc" title="Permanent link">&para;</a></h2>
 <p>A storage quota is exhausted. Free space or request more; this is not a client
 problem.</p>
