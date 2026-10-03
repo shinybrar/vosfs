@@ -406,6 +406,31 @@ precise match is raised as the single public `vosfs.VOSpaceError`.
     and log. `vosfs` never retries automatically; callers own higher-level retry
     policy.
 
+## Logging
+
+`vosfs` reports transfer progress through the standard-library `logging`
+module under the `vosfs` logger. It installs only a `NullHandler`, so nothing
+is printed unless your application configures logging.
+
+- `INFO`: one record per completed file operation, for example
+  `downloaded /data/a.fits -> /tmp/a.fits (2880 bytes, 0.214 s)`. Outcomes are
+  `downloaded`, `uploaded`, `copied`, `staged` (an `open("rb")` download),
+  `removed`, and `moved`. Each record also carries the structured attributes
+  `vosfs_outcome`, `vosfs_source`, `vosfs_destination`, `vosfs_bytes`, and
+  `vosfs_seconds` where they apply.
+- `DEBUG`: the negotiated byte endpoint and security method, Range fallbacks,
+  and MD5 comparisons after uploads.
+
+Logged URLs never include a query string or fragment, and pre-authorized
+tokens are redacted.
+
+```python
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("vosfs").setLevel(logging.DEBUG)
+```
+
 ## Closing
 
 `aclose()` (async) and `close()` (sync) release every HTTP client, evict the

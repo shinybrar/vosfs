@@ -122,8 +122,11 @@ def test_adapted_local_long_listing_profile_is_rich_and_uses_detail(
             asynchronous=True,
         )
     )
-    owner = os.getuid()
-    group = os.getgid()
+    import grp
+    import pwd
+
+    owner = pwd.getpwuid(os.getuid()).pw_name
+    group = grp.getgrgid(os.getgid()).gr_name
 
     _exercise_long_listing_profile(
         "local",
@@ -152,8 +155,14 @@ def test_adapted_memory_long_listing_profile_is_sparse_and_uses_detail(
         "memory",
         source,
         "/docs",
-        exact_directory="file  8  guide.md\nfile  9  notes.txt\n",
-        human_directory="file  8B  guide.md\nfile  9B  notes.txt\n",
+        exact_directory=(
+            "-?????????  -  -  -  8  -  guide.md\n"
+            "-?????????  -  -  -  9  -  notes.txt\n"
+        ),
+        human_directory=(
+            "-?????????  -  -  -  8B  -  guide.md\n"
+            "-?????????  -  -  -  9B  -  notes.txt\n"
+        ),
     )
 
     assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
@@ -308,129 +317,6 @@ def test_typer_rejects_ls_long_option_spelling_without_source_work() -> None:
     assert (result.exit_code, result.stdout) == (2, "")
     diagnostic = strip_ansi(result.stderr)
     assert "No such option: --long" in diagnostic
-    assert source_calls == 0
-
-
-def test_basename_string_is_source_free() -> None:
-    source_calls = 0
-
-    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
-        nonlocal source_calls
-        source_calls += 1
-        raise AssertionError
-
-    result = CliRunner().invoke(
-        App({"memory": source_must_not_run}).typer_app,
-        ["basename", "memory:/docs/a.txt"],
-    )
-
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        0,
-        "a.txt\n",
-        "",
-    )
-    assert source_calls == 0
-
-
-def test_basename_suffix_is_source_free() -> None:
-    source_calls = 0
-
-    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
-        nonlocal source_calls
-        source_calls += 1
-        raise AssertionError
-
-    result = CliRunner().invoke(
-        App({"memory": source_must_not_run}).typer_app,
-        ["basename", "memory:/docs/a.txt", ".txt"],
-    )
-
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        0,
-        "a\n",
-        "",
-    )
-    assert source_calls == 0
-
-
-def test_basename_extra_operand_rejection_is_source_free() -> None:
-    source_calls = 0
-
-    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
-        nonlocal source_calls
-        source_calls += 1
-        raise AssertionError
-
-    result = CliRunner().invoke(
-        App({"memory": source_must_not_run}).typer_app,
-        ["basename", "a", "b", "c"],
-    )
-
-    assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = result.stderr
-    assert "unexpected extra argument" in diagnostic
-    assert "c" in diagnostic
-    assert source_calls == 0
-
-
-def test_basename_option_rejection_is_source_free() -> None:
-    source_calls = 0
-
-    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
-        nonlocal source_calls
-        source_calls += 1
-        raise AssertionError
-
-    result = CliRunner().invoke(
-        App({"memory": source_must_not_run}).typer_app,
-        ["basename", "-a", "a"],
-    )
-
-    assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = result.stderr
-    assert "No such option" in diagnostic
-    assert "-a" in diagnostic
-    assert source_calls == 0
-
-
-def test_dirname_string_is_source_free() -> None:
-    source_calls = 0
-
-    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
-        nonlocal source_calls
-        source_calls += 1
-        raise AssertionError
-
-    result = CliRunner().invoke(
-        App({"memory": source_must_not_run}).typer_app,
-        ["dirname", "memory:/docs/a.txt"],
-    )
-
-    assert (result.exit_code, result.stdout, result.stderr) == (
-        0,
-        "memory:/docs\n",
-        "",
-    )
-    assert source_calls == 0
-
-
-def test_dirname_option_rejection_is_source_free() -> None:
-    source_calls = 0
-
-    def source_must_not_run() -> AbstractAsyncContextManager[AsyncFileSystem]:
-        nonlocal source_calls
-        source_calls += 1
-        raise AssertionError
-
-    result = CliRunner().invoke(
-        App({"memory": source_must_not_run}).typer_app,
-        ["dirname", "-a", "a"],
-    )
-
-    assert (result.exit_code, result.stdout) == (2, "")
-    diagnostic = result.stderr
-    assert "No such option" in diagnostic
-    assert "-a" in diagnostic
     assert source_calls == 0
 
 

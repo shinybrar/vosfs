@@ -1,7 +1,7 @@
 """``du`` command tests through the public embedded-command seam."""
 
+from collections.abc import Iterator, Mapping
 from types import MappingProxyType
-from typing import NoReturn
 
 import pytest
 import typer
@@ -10,8 +10,8 @@ from ._ansi import strip_ansi
 from ._support import _invoke, _RecordingSource
 
 
-class _ExplodingMapping(dict[str, int]):
-    def items(self) -> NoReturn:
+class _ExplodingEntry(dict[str, object]):
+    def __iter__(self) -> Iterator[str]:
         raise RuntimeError
 
 
@@ -19,73 +19,152 @@ class _DuControl(BaseException):
     pass
 
 
-def test_du_renders_exact_backend_paths_atomically_after_one_call() -> None:
+def _file(name: object, size: object) -> dict[str, object]:
+    return {"name": name, "type": "file", "size": size}
+
+
+def _directory(name: str, size: object = 0) -> dict[str, object]:
+    return {"name": name, "type": "directory", "size": size}
+
+
+def _source(
+    listings: Mapping[str, object],
+    *,
+    exit_error: BaseException | None = None,
+) -> tuple[list[tuple[object, ...]], _RecordingSource]:
     events: list[tuple[object, ...]] = []
     source = _RecordingSource(
         events,
-        du_result=MappingProxyType(
-            {
-                "/docs/sub/b.bin": 1536,
-                "/docs/a.txt": 2,
-            }
-        ),
+        ls_by_path=listings,
+        ls_error=FileNotFoundError(),
+        exit_error=exit_error,
     )
+    return events, source
+
+
+def _events(events: list[tuple[object, ...]]) -> list[tuple[object, ...]]:
+    return [(event[0], *event[2:-1]) for event in events]
+
+
+_DOCS_LISTINGS: Mapping[str, object] = MappingProxyType(
+    {
+        "/docs": [
+            _directory("/docs/sub", 4096),
+            _file("/docs/a.txt", 2),
+            {"name": "/docs/link", "type": "other", "size": 0},
+        ],
+        "/docs/sub": [_file("/docs/sub/b.bin", 1536)],
+    }
+)
+
+
+def test_du_renders_exact_listed_file_sizes_after_one_listing_per_directory() -> None:
+    events, source = _source(_DOCS_LISTINGS)
 
     result = _invoke("du", ["memory:/docs"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (
         0,
-        "2\t/docs/a.txt\n1536\t/docs/sub/b.bin\n",
+        "2\t/docs/a.txt\n0\t/docs/link\n1536\t/docs/sub/b.bin\n",
         "",
     )
-    assert [(event[0], *event[2:-1]) for event in events] == [
+    assert _events(events) == [
         ("factory",),
         ("enter",),
-        ("du", "/docs", False),
+        ("ls", "/docs", True),
+        ("ls", "/docs/sub", True),
         ("exit",),
     ]
 
 
-def test_du_accepts_an_empty_detail_mapping_without_output() -> None:
-    events: list[tuple[object, ...]] = []
-    source = _RecordingSource(events, du_result={})
+def test_du_fails_when_a_nested_directory_cannot_be_listed() -> None:
+    denied = PermissionError("denied")
+    events, source = _source({**_DOCS_LISTINGS, "/docs/sub": denied})
+
+    result = _invoke("du", ["-s", "memory:/docs"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "du: memory:/docs: permission denied\n",
+    )
+    assert _events(events) == [
+        ("factory",),
+        ("enter",),
+        ("ls", "/docs", True),
+        ("ls", "/docs/sub", True),
+        ("exit",),
+    ]
+    assert source.exit_calls[0][1] is denied
+
+
+@pytest.mark.parametrize("arguments", [["memory:/missing"], ["-s", "memory:/missing"]])
+def test_du_reports_a_missing_operand_as_not_found(arguments: list[str]) -> None:
+    _events_list, source = _source(_DOCS_LISTINGS)
+
+    result = _invoke("du", arguments, sources={"memory": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "du: memory:/missing: not found\n",
+    )
+    assert source.exit_calls[0][0] is FileNotFoundError
+
+
+def test_du_accepts_an_empty_listing_without_output() -> None:
+    events, source = _source({"/empty": []})
 
     result = _invoke("du", ["memory:/empty"], sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
-    assert [(event[0], *event[2:-1]) for event in events] == [
+    assert _events(events) == [
         ("factory",),
         ("enter",),
-        ("du", "/empty", False),
+        ("ls", "/empty", True),
         ("exit",),
     ]
 
 
+def test_du_reports_a_file_operand_from_its_own_listing_entry() -> None:
+    events, source = _source({"/file": [_file("/file", 3)]})
+
+    result = _invoke("du", ["memory:/file"], sources={"memory": source})
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "3\t/file\n", "")
+    assert [event for event in _events(events) if event[0] == "ls"] == [
+        ("ls", "/file", True)
+    ]
+
+
 @pytest.mark.parametrize(
-    ("arguments", "du_result", "total", "stdout"),
+    ("arguments", "stdout"),
     [
-        (["-h", "memory:/docs"], {"/docs/a": 1536}, False, "1.5K\t/docs/a\n"),
-        (["-s", "memory:/docs"], 1536, True, "1536\t/docs\n"),
-        (["-sh", "memory:/docs"], 1536, True, "1.5K\t/docs\n"),
-        (["-hhs", "memory:/docs"], 1536, True, "1.5K\t/docs\n"),
-        (["memory:/docs", "-s", "-h"], 1536, True, "1.5K\t/docs\n"),
-        (["--", "memory:/docs"], {"/docs/a": 1}, False, "1\t/docs/a\n"),
+        (["-h", "memory:/docs"], "1.5K\t/docs/a\n"),
+        (["-s", "memory:/docs"], "1536\t/docs\n"),
+        (["-sh", "memory:/docs"], "1.5K\t/docs\n"),
+        (["-hhs", "memory:/docs"], "1.5K\t/docs\n"),
+        (["memory:/docs", "-s", "-h"], "1.5K\t/docs\n"),
+        (["--", "memory:/docs"], "1536\t/docs/a\n"),
+        (["-s", "memory:/docs/"], "1536\t/docs/\n"),
     ],
 )
 def test_du_accepts_grouped_repeated_and_interspersed_options(
     arguments: list[str],
-    du_result: object,
-    total: bool,
     stdout: str,
 ) -> None:
-    events: list[tuple[object, ...]] = []
-    source = _RecordingSource(events, du_result=du_result)
+    listing = [_file("/docs/a", 1536), _directory("/docs/empty", 4096)]
+    events, source = _source({"/docs": listing, "/docs/": listing, "/docs/empty": []})
 
     result = _invoke("du", arguments, sources={"memory": source})
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, stdout, "")
-    du_events = [event for event in events if event[0] == "du"]
-    assert [(event[2], event[3]) for event in du_events] == [("/docs", total)]
+    operand = next(argument for argument in arguments if argument.startswith("memory:"))
+    root = operand.partition(":")[2]
+    assert [event for event in _events(events) if event[0] == "ls"] == [
+        ("ls", root, True),
+        ("ls", "/docs/empty", True),
+    ]
 
 
 @pytest.mark.parametrize("arguments", [["--help"], ["-s", "--help"]])
@@ -146,23 +225,34 @@ def test_du_validates_dash_operand_after_option_terminator() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "du_result",
-    [
-        None,
-        3,
-        [("/docs/a", 1)],
-        {1: 2},
-        {"/docs/a": None},
-        {"/docs/a": True},
-        {"/docs/a": -1},
-        {"/docs/bad\nname": 1},
-        {"/docs/bad\0name": 1},
-        _ExplodingMapping({"/docs/a": 1}),
-    ],
-)
-def test_du_rejects_incompatible_detail_results_atomically(du_result: object) -> None:
-    source = _RecordingSource([], du_result=du_result)
+_INCOMPATIBLE_LISTINGS: list[dict[str, object]] = [
+    {"/docs": None},
+    {"/docs": 3},
+    {"/docs": {"/docs/a": 1}},
+    {"/docs": [("/docs/a", 1)]},
+    {"/docs": [_file(1, 2)]},
+    {"/docs": [{"name": "/docs/a", "size": 1}]},
+    {"/docs": [{"name": "/docs/a", "type": "file"}]},
+    {"/docs": [_file("/docs/a", None)]},
+    {"/docs": [{"name": "/docs/a", "type": "file", "size": True}]},
+    {"/docs": [_file("/docs/a", -1)]},
+    {"/docs": [_file("/docs/a", 1.5)]},
+    {"/docs": [_file("/docs/a", "1")]},
+    {"/docs": [_file("/docs/bad\nname", 1)]},
+    {"/docs": [_file("/docs/bad\0name", 1)]},
+    {"/docs": [_file("/elsewhere/a", 1)]},
+    {"/docs": [_file("/docs/a", 1), _file("/docs/a", 1)]},
+    {"/docs": [_ExplodingEntry(_file("/docs/a", 1))]},
+    {"/docs": [_directory("/docs/sub")], "/docs/sub": [_file("/docs/sub/a", -1)]},
+    {"/docs": [_directory("/docs/sub")], "/docs/sub": None},
+]
+
+
+@pytest.mark.parametrize("listings", _INCOMPATIBLE_LISTINGS)
+def test_du_rejects_incompatible_detail_listings_atomically(
+    listings: dict[str, object],
+) -> None:
+    _events_list, source = _source(listings)
 
     result = _invoke("du", ["memory:/docs"], sources={"memory": source})
 
@@ -173,9 +263,11 @@ def test_du_rejects_incompatible_detail_results_atomically(du_result: object) ->
     )
 
 
-@pytest.mark.parametrize("du_result", [None, {}, True, -1, 1.5, "1"])
-def test_du_rejects_incompatible_summary_results(du_result: object) -> None:
-    source = _RecordingSource([], du_result=du_result)
+@pytest.mark.parametrize("listings", _INCOMPATIBLE_LISTINGS)
+def test_du_rejects_incompatible_summary_listings(
+    listings: dict[str, object],
+) -> None:
+    _events_list, source = _source(listings)
 
     result = _invoke("du", ["-s", "memory:/docs"], sources={"memory": source})
 
@@ -203,7 +295,7 @@ def test_du_reports_backend_failures_and_passes_them_to_cleanup(
     error: Exception,
     diagnostic: str,
 ) -> None:
-    source = _RecordingSource([], du_error=error)
+    _events_list, source = _source({"/docs": error})
 
     result = _invoke("du", ["memory:/docs"], sources={"memory": source})
 
@@ -218,10 +310,9 @@ def test_du_reports_backend_failures_and_passes_them_to_cleanup(
     assert traceback is not None
 
 
-def test_du_validates_the_complete_mapping_before_output() -> None:
-    source = _RecordingSource(
-        [],
-        du_result={"/docs/good": 1, "/docs/bad": -1},
+def test_du_validates_the_complete_listing_before_output() -> None:
+    _events_list, source = _source(
+        {"/docs": [_file("/docs/good", 1), _file("/docs/bad", -1)]}
     )
 
     result = _invoke("du", ["memory:/docs"], sources={"memory": source})
@@ -235,7 +326,7 @@ def test_du_validates_the_complete_mapping_before_output() -> None:
 
 def test_du_cleans_up_after_an_output_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     output_error = OSError("write failed")
-    source = _RecordingSource([], du_result={"/docs/a": 1})
+    _events_list, source = _source({"/docs": [_file("/docs/a", 1)]})
     real_echo = typer.echo
 
     def fail_stdout(
@@ -266,7 +357,7 @@ def test_du_keeps_broken_pipe_silent_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     broken_pipe = BrokenPipeError()
-    source = _RecordingSource([], du_result={"/docs/a": 1})
+    _events_list, source = _source({"/docs": [_file("/docs/a", 1)]})
 
     def break_stdout(*args: object, **kwargs: object) -> None:
         del args, kwargs
@@ -283,9 +374,8 @@ def test_du_keeps_broken_pipe_silent_and_cleans_up(
 
 
 def test_du_retains_complete_output_when_source_exit_fails() -> None:
-    source = _RecordingSource(
-        [],
-        du_result={"/docs/a": 1},
+    _events_list, source = _source(
+        {"/docs": [_file("/docs/a", 1)]},
         exit_error=OSError("cleanup"),
     )
 
@@ -298,15 +388,17 @@ def test_du_retains_complete_output_when_source_exit_fails() -> None:
     )
 
 
-def test_du_cleans_up_then_propagates_backend_control_flow() -> None:
+@pytest.mark.parametrize("nested", [False, True])
+def test_du_cleans_up_then_propagates_backend_control_flow(nested: bool) -> None:
     control = _DuControl("stop")
-    source = _RecordingSource(
-        [],
-        du_error=control,
-        exit_error=OSError("cleanup"),
-    )
+    listings: dict[str, object] = {"/docs": control}
+    if nested:
+        listings = {"/docs": [_directory("/docs/sub")], "/docs/sub": control}
+    events, source = _source(listings, exit_error=OSError("cleanup"))
 
     with pytest.raises(_DuControl) as caught:
         _invoke("du", ["memory:/docs"], sources={"memory": source})
 
     assert caught.value is control
+    assert events[-1][0] == "exit"
+    assert source.exit_calls[0][1] is control

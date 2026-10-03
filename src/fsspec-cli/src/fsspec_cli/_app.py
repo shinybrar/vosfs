@@ -12,7 +12,6 @@ from typing import Annotated, Any, Literal, TypeAlias, TypedDict
 import typer
 from fsspec import AbstractFileSystem
 
-from ._basename import _run_basename, _run_dirname
 from ._cat import _run_cat, _StdinOperand
 from ._command import (
     _MappedOperand,
@@ -95,12 +94,6 @@ _MvOperands: TypeAlias = Annotated[
         help="One or more source files followed by one destination.",
     ),
 ]
-_LexicalOperand: TypeAlias = Annotated[str, typer.Argument(metavar="OPERAND")]
-_LexicalSuffix: TypeAlias = Annotated[
-    str | None,
-    typer.Argument(metavar="SUFFIX"),
-]
-
 _ByteCount: TypeAlias = Annotated[
     int,
     typer.Option("-c", metavar="N", min=0, help="Number of bytes to display."),
@@ -296,28 +289,11 @@ class App:
         def root(ctx: typer.Context) -> None:
             ctx.obj = CommandContext(self._sources)
 
-        self._register_lexical_commands()
         self._register_query_commands()
         self._register_listing_commands()
         self._register_read_commands()
         self._register_transfer_commands()
         self._register_mutation_commands()
-
-    def _register_lexical_commands(self) -> None:
-        """Register the source-free path-string commands."""
-
-        @self.typer_app.command()
-        def basename(
-            operand: _LexicalOperand,
-            suffix: _LexicalSuffix = None,
-        ) -> None:
-            """Strip directory and suffix from a path."""
-            _run_basename("basename", operand, suffix)
-
-        @self.typer_app.command()
-        def dirname(operand: _LexicalOperand) -> None:
-            """Strip the last component from a path."""
-            _run_dirname("dirname", operand)
 
     def _register_query_commands(self) -> None:
         """Register the metadata and predicate commands."""
@@ -388,26 +364,9 @@ class App:
         ) -> None:
             """List directory contents."""
             self._listing(
-                "ls",
                 operands,
                 include_almost_all=include_almost_all,
                 long_listing=long_listing,
-                human_readable=human_readable,
-            )
-
-        @self.typer_app.command()
-        def ll(
-            operands: _Operands,
-            *,
-            include_almost_all: _AlmostAll = False,
-            human_readable: _HumanSizes = False,
-        ) -> None:
-            """List directory contents in long form."""
-            self._listing(
-                "ll",
-                operands,
-                include_almost_all=include_almost_all,
-                long_listing=True,
                 human_readable=human_readable,
             )
 
@@ -465,21 +424,20 @@ class App:
 
     def _listing(
         self,
-        command: Literal["ls", "ll"],
         operands: Sequence[str],
         *,
         include_almost_all: bool,
         long_listing: bool,
         human_readable: bool,
     ) -> None:
-        """Preflight and run one shared ``ls``/``ll`` invocation."""
-        mapped = self._mapped_all(command, operands)
+        """Preflight and run one ``ls`` invocation."""
+        mapped = self._mapped_all("ls", operands)
         if human_readable and not long_listing:
-            _usage_error(command, "-h: requires long listing")
+            _usage_error("ls", "-h: requires long listing")
         _run_async_command(
-            command,
+            "ls",
             lambda: _run_ls(
-                command,
+                "ls",
                 _LsRequest(
                     include_almost_all=include_almost_all,
                     long_listing=long_listing,

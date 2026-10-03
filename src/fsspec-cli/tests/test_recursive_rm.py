@@ -124,26 +124,42 @@ def test_recursive_rm_enabled_removes_a_complete_nested_manifest(option: str) ->
     )
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
-    assert [
+    observed = [
         (event[0], event[2])
         for event in events
         if event[0] in {"info", "ls", "rm_file", "rmdir"}
-    ] == [
+    ]
+    assert observed[:4] == [
         ("info", "/docs"),
         ("ls", "/docs"),
         ("ls", "/docs/sub"),
         ("ls", "/docs/sub/empty"),
-        ("rm_file", "/docs/sub/a.txt"),
-        ("info", "/docs/sub/a.txt"),
-        ("rmdir", "/docs/sub/empty"),
-        ("info", "/docs/sub/empty"),
-        ("rmdir", "/docs/sub"),
-        ("info", "/docs/sub"),
-        ("rm_file", "/docs/z.txt"),
-        ("info", "/docs/z.txt"),
-        ("rmdir", "/docs"),
-        ("info", "/docs"),
     ]
+    removals = observed[4:]
+    assert sorted(removals) == sorted(
+        [
+            ("rm_file", "/docs/sub/a.txt"),
+            ("info", "/docs/sub/a.txt"),
+            ("rmdir", "/docs/sub/empty"),
+            ("info", "/docs/sub/empty"),
+            ("rmdir", "/docs/sub"),
+            ("info", "/docs/sub"),
+            ("rm_file", "/docs/z.txt"),
+            ("info", "/docs/z.txt"),
+            ("rmdir", "/docs"),
+            ("info", "/docs"),
+        ]
+    )
+    # Each primitive precedes its absence proof, and every directory is
+    # removed only after each descendant's absence was proven.
+    for path in ("/docs/sub/a.txt", "/docs/sub/empty", "/docs/sub", "/docs/z.txt"):
+        mutation = next(i for i, event in enumerate(removals) if event[1] == path)
+        proof = max(i for i, event in enumerate(removals) if event[1] == path)
+        assert removals[mutation][0] in {"rm_file", "rmdir"}
+        assert mutation < proof
+        parent = path.rsplit("/", 1)[0]
+        assert proof < removals.index(("rmdir", parent))
+    assert removals[-2:] == [("rmdir", "/docs"), ("info", "/docs")]
     assert not any(event[0] == "rm" for event in events)
 
 

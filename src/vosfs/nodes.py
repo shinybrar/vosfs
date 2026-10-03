@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from vosfs._access import access_info
 from vosfs.xmlio import safe_parse
 
 if TYPE_CHECKING:
@@ -173,6 +174,9 @@ def to_info(node: Node, name: str) -> dict[str, Any]:
         "size": node.size,
         "uri": node.uri,
     }
+    info.update(access_info(node.properties, node.node_type))
+    if node.properties:
+        info["properties"] = node.properties
     if node.node_type == "link":
         info["islink"] = True
         info["target"] = node.target
@@ -184,8 +188,6 @@ def to_info(node: Node, name: str) -> dict[str, Any]:
             info["md5"] = node.md5
         if node.content_type is not None:
             info["content_type"] = node.content_type
-    if node.properties:
-        info["properties"] = node.properties
     return info
 
 

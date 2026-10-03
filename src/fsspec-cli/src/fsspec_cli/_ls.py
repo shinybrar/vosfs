@@ -1,4 +1,4 @@
-"""Listing execution for the central ``ls`` and ``ll`` callbacks."""
+"""Listing execution for the central ``ls`` callback."""
 
 from __future__ import annotations
 
@@ -20,7 +20,9 @@ from ._command import (
     _render_output_failure,
     _run_mapped_command,
 )
+from ._concurrent import _gather_bounded
 from ._listing import ListingRow, render_listing, to_listing
+from ._metadata import valid_display_text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -149,14 +151,23 @@ async def _trace_operands(
     tuple[_FileResult[_PayloadT] | _DirectoryResult[_PayloadT], ...],
     tuple[_Failure, ...],
 ]:
+    # Operands are independent reads, so they overlap under the shared bound;
+    # results come back in operand order and nothing is written until all are
+    # in, so output and diagnostics are unchanged by completion order.
+    results = await _gather_bounded(
+        [
+            partial(
+                read,
+                operand,
+                filesystems[operand.name],
+                include_almost_all=request.include_almost_all,
+            )
+            for operand in request.operands
+        ]
+    )
     successes: list[_FileResult[_PayloadT] | _DirectoryResult[_PayloadT]] = []
     failures = []
-    for operand in request.operands:
-        result = await read(
-            operand,
-            filesystems[operand.name],
-            include_almost_all=request.include_almost_all,
-        )
+    for result in results:
         if isinstance(result, _Failure):
             failures.append(result)
         else:
@@ -174,7 +185,12 @@ async def _classify_operand(
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _Failure(operand, backend_error=error)
 
-    if not isinstance(info, Mapping) or info.get("type") not in {"file", "directory"}:
+    if not isinstance(info, Mapping):
+        return _Failure(operand)
+    kind = info.get("type")
+    if type(kind) is not str or (
+        kind not in {"file", "directory"} and info.get("islink") is not True
+    ):
         return _Failure(operand)
     return cast("Mapping[str, object]", info)
 
@@ -188,7 +204,7 @@ async def _read_plain_operand(
     info = await _classify_operand(operand, filesystem)
     if isinstance(info, _Failure):
         return info
-    if info["type"] == "file":
+    if info["type"] != "directory" or info.get("islink") is True:
         return _FileResult(operand=operand, value=operand.spelling)
 
     listing = await _list_directory(operand, filesystem, detail=False)
@@ -213,7 +229,7 @@ async def _read_long_operand(
     info = await _classify_operand(operand, filesystem)
     if isinstance(info, _Failure):
         return info
-    if info["type"] == "file":
+    if info["type"] != "directory" or info.get("islink") is True:
         row = _listing_row(info)
         if row is None or not row.name or "\0" in row.name or "\n" in row.name:
             return _Failure(operand)
@@ -308,7 +324,7 @@ def _directory_basename(path: str, name: object) -> str | None:
     if not name.startswith(prefix):
         return None
     basename = name[len(prefix) :]
-    if not basename or "/" in basename or "\0" in basename or "\n" in basename:
+    if not basename or "/" in basename or not valid_display_text(basename):
         return None
     return basename
 

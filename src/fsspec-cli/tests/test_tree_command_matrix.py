@@ -38,7 +38,7 @@ _SUB = _vos_container("/docs/sub", _vos_child("DataNode", "/docs/sub/b.txt", len
 _EMPTY = _vos_container("/docs/empty")
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
     from types import TracebackType
 
@@ -51,11 +51,9 @@ _RESPONSES: dict[tuple[str, str], httpx.Response] = {
 
 
 @dataclass(frozen=True)
-class _WalkCall:
+class _LsCall:
     path: str
-    maxdepth: int | None
     detail: bool
-    on_error: str
     kwargs: dict[str, object]
 
 
@@ -65,11 +63,13 @@ class _TreeProfileSource:
         factory: Callable[[], AsyncFileSystem],
         *,
         close: Callable[[AsyncFileSystem], Awaitable[None]] | None = None,
+        denied: frozenset[str] = frozenset(),
     ) -> None:
         self._factory = factory
         self._close = close
+        self.denied = denied
         self.lifecycle: list[str] = []
-        self.calls: list[_WalkCall] = []
+        self.calls: list[_LsCall] = []
         self.filesystems: list[AsyncFileSystem] = []
         self.exit_calls: list[
             tuple[
@@ -94,71 +94,23 @@ class _TreeProfileContext(AbstractAsyncContextManager[AsyncFileSystem]):
         self.filesystem = filesystem
         self.source.filesystems.append(filesystem)
         self.source.lifecycle.append("enter")
-        self._instrument_walk(filesystem)
+        self._instrument_ls(filesystem)
         return filesystem
 
-    def _instrument_walk(self, filesystem: AsyncFileSystem) -> None:
-        original_walk = filesystem._walk
-        if isinstance(filesystem, AsyncFileSystemWrapper):
+    def _instrument_ls(self, filesystem: AsyncFileSystem) -> None:
+        original_ls = filesystem._ls
 
-            def adapted_walk(
-                path: str,
-                maxdepth: int | None = None,
-                on_error: str = "omit",
-                **kwargs: object,
-            ) -> object:
-                detail = kwargs.pop("detail", False)
-                assert type(detail) is bool
-                self.source.calls.append(
-                    _WalkCall(path, maxdepth, detail, on_error, kwargs)
-                )
-                return original_walk(
-                    path,
-                    maxdepth=maxdepth,
-                    detail=detail,
-                    on_error=on_error,
-                    **kwargs,
-                )
-
-            setattr(filesystem, "_walk", adapted_walk)  # noqa: B010 - probe.
-            return
-
-        active = False
-
-        def native_walk(
+        async def ls(
             path: str,
-            maxdepth: int | None = None,
-            on_error: str = "omit",
+            detail: bool = True,  # noqa: FBT002 - matches the fsspec hook signature.
             **kwargs: object,
-        ) -> AsyncIterator[object]:
-            detail = kwargs.pop("detail", False)
-            assert type(detail) is bool
-            top_level = not active
-            if top_level:
-                self.source.calls.append(
-                    _WalkCall(path, maxdepth, detail, on_error, kwargs)
-                )
+        ) -> object:
+            self.source.calls.append(_LsCall(path, detail, kwargs))
+            if path in self.source.denied:
+                raise PermissionError(path)
+            return await original_ls(path, detail=detail, **kwargs)
 
-            async def traverse() -> AsyncIterator[object]:
-                nonlocal active
-                previous = active
-                if top_level:
-                    active = True
-                try:
-                    async for row in original_walk(
-                        path,
-                        maxdepth=maxdepth,
-                        detail=detail,
-                        on_error=on_error,
-                        **kwargs,
-                    ):
-                        yield row
-                finally:
-                    active = previous
-
-            return traverse()
-
-        setattr(filesystem, "_walk", native_walk)  # noqa: B010 - probe.
+        setattr(filesystem, "_ls", ls)  # noqa: B010 - probe.
 
     async def __aexit__(
         self,
@@ -200,10 +152,11 @@ def _exercise_tree_profile(
         f"{path}\n├── empty\n├── sub\n└── a.txt\n",
         "",
     )
-    assert source.calls == [
-        _WalkCall(path, None, detail=False, on_error="raise", kwargs={}),
-        _WalkCall(path, 1, detail=False, on_error="raise", kwargs={}),
-    ]
+    listed = [call.path for call in source.calls]
+    assert listed[0] == path
+    assert sorted(listed[1:3]) == [f"{path}/empty", f"{path}/sub"]
+    assert listed[3:] == [path]
+    assert all(call.detail is True and not call.kwargs for call in source.calls)
     expected_lifecycle = ["factory", "enter"]
     if source._close is not None:
         expected_lifecycle.append("close")
@@ -255,6 +208,37 @@ def test_adapted_memory_tree_profile_has_isolated_state(
     ]
     assert adapted_filesystems == source.filesystems
     assert all(isinstance(fs.sync_fs, MemoryFileSystem) for fs in adapted_filesystems)
+
+
+def test_adapted_memory_tree_fails_when_a_nested_directory_cannot_be_listed(
+    monkeypatch,
+) -> None:
+    source = _TreeProfileSource(
+        _memory_factory(
+            monkeypatch,
+            {"/docs/a.txt": b"a", "/docs/sub/b.txt": b"b"},
+            directories=("/docs/sub", "/docs/empty"),
+        ),
+        denied=frozenset({"/docs/sub"}),
+    )
+
+    result = CliRunner().invoke(
+        App({"memory": source}).typer_app,
+        ["tree", "memory:/docs"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "tree: memory:/docs: permission denied\n",
+    )
+    assert sorted(call.path for call in source.calls) == [
+        "/docs",
+        "/docs/empty",
+        "/docs/sub",
+    ]
+    assert source.lifecycle == ["factory", "enter", "exit"]
+    assert isinstance(source.exit_calls[0][1], PermissionError)
 
 
 def test_native_vosfs_tree_profile_uses_client_traversal_over_mocked_transport() -> (

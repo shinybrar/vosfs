@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import stat
 import time
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
+from ._accounts import group_name, owner_name
+from ._metadata import snapshot_mapping, valid_display_text
 from ._path import _lexical_basename
 
 if TYPE_CHECKING:
@@ -59,6 +62,7 @@ class ListingRow:
     group: str | int | None
     link_target: str | None
     extra: Mapping[str, object]
+    permissions: str | None = None
 
 
 def _kind(info: Mapping[str, object]) -> ListingKind:
@@ -82,7 +86,45 @@ def _non_negative_int(value: object) -> int | None:
 def _identity(value: object) -> str | int | None:
     if type(value) is int:
         return value if value >= 0 else None
-    return value if type(value) is str else None
+    if type(value) is str:
+        if not valid_display_text(value):
+            message = "identity contains a terminal control character"
+            raise ValueError(message)
+        return value
+    return None
+
+
+def _group(info: Mapping[str, object]) -> str | int | None:
+    for field in ("group", "gid"):
+        if info.get(field) is not None:
+            return _identity(info[field])
+    if "read_groups" not in info and "write_groups" not in info:
+        return None
+    summaries = []
+    for field, prefix in (("read_groups", "r"), ("write_groups", "w")):
+        groups = info.get(field)
+        if groups is None:
+            summary = "?"
+        elif isinstance(groups, (tuple, list)) and all(
+            type(group) is str and group and valid_display_text(group)
+            for group in groups
+        ):
+            summary = ",".join(str(group) for group in groups) if groups else "NONE"
+        else:
+            message = "invalid access group list"
+            raise ValueError(message)
+        summaries.append(f"{prefix}={summary}")
+    return ",".join(summaries)
+
+
+def _permissions(info: Mapping[str, object]) -> str | None:
+    value = info.get("permissions")
+    if value is None:
+        return None
+    if type(value) is not str or re.fullmatch(r"[-dl?][rwx?-]{9}", value) is None:
+        message = "invalid access summary"
+        raise ValueError(message)
+    return value
 
 
 def _supported_time(normalized: float) -> float | None:
@@ -135,6 +177,9 @@ def _link_target(info: Mapping[str, object]) -> str | None:
     for field in ("destination", "target"):
         value = info.get(field)
         if type(value) is str:
+            if not valid_display_text(value):
+                message = "link target contains a terminal control character"
+                raise ValueError(message)
             return value
     return None
 
@@ -150,8 +195,9 @@ def _extra(info: Mapping[str, object]) -> Mapping[str, object]:
 
 def to_listing(info: Mapping[str, object]) -> ListingRow:
     """Normalize one fsspec ``info`` mapping without filesystem I/O."""
+    info = snapshot_mapping(info)
     name = info.get("name")
-    if type(name) is not str:
+    if type(name) is not str or not valid_display_text(name):
         message = "info name must be a string"
         raise ValueError(message)
 
@@ -162,10 +208,11 @@ def to_listing(info: Mapping[str, object]) -> ListingRow:
         mtime=_mtime(info),
         mode=_non_negative_int(info.get("mode")),
         nlink=_non_negative_int(info.get("nlink")),
-        owner=_identity(info.get("uid")),
-        group=_identity(info.get("gid")),
+        owner=_identity(info.get("owner", info.get("uid"))),
+        group=_group(info),
         link_target=_link_target(info),
         extra=_extra(info),
+        permissions=_permissions(info),
     )
 
 
@@ -200,15 +247,22 @@ def format_size(size: int | None, *, human_readable: bool = False) -> str:
 def _format_mtime(value: float | None) -> str:
     if value is None:
         return "-"
-    return time.strftime("%b %e %H:%M", time.localtime(value))
+    now = time.time()
+    recent = now - 15_552_000 <= value <= now + 3600
+    return time.strftime(
+        "%b %e %H:%M" if recent else "%b %e  %Y", time.localtime(value)
+    )
 
 
 def _type_indicator(row: ListingRow) -> str:
     if row.mode is None:
-        return row.kind
+        return (
+            row.permissions
+            or {"file": "-", "dir": "d", "link": "l", "other": "?"}[row.kind] + "?" * 9
+        )
     mode_kind = _MODE_KIND_BY_TYPE.get(stat.S_IFMT(row.mode), "other")
     if mode_kind != row.kind:
-        return row.kind
+        return {"file": "-", "dir": "d", "link": "l", "other": "?"}[row.kind] + "?" * 9
     return stat.filemode(row.mode)
 
 
@@ -223,35 +277,47 @@ def render_listing(
     *,
     human_readable: bool = False,
 ) -> str:
-    """Render rows with only supported optional columns and neutral gaps."""
+    """Render stable shell columns with explicit gaps for unknown metadata."""
     if not rows:
         return ""
 
+    owners = {
+        value: "-"
+        if value is None
+        else owner_name(value)
+        if isinstance(value, int)
+        else value
+        for value in {row.owner for row in rows}
+    }
+    groups = {
+        value: "-"
+        if value is None
+        else group_name(value)
+        if isinstance(value, int)
+        else value
+        for value in {row.group for row in rows}
+    }
     rendered_columns: list[tuple[bool, list[str]]] = [
         (False, [_type_indicator(row) for row in rows])
     ]
-    optional_columns = (
-        (False, "nlink", lambda row: str(row.nlink)),
-        (False, "owner", lambda row: str(row.owner)),
-        (False, "group", lambda row: str(row.group)),
-        (
-            True,
-            "size",
-            lambda row: format_size(row.size, human_readable=human_readable),
-        ),
-        (False, "mtime", lambda row: _format_mtime(row.mtime)),
+    rendered_columns.extend(
+        [
+            (True, ["-" if row.nlink is None else str(row.nlink) for row in rows]),
+            (
+                False,
+                [owners[row.owner] for row in rows],
+            ),
+            (
+                False,
+                [groups[row.group] for row in rows],
+            ),
+            (
+                True,
+                [format_size(row.size, human_readable=human_readable) for row in rows],
+            ),
+            (False, [_format_mtime(row.mtime) for row in rows]),
+        ]
     )
-    for right_aligned, field, render in optional_columns:
-        if any(getattr(row, field) is not None for row in rows):
-            rendered_columns.append(
-                (
-                    right_aligned,
-                    [
-                        render(row) if getattr(row, field) is not None else "-"
-                        for row in rows
-                    ],
-                )
-            )
     rendered_columns.append((False, [_display_name(row) for row in rows]))
 
     widths = [max(len(cell) for cell in column) for _, column in rendered_columns]

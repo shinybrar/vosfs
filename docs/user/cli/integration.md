@@ -93,9 +93,10 @@ The command never infers this from a backend type or protocol.
 !!! danger "`recursion.remove` is your assertion, not a default"
 
     Enabling recursive removal asserts that every configured target satisfies
-    the guarded-removal contract. Removal is **sequential and non-atomic**: a
-    failure or cancellation can leave earlier confirmed removals in place and
-    the rest present or uncertain. There is no prompt, rollback, retry, trash,
+    the guarded-removal contract. Removal is **leaves-first and non-atomic**,
+    with entries at one depth removed concurrently: a failure or cancellation
+    can leave earlier confirmed removals in place and the rest present or
+    uncertain. There is no prompt, rollback, retry, trash,
     or recovery.
 
 ## Extensions
@@ -160,7 +161,7 @@ myapp fs cat data:/huge.log | head -5   # 141
 | Broken pipe gives | Commands |
 | --- | --- |
 | `141` | `cat`, `head`, `tail`, `rm -v` |
-| `1` | `ls`, `ll`, `du`, `find`, `tree`, `info`, `size`, `stat` |
+| `1` | `ls`, `du`, `find`, `tree`, `info`, `size`, `stat` |
 
 The second group formats and buffers its whole output before a single write, so
 a broken pipe there is an ordinary output failure with nothing partially
@@ -188,6 +189,40 @@ Stable categories: `not found`, `file exists`, `permission denied`,
 
 Control characters in an operand are escaped as `\xNN` before rendering, so a
 hostile or malformed path cannot inject terminal escapes.
+
+## Logging
+
+Commands emit standard-library log records under the `fsspec_cli` logger
+hierarchy. The library installs only a `NullHandler`, so nothing is printed
+unless your host configures a handler:
+
+```python
+import logging
+
+logging.getLogger("fsspec_cli").setLevel(logging.INFO)  # or DEBUG
+logging.getLogger("fsspec_cli").addHandler(logging.StreamHandler())
+```
+
+At **INFO**, `cp`, `cp -R`, and `mv` emit one record per file with the source
+and destination (as `name:/path`), the byte count, the duration, and an
+outcome:
+
+| Outcome | Meaning |
+| --- | --- |
+| `copied` | Same-filesystem `cp`, verified |
+| `staged` | Copied through a local temporary file (cross-filesystem `cp`, every `cp -R` write) |
+| `skipped` | `cp -R` found identical content and wrote nothing |
+| `moved` | `mv`, verified |
+| `verified` | One record per `cp -R`, after the whole tree passed final verification |
+
+The same values are attached to each record as the `outcome`, `source`,
+`destination`, `bytes`, and `duration` attributes. At **DEBUG**, `cp -R` also
+records its content-identity decisions (which checksum tokens were compared and
+whether they matched) and staging paths.
+
+Logged locations drop any URL user information, query string, and fragment,
+and escape control characters. Storage options and credentials are never
+logged.
 
 ## Shell completion
 

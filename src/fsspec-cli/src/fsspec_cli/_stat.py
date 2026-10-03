@@ -13,8 +13,11 @@ import stat as stat_module
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, cast
 
+from ._accounts import group_name as _group_name
+from ._accounts import owner_name as _owner_name
 from ._command import (
     _binary_stdout,
     _CommandFailureError,
@@ -25,19 +28,12 @@ from ._command import (
     _run_mapped_command,
     _write_binary,
 )
+from ._concurrent import _run_bounded
 
 if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
 
     from ._app import AsyncFilesystemSource
-
-try:
-    import grp
-    import pwd
-
-    _HAS_ACCOUNT_DB = True
-except ImportError:  # pragma: no cover - POSIX-only account databases.
-    _HAS_ACCOUNT_DB = False
 
 _MONTHS = (
     "Jan",
@@ -59,26 +55,6 @@ _MONTHS = (
 class _StatSuccess:
     operand: _MappedOperand
     line: bytes
-
-
-def _owner_name(uid: int) -> str:
-    """Resolve ``uid`` to a local ``pwd`` account name, numeric when unavailable."""
-    if not _HAS_ACCOUNT_DB:
-        return str(uid)
-    try:
-        return pwd.getpwuid(uid).pw_name
-    except (KeyError, OverflowError, OSError):
-        return str(uid)
-
-
-def _group_name(gid: int) -> str:
-    """Resolve ``gid`` to a local ``grp`` account name, numeric when unavailable."""
-    if not _HAS_ACCOUNT_DB:
-        return str(gid)
-    try:
-        return grp.getgrgid(gid).gr_name
-    except (KeyError, OverflowError, OSError):
-        return str(gid)
 
 
 def _format_mtime(mtime: float) -> str:
@@ -178,9 +154,22 @@ async def _trace_operands(
     operands: tuple[_MappedOperand, ...],
     filesystems: Mapping[str, AsyncFileSystem],
 ) -> None:
+    # Reads overlap under the shared bound; lines and diagnostics are still
+    # emitted strictly in operand order, and an operand whose read raised
+    # propagates at its own position, after every earlier operand's output.
+    outcomes = await _run_bounded(
+        [
+            partial(_read_operand, operand, filesystems[operand.name])
+            for operand in operands
+        ]
+    )
     failures: list[_Failure] = []
-    for operand in operands:
-        result = await _read_operand(operand, filesystems[operand.name])
+    for outcome in outcomes:
+        if outcome is None:  # pragma: no cover - only after a raised read.
+            break
+        if outcome.error is not None:
+            raise outcome.error
+        result = cast("_StatSuccess | _Failure", outcome.value)
         if isinstance(result, _Failure):
             failures.append(result)
             try:

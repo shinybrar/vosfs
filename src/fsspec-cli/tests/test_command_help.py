@@ -11,9 +11,8 @@ from typing import Any
 import pytest
 import typer.main
 from fsspec_cli import App
-from typer.testing import CliRunner
 
-from ._support import _invoke, _source_must_not_run
+from ._support import _source_must_not_run
 
 
 def _commands(**capabilities: Any) -> dict[str, Any]:
@@ -53,23 +52,3 @@ def test_every_registered_option_has_help_text(capabilities: dict[str, Any]) -> 
     }
 
     assert missing == {}
-
-
-def test_ll_rejects_the_redundant_long_listing_option() -> None:
-    result = _invoke("ll", ["-l", "memory:/docs"])
-
-    assert result.exit_code == 2
-    assert result.stdout == ""
-
-
-def test_ll_still_accepts_its_own_options() -> None:
-    result = CliRunner().invoke(
-        App({"memory": _source_must_not_run}).typer_app,
-        ["ll", "--help"],
-    )
-
-    assert result.exit_code == 0
-    # Assert on the help *text*, not the flag: `--help`'s own row contains the
-    # substring "-h", so `"-h" in stdout` would pass even if `-h` were removed.
-    assert "Include entries whose name begins with a dot." in result.stdout
-    assert "Print sizes in human-readable units." in result.stdout

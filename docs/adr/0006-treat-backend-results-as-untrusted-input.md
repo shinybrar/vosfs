@@ -58,7 +58,8 @@ clear diagnostic instead of a traceback or a wrong deletion.
 - Validation lives at the boundary, in the command that awaits the hook — not
   scattered through rendering.
 - A backend that is merely *sparse* (no `mode`, no `mtime`) is **not** invalid.
-  Missing optional metadata is normalized to `None` and omitted from output;
+  Missing optional metadata is normalized to `None` and displayed as unknown
+  in the stable shell columns defined by [ADR 0008](0008-render-shell-shaped-long-listings.md);
   only a value of the wrong *shape* is an incompatible result. See
   [`../design/fsspec-cli/contract.md` §10](../design/fsspec-cli/contract.md#10-metadata-normalization).
 - The CLI cannot accept a backend-declared capability registry: that would mean

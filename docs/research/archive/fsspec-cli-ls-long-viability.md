@@ -11,7 +11,7 @@ Client contract: fsspec 2026.6.0
 Status: **Decision evidence retained.** Issue #82 selected a strict rejection
 of `ls -l`; that stance was later reversed — see
 [why strict POSIX was the wrong bar](../design/fsspec-cli/lessons.md#12-strict-posix-was-the-wrong-bar)
-and the [long-listing contract](../design/fsspec-cli/commands.md#ls--l--ls--lh--ll).
+and the [long-listing contract](../design/fsspec-cli/commands.md#ls--l--ls--lh).
 This document remains the metadata evidence behind the original decision.
 
 ## Answer

@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import contextvars
 from functools import partial
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 from urllib.parse import unquote_to_bytes
 
 from fsspec.asyn import AsyncFileSystem
@@ -15,9 +15,110 @@ from fsspec.utils import other_paths
 from vosfs import paths
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable, Generator
+    from collections.abc import (
+        AsyncIterator,
+        Awaitable,
+        Callable,
+        Generator,
+        Sequence,
+    )
 
     from fsspec.callbacks import Callback
+
+_T = TypeVar("_T")
+
+#: Directory listings issued concurrently by one tree walk.
+LISTING_CONCURRENCY = 32
+
+
+def effective_limit(batch_size: int | None, count: int) -> int:
+    """Return a positive concurrency bound from an fsspec ``batch_size`` hint."""
+    if batch_size is None or batch_size == -1:
+        return max(count, 1)
+    return max(batch_size, 1)
+
+
+async def run_bounded(
+    factories: Sequence[Callable[[], Awaitable[_T]]],
+    limit: int,
+) -> list[_T]:
+    """Run coroutine factories with at most ``limit`` in flight, in input order.
+
+    After the first failure no further factory is started; already running
+    ones finish, and the failure with the lowest input index is raised, so the
+    reported error does not depend on scheduling.
+    """
+    results: list[Any] = [None] * len(factories)
+    failures: dict[int, Exception] = {}
+    semaphore = asyncio.Semaphore(limit)
+
+    async def run(index: int, factory: Callable[[], Awaitable[_T]]) -> None:
+        async with semaphore:
+            if failures:
+                return
+            try:
+                results[index] = await factory()
+            except Exception as exc:  # noqa: BLE001 - re-raised in input order below
+                failures[index] = exc
+
+    tasks = [asyncio.ensure_future(run(i, f)) for i, f in enumerate(factories)]
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+    if failures:
+        raise failures[min(failures)]
+    return results
+
+
+async def find_concurrently(
+    filesystem: Any,  # noqa: ANN401 - the adapter or any fsspec async filesystem
+    path: str,
+    maxdepth: int | None = None,
+    withdirs: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
+    **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
+) -> list[str] | dict[str, dict[str, Any]]:
+    """Implement fsspec ``_find`` with one bounded concurrent listing per level.
+
+    fsspec's inherited ``_find`` walks depth-first and awaits one listing at a
+    time, so a tree of ``D`` containers costs ``D`` sequential round trips.
+    This walks breadth-first, listing every container of one depth together,
+    and returns the same result. ``on_error`` applies at every depth; fsspec's
+    nested ``_walk`` calls drop it and silently treat an unreadable descendant
+    as empty even when ``on_error="raise"``.
+    """
+    if maxdepth is not None and maxdepth < 1:
+        msg = "maxdepth must be at least 1"
+        raise ValueError(msg)
+    path = filesystem._strip_protocol(path)  # noqa: SLF001 - fsspec hook
+    detail = kwargs.pop("detail", False)
+    on_error = kwargs.pop("on_error", "omit")
+    out: dict[str, dict[str, Any]] = {}
+    if withdirs and path != "" and await filesystem._isdir(path):  # noqa: SLF001
+        out[path] = await filesystem._info(path)  # noqa: SLF001
+
+    listing = _listing_reader(filesystem, on_error, kwargs)
+    level = [path]
+    depth = 1
+    while level:
+        listings = await run_bounded(
+            [partial(listing, directory) for directory in level],
+            LISTING_CONCURRENCY,
+        )
+        level = _collect_level(level, listings, out, withdirs=withdirs)
+        if maxdepth is not None and depth >= maxdepth:
+            break
+        depth += 1
+
+    if not out and await filesystem._isfile(path):  # noqa: SLF001
+        out[path] = {}
+    names = sorted(out)
+    if not detail:
+        return names
+    return {name: out[name] for name in names}
 
 
 class _CanonicalPath(str):
@@ -38,6 +139,49 @@ def normalize_path(path: str) -> str:
     if isinstance(path, _CanonicalPath):
         return path
     return canonical_path(paths.strip_protocol(path))
+
+
+def _listing_reader(
+    filesystem: Any,  # noqa: ANN401 - the adapter or any fsspec async filesystem
+    on_error: Any,  # noqa: ANN401 - fsspec accepts "omit", "raise", or a callable
+    kwargs: dict[str, Any],
+) -> Callable[[str], Awaitable[list[dict[str, Any]]]]:
+    """Return one container lister applying ``on_error`` like fsspec ``_walk``."""
+    semaphore = asyncio.Semaphore(LISTING_CONCURRENCY)
+
+    async def listing(directory: str) -> list[dict[str, Any]]:
+        async with semaphore:
+            try:
+                return await filesystem._ls(directory, detail=True, **kwargs)  # noqa: SLF001
+            except OSError as exc:
+                if on_error == "raise":
+                    raise
+                if callable(on_error):
+                    on_error(exc)
+                return []
+
+    return listing
+
+
+def _collect_level(
+    level: list[str],
+    listings: list[list[dict[str, Any]]],
+    out: dict[str, dict[str, Any]],
+    *,
+    withdirs: bool,
+) -> list[str]:
+    """Record one depth's entries in ``out`` and return the next depth."""
+    children: list[str] = []
+    for directory, entries in zip(level, listings, strict=True):
+        for info in entries:
+            pathname = info["name"].rstrip("/")
+            if info["type"] == "directory" and pathname != directory:
+                children.append(pathname)
+                if withdirs:
+                    out[info["name"]] = info
+            else:
+                out[info["name"]] = info
+    return children
 
 
 class WriteState:
@@ -226,7 +370,7 @@ class FsspecAdapter:
 
     _expand_path = AsyncFileSystem._expand_path  # noqa: SLF001 - inherited seam
     _exists = AsyncFileSystem._exists  # noqa: SLF001 - inherited seam
-    _find = AsyncFileSystem._find  # noqa: SLF001 - inherited seam
+    _find = find_concurrently
     _glob = AsyncFileSystem._glob  # noqa: SLF001 - inherited seam
     _isdir = AsyncFileSystem._isdir  # noqa: SLF001 - inherited seam
     _isfile = AsyncFileSystem._isfile  # noqa: SLF001 - inherited seam

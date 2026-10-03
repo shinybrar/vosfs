@@ -84,15 +84,27 @@ def _exercise_find_profile(  # noqa: PLR0913 - matrix golden expectations.
         "enter",
         "exit",
     ] * 4
-    assert [
-        (call.path, call.maxdepth, call.withdirs, call.detail, call.kwargs)
-        for call in source.find_calls
-    ] == [
-        (path, None, False, False, {}),
-        (path, 1, False, False, {}),
-        (path, None, True, True, {}),
-        (path, 1, True, True, {}),
+    # One listing per directory; siblings of one depth are listed
+    # concurrently, so only their set (not their start order) is fixed.
+    root_info = ("info", path, None)
+    root_ls = ("ls", path, True)
+    nested = sorted(("ls", f"{path}/{name}", True) for name in ("empty", "sub"))
+    expected_by_run = [
+        ([root_ls], nested),
+        ([root_ls], []),
+        ([root_info, root_ls], nested),
+        ([root_info, root_ls], []),
     ]
+    for source_id, (ordered, concurrent) in enumerate(expected_by_run, start=1):
+        calls = [
+            (call.operation, call.path, call.detail)
+            for call in source.calls
+            if call.source_id == source_id
+        ]
+        assert calls[: len(ordered)] == ordered
+        assert sorted(calls[len(ordered) :]) == concurrent
+    assert all(not call.kwargs for call in source.calls)
+    assert not source.find_calls
     assert not source.errors
 
 
@@ -147,6 +159,29 @@ def test_adapted_memory_find_profile_has_isolated_state(
 
     assert all(isinstance(fs, AsyncFileSystemWrapper) for fs in source.filesystems)
     assert all(isinstance(fs.sync_fs, MemoryFileSystem) for fs in source.filesystems)
+
+
+@pytest.mark.parametrize("arguments", [[], ["--type", "d"]])
+def test_adapted_memory_find_reports_a_missing_operand_as_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+    arguments: list[str],
+) -> None:
+    source = _memory_source(monkeypatch)
+
+    result = CliRunner().invoke(
+        App({"memory": source}).typer_app,
+        ["find", *arguments, "memory:/docs/missing"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "find: memory:/docs/missing: not found\n",
+    )
+    assert [(call.operation, call.path) for call in source.calls] == [
+        ("info" if arguments else "ls", "/docs/missing"),
+    ]
+    assert source.exit_calls[0].exc_type is FileNotFoundError
 
 
 def test_native_vosfs_find_profile_uses_only_mocked_transport() -> None:

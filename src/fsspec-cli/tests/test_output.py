@@ -51,10 +51,10 @@ def test_ls_processes_operands_in_order_then_renders_sorted_output_blocks() -> N
     assert result.stderr == ""
     assert [(event[0], event[2]) for event in events if event[0] in {"info", "ls"}] == [
         ("info", "/z-dir"),
-        ("ls", "/z-dir"),
         ("info", "/b.txt"),
         ("info", "/a.txt"),
         ("info", "/empty"),
+        ("ls", "/z-dir"),
         ("ls", "/empty"),
     ]
 
@@ -119,11 +119,11 @@ def test_ls_keeps_duplicates_and_successes_while_reporting_every_failure(
         ("info", "/z-file"),
         ("info", "/missing"),
         ("info", "/bad-dir"),
-        ("ls", "/bad-dir"),
         ("info", "/a-file"),
         ("info", "/z-file"),
         ("info", "/denied"),
         ("info", "/ok-dir"),
+        ("ls", "/bad-dir"),
         ("ls", "/ok-dir"),
     ]
 
@@ -322,10 +322,10 @@ def test_ls_sorts_repeated_directory_blocks_with_raw_string_ties(
     )
     assert [(event[0], event[2]) for event in events if event[0] in {"info", "ls"}] == [
         ("info", "/z"),
-        ("ls", "/z"),
         ("info", "/a"),
-        ("ls", "/a"),
         ("info", "/z"),
+        ("ls", "/z"),
+        ("ls", "/a"),
         ("ls", "/z"),
     ]
 

@@ -5,18 +5,13 @@ source mapping you passed to `App`; `/path` is handed to that backend
 literally.
 
 `--` ends option parsing. A mapped operand always begins with `name:`, and a
-source name may not start with `-`, so `--` matters mainly for the source-free
-commands, whose operand is a bare string:
-
-```bash
-myapp fs basename -- -weird-name
-```
+source name may not start with `-`.
 
 ## At a glance
 
 | Command | Does |
 | --- | --- |
-| [`ls`](#ls-ll) | List directory contents; `-l`/`ll` for long form |
+| [`ls`](#ls) | List directory contents; `-l` for long form |
 | [`du`](#du) | Recursive byte usage |
 | [`find`](#find) | Recursive path list |
 | [`tree`](#tree) | Recursive tree drawing |
@@ -32,29 +27,34 @@ myapp fs basename -- -weird-name
 | [`rmdir`](#rmdir) | Remove empty directories |
 | [`unlink`](#unlink) | Remove one file |
 | [`rm`](#rm) | Remove files; `-d` empty dirs; guarded `-R` |
-| [`basename` / `dirname`](#basename-dirname) | Path string slicing, no I/O |
 
 ## Listing
 
-### `ls`, `ll` {#ls-ll}
+### `ls` {#ls}
 
 ```bash
 myapp fs ls data:/project
 myapp fs ls -A data:/project          # include dot entries
 myapp fs ls -l data:/project          # long form
 myapp fs ls -lh data:/project         # long form, human-readable sizes
-myapp fs ll -h data:/project          # `ll` is always long
 ```
 
 A file operand prints itself; a directory prints its sorted children. With
 several operands, files come first, then one headed block per directory.
 
-Long listing shows **only the columns the backend actually supplies**. Against
-local disk you get a full POSIX-like row; against an object store you get type,
-size, and mtime. Missing values show `-`; nothing is invented.
+Long listing keeps the shell order: permissions, link count, owner, group,
+size, modification time, and name. Missing values show `-`; missing permission
+bits show `?`, for example `-?????????` for a file without a mode. Recent dates
+show a time; old dates show the year. No allocated-block total is invented.
+Numeric local identities resolve to names when available.
 
-`-h` means human-readable, not help. `ll` does not accept `-l` — it is already
-long.
+For VOSpace, the owner is a creator display identity. The group field preserves
+both access lists, for example `r=OSSOS,w=NONE`; this is not a POSIX owning
+group. Permission characters summarize VOSpace access and do not imply POSIX
+execute or chmod semantics. Use `info` to inspect lock state, all access fields,
+and the original properties. Direct links show `name -> target`.
+
+`-h` means human-readable, not help.
 
 ### `du`
 
@@ -66,9 +66,13 @@ myapp fs du -sh data:/project         # total, human-readable
 
 !!! warning "`du` is recursive and can be expensive"
 
-    On backends using fsspec's default hook, `du` walks the whole subtree and
-    reads metadata for every file. Against a remote store that is many
-    requests. **`-s` changes the output, not the traversal cost.**
+    `du` lists the whole subtree, one listing per directory, and sums the
+    sizes those listings report. Directories at the same depth are listed
+    concurrently, but against a remote store that is still one request per
+    directory. **`-s` changes the output, not the traversal cost.**
+
+`du`, `find`, and `tree` fail if any directory in the subtree cannot be
+listed, rather than treating it as empty.
 
 ### `find`
 
@@ -157,7 +161,8 @@ myapp fs head -c 512 data:/big.log
 myapp fs tail -c 512 data:/big.log
 ```
 
-Byte counts only — there is no `-n` line mode.
+Byte counts only — there is no `-n` line mode. A count larger than the file
+prints the whole file; `-c 0` checks the file exists and prints nothing.
 
 !!! note "Bounded request, not necessarily a bounded transfer"
 
@@ -198,6 +203,20 @@ stage through one local temporary.
 manifest of the source tree — bounded at 10,000 entries — before mutating
 anything, preserves empty directories, and rejects symlinks and special entries
 *before* any write.
+
+Repeating `cp -R` skips content-identical files. Compatible MD5 checksums avoid
+both download and upload. Otherwise, same-size files are compared using bounded
+local staging and SHA-256; different contents are copied using the staged
+source. Equal sizes or timestamps alone do not authorize a skip. If a candidate
+cannot be read, the copy fails explicitly.
+
+Without checksums, equality checking reads both files: it saves destination
+writes, not necessarily network traffic. Extra destination files are retained.
+All skipped entries still participate in final verification.
+
+Files are transferred concurrently, up to 16 at a time. After the first
+failure no new transfer starts; transfers already running finish, and the
+failure reported is the first one in source-tree order.
 
 It is **not** a snapshot, transaction, mirror, or rollback, and does not
 preserve POSIX metadata.
@@ -267,24 +286,13 @@ is idempotent, and `-f` with no operands succeeds silently.
 
 !!! danger "`rm -R` is off unless the host enabled it"
 
-    It requires the `recursion.remove` capability. Removal is **sequential and
-    non-atomic** — a failure partway through leaves earlier removals done and
-    the rest present or uncertain. There is no prompt, undo, or trash.
+    It requires the `recursion.remove` capability. Removal is **leaves-first
+    and non-atomic**: entries at the same depth are removed concurrently, a
+    directory only after all its children are confirmed gone. A failure
+    partway through leaves earlier removals done and the rest present or
+    uncertain. There is no prompt, undo, or trash.
 
     Root paths and any path containing `.` or `..` are rejected outright.
-
-## Path strings
-
-### `basename`, `dirname` {#basename-dirname}
-
-```bash
-myapp fs basename /a/b/c.txt          # c.txt
-myapp fs basename /a/b/c.txt .txt     # c
-myapp fs dirname /a/b/c.txt           # /a/b
-```
-
-Pure string operations — no filesystem is contacted and no source is required.
-`data:/x/y` is treated as ordinary text.
 
 ## When something fails
 
