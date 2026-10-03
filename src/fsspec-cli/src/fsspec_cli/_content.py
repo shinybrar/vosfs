@@ -45,6 +45,19 @@ def matching_checksum(
     return digest is not None and digest == _md5(destination)
 
 
+def describe_checksums(
+    source: tuple[tuple[str, object], ...], destination: tuple[tuple[str, object], ...]
+) -> str:
+    """Describe the content-identity decision for a debug record, without values."""
+    source_digest = _md5(source)
+    destination_digest = _md5(destination)
+    if source_digest is None or destination_digest is None:
+        return "no compatible MD5 checksum on both sides; comparing SHA-256"
+    if source_digest == destination_digest:
+        return "MD5 checksums equal"
+    return "MD5 checksums differ; comparing SHA-256"
+
+
 def _digest(path: str) -> bytes:
     digest = hashlib.sha256()
     with Path(path).open("rb") as stream:

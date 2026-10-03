@@ -66,9 +66,13 @@ myapp fs du -sh data:/project         # total, human-readable
 
 !!! warning "`du` is recursive and can be expensive"
 
-    On backends using fsspec's default hook, `du` walks the whole subtree and
-    reads metadata for every file. Against a remote store that is many
-    requests. **`-s` changes the output, not the traversal cost.**
+    `du` lists the whole subtree, one listing per directory, and sums the
+    sizes those listings report. Directories at the same depth are listed
+    concurrently, but against a remote store that is still one request per
+    directory. **`-s` changes the output, not the traversal cost.**
+
+`du`, `find`, and `tree` fail if any directory in the subtree cannot be
+listed, rather than treating it as empty.
 
 ### `find`
 
@@ -157,7 +161,8 @@ myapp fs head -c 512 data:/big.log
 myapp fs tail -c 512 data:/big.log
 ```
 
-Byte counts only — there is no `-n` line mode.
+Byte counts only — there is no `-n` line mode. A count larger than the file
+prints the whole file; `-c 0` checks the file exists and prints nothing.
 
 !!! note "Bounded request, not necessarily a bounded transfer"
 
@@ -208,6 +213,10 @@ cannot be read, the copy fails explicitly.
 Without checksums, equality checking reads both files: it saves destination
 writes, not necessarily network traffic. Extra destination files are retained.
 All skipped entries still participate in final verification.
+
+Files are transferred concurrently, up to 16 at a time. After the first
+failure no new transfer starts; transfers already running finish, and the
+failure reported is the first one in source-tree order.
 
 It is **not** a snapshot, transaction, mirror, or rollback, and does not
 preserve POSIX metadata.
@@ -277,9 +286,11 @@ is idempotent, and `-f` with no operands succeeds silently.
 
 !!! danger "`rm -R` is off unless the host enabled it"
 
-    It requires the `recursion.remove` capability. Removal is **sequential and
-    non-atomic** — a failure partway through leaves earlier removals done and
-    the rest present or uncertain. There is no prompt, undo, or trash.
+    It requires the `recursion.remove` capability. Removal is **leaves-first
+    and non-atomic**: entries at the same depth are removed concurrently, a
+    directory only after all its children are confirmed gone. A failure
+    partway through leaves earlier removals done and the rest present or
+    uncertain. There is no prompt, undo, or trash.
 
     Root paths and any path containing `.` or `..` are rejected outright.
 

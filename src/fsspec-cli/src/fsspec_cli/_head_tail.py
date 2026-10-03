@@ -33,6 +33,13 @@ async def _read_head(
     request: _ByteRangeRequest,
     filesystem: AsyncFileSystem,
 ) -> bytes:
+    if request.count == 0:
+        try:
+            info = await filesystem._info(request.operand.path)
+        except Exception as error:
+            raise _CommandFailureError(request.operand, error) from error
+        if _is_file(request.operand, info):
+            return b""
     try:
         result = await filesystem._cat_file(
             request.operand.path,
@@ -46,16 +53,30 @@ async def _read_head(
     return result
 
 
-def _size_from_info(operand: _MappedOperand, info: object) -> int:
+def _info_field(operand: _MappedOperand, info: object, key: str) -> object:
     if not isinstance(info, Mapping):
         raise _CommandFailureError(operand)
     try:
-        size = info.get("size")
+        return info.get(key)
     except Exception:  # noqa: BLE001 - hostile metadata mapping boundary.
         raise _CommandFailureError(operand) from None
+
+
+def _size_from_info(operand: _MappedOperand, info: object) -> int:
+    size = _info_field(operand, info, "size")
     if not _valid_size(size):
         raise _CommandFailureError(operand)
     return size
+
+
+def _is_file(operand: _MappedOperand, info: object) -> bool:
+    """Return whether ``info`` proves a regular file, so a zero read needs no bytes.
+
+    Any other kind falls back to the bounded read, so the backend still owns
+    the diagnostic for directories and other non-file operands.
+    """
+    kind = _info_field(operand, info, "type")
+    return type(kind) is str and kind == "file"
 
 
 async def _read_tail(
@@ -67,10 +88,13 @@ async def _read_tail(
     except Exception as error:
         raise _CommandFailureError(request.operand, error) from error
     size = _size_from_info(request.operand, info)
+    if request.count == 0 and _is_file(request.operand, info):
+        return b""
     try:
         result = await filesystem._cat_file(
             request.operand.path,
-            start=size - request.count,
+            # A negative start is an fsspec suffix offset, not "from the start".
+            start=max(0, size - request.count),
             end=None,
         )
     except Exception as error:

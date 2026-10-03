@@ -286,7 +286,7 @@ def test_native_vosfs_head_and_tail_profiles_observe_ranged_gets() -> None:
     assert transports[1].range_headers == ["bytes=7-"]
     assert transports[0].requests == [
         ("GET", "/arc/capabilities"),
-        ("GET", "/arc/nodes"),
+        # The target node GET records the VOSpace authority, so no root GET.
         ("GET", "/arc/nodes/blob.bin"),
         ("POST", "/arc/synctrans"),
         ("GET", "/arc/details"),

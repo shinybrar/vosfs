@@ -14,45 +14,51 @@ import pytest
 from .test_recursive_cp import _invoke, _source, _TreeFileSystem
 
 
-@pytest.mark.parametrize("shape", ["duplicate", "missing", "unreachable", "row"])
-def test_recursive_cp_rejects_malformed_walk_shapes_before_mutation(
+def _file_info(name: object, **fields: object) -> dict[object, object]:
+    return {"name": name, "type": "file", "size": 1, **fields}
+
+
+class _ListSubclass(list):
+    pass
+
+
+_MALFORMED_LISTINGS: dict[str, object] = {
+    "duplicate": [_file_info("/docs/f"), _file_info("/docs/f")],
+    "duplicate-directory": [
+        {"name": "/docs/d", "type": "directory", "size": 0},
+        _file_info("/docs/d/"),
+    ],
+    "outside": [_file_info("/outside/f")],
+    "nested": [_file_info("/docs/deeper/f")],
+    "self": [{"name": "/docs", "type": "directory", "size": 0}],
+    "tuple": (_file_info("/docs/f"),),
+    "list-subclass": _ListSubclass([_file_info("/docs/f")]),
+    "none": None,
+    "non-mapping": [("name", "/docs/f")],
+    "non-string-name": [_file_info(b"/docs/f")],
+    "non-string-type": [{"name": "/docs/f", "type": None, "size": 1}],
+}
+
+
+@pytest.mark.parametrize("shape", list(_MALFORMED_LISTINGS))
+def test_recursive_cp_rejects_malformed_listing_shapes_before_mutation(
     shape: str,
 ) -> None:
     entries: dict[str, bytes | None] = {"/": None, "/docs": None, "/out": None}
     calls: list[tuple[object, ...]] = []
-    empty_row = ("/docs", {}, {})
-    if shape == "duplicate":
-        rows: list[object] = [empty_row, empty_row]
-    elif shape == "missing":
-        rows = [
-            (
-                "/docs",
-                {
-                    "nested": {
-                        "name": "/docs/nested",
-                        "type": "directory",
-                        "size": 0,
-                    }
-                },
-                {},
-            )
-        ]
-    elif shape == "unreachable":
-        rows = [empty_row, ("/outside", {}, {})]
-    else:
-        rows = [("/docs", {}, {}, "extra")]
 
     def configure(filesystem: _TreeFileSystem) -> None:
-        async def walk(
+        async def ls(
             self: _TreeFileSystem,
+            path: str,
             *args: object,
             **kwargs: object,
-        ):
-            del self, args, kwargs
-            for row in rows:
-                yield row
+        ) -> object:
+            del args, kwargs
+            self.calls.append(("ls", path))
+            return _MALFORMED_LISTINGS[shape]
 
-        filesystem._walk = MethodType(walk, filesystem)  # type: ignore[method-assign]
+        filesystem._ls = MethodType(ls, filesystem)  # type: ignore[method-assign]
 
     result = _invoke(
         ["-R", "memory:/docs", "memory:/out/copy"],
@@ -64,7 +70,97 @@ def test_recursive_cp_rejects_malformed_walk_shapes_before_mutation(
         "",
         "cp: memory:/docs: incompatible result\n",
     )
+    assert [call for call in calls if call[0] == "ls"] == [("ls", "/docs")]
     assert not [call for call in calls if call[0] in {"mkdir", "put_file"}]
+
+
+def test_recursive_cp_fails_when_an_advertised_directory_vanishes() -> None:
+    entries: dict[str, bytes | None] = {
+        "/": None,
+        "/docs": None,
+        "/docs/nested": None,
+        "/docs/file": b"x",
+        "/out": None,
+    }
+    calls: list[tuple[object, ...]] = []
+
+    def configure(filesystem: _TreeFileSystem) -> None:
+        original = filesystem._ls
+
+        async def ls(
+            self: _TreeFileSystem,
+            path: str,
+            detail: bool = True,  # noqa: FBT002 - fsspec hook signature.
+            **kwargs: object,
+        ) -> object:
+            if path == "/docs/nested":
+                self.calls.append(("ls", path))
+                raise FileNotFoundError(path)
+            return await original(path, detail, **kwargs)
+
+        filesystem._ls = MethodType(ls, filesystem)  # type: ignore[method-assign]
+
+    result = _invoke(
+        ["-R", "memory:/docs", "memory:/out/copy"],
+        {"memory": _source(entries, calls, configure=configure)},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: memory:/docs: not found\n",
+    )
+    assert not [call for call in calls if call[0] in {"mkdir", "get_file", "put_file"}]
+
+
+@pytest.mark.parametrize("locked", ["/docs/a", "/docs/a/b", "/docs/z/y/x"])
+def test_recursive_cp_fails_on_unreadable_nested_directory_before_mutation(
+    locked: str,
+) -> None:
+    entries: dict[str, bytes | None] = {
+        "/": None,
+        "/docs": None,
+        "/docs/a": None,
+        "/docs/a/b": None,
+        "/docs/a/b/deep.txt": b"deep",
+        "/docs/top.txt": b"top",
+        "/docs/z": None,
+        "/docs/z/y": None,
+        "/docs/z/y/x": None,
+        "/out": None,
+    }
+    calls: list[tuple[object, ...]] = []
+
+    def configure(filesystem: _TreeFileSystem) -> None:
+        original = filesystem._ls
+
+        async def ls(
+            self: _TreeFileSystem,
+            path: str,
+            detail: bool = True,  # noqa: FBT002 - fsspec hook signature.
+            **kwargs: object,
+        ) -> object:
+            if path == locked:
+                self.calls.append(("ls", path))
+                message = "denied"
+                raise PermissionError(message)
+            return await original(path, detail, **kwargs)
+
+        filesystem._ls = MethodType(ls, filesystem)  # type: ignore[method-assign]
+
+    result = _invoke(
+        ["-R", "memory:/docs", "memory:/out/copy"],
+        {"memory": _source(entries, calls, configure=configure)},
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: memory:/docs: permission denied\n",
+    )
+    assert ("ls", locked) in calls
+    assert not [call for call in calls if call[0] in {"mkdir", "get_file", "put_file"}]
+    assert "/out/copy" not in entries
 
 
 @pytest.mark.parametrize(
@@ -84,8 +180,16 @@ def test_recursive_cp_classifies_destination_preflight_failures(
         "/docs": None,
         "/docs/file": b"x",
     }
-    destination_entries: dict[str, bytes | None] = {"/": None, "/out": None}
-    metadata = {"/out/copy/file": error}
+    # The existing directory receives the source as /out/copy/docs; that
+    # resolved root exists, so its entries are read before any mutation.
+    destination_entries: dict[str, bytes | None] = {
+        "/": None,
+        "/out": None,
+        "/out/copy": None,
+        "/out/copy/docs": None,
+    }
+    destination_calls: list[tuple[object, ...]] = []
+    metadata = {"/out/copy/docs/file": error}
 
     result = _invoke(
         ["-R", "source:/docs", "destination:/out/copy"],
@@ -93,7 +197,7 @@ def test_recursive_cp_classifies_destination_preflight_failures(
             "source": _source(source_entries, []),
             "destination": _source(
                 destination_entries,
-                [],
+                destination_calls,
                 metadata=metadata,
             ),
         },
@@ -104,7 +208,8 @@ def test_recursive_cp_classifies_destination_preflight_failures(
         "",
         f"cp: destination:/out/copy: {category}\n",
     )
-    assert "/out/copy" not in destination_entries
+    assert "/out/copy/docs/file" not in destination_entries
+    assert not [call for call in destination_calls if call[0] in {"mkdir", "put_file"}]
 
 
 def test_recursive_cp_reports_directory_creation_failure_with_residue() -> None:
@@ -421,13 +526,13 @@ def test_recursive_cp_propagates_cleanup_base_exception_after_success(
     [
         "source info",
         "target info",
-        "walk",
+        "listing",
         "destination preflight",
         "mkdir",
         "download",
         "upload",
         "source revalidation info",
-        "source revalidation walk",
+        "source revalidation listing",
         "destination proof",
     ],
 )
@@ -440,7 +545,13 @@ def test_recursive_cp_drains_current_operation_on_cancellation(  # noqa: C901, P
         "/docs/file": b"x",
     }
     destination_entries: dict[str, bytes | None] = {"/": None, "/out": None}
+    if phase == "destination preflight":
+        # Per-entry preflight reads happen only below an existing target, which
+        # then receives the source as /out/copy/docs.
+        destination_entries["/out/copy"] = None
+        destination_entries["/out/copy/docs"] = None
     drained = False
+    uploaded = False
     temporary_paths: list[str] = []
     owner_task: asyncio.Task[object] | None = None
 
@@ -472,31 +583,23 @@ def test_recursive_cp_drains_current_operation_on_cancellation(  # noqa: C901, P
                 await cancel_then_resume()
             return await original_info(path, **kwargs)
 
-        original_walk = filesystem._walk
-        walk_calls = 0
+        original_ls = filesystem._ls
+        ls_calls = 0
 
-        async def walk(
+        async def ls(
             self: _TreeFileSystem,
             path: str,
-            *,
-            detail: bool,
-            on_error: str,
+            detail: bool = True,  # noqa: FBT002
             **kwargs: object,
-        ):
-            nonlocal walk_calls
+        ) -> list[dict[str, object]]:
+            nonlocal ls_calls
             del self
-            walk_calls += 1
-            if (phase == "walk" and walk_calls == 1) or (
-                phase == "source revalidation walk" and walk_calls == 2
+            ls_calls += 1
+            if (phase == "listing" and ls_calls == 1) or (
+                phase == "source revalidation listing" and ls_calls == 2
             ):
                 await cancel_then_resume()
-            async for row in original_walk(
-                path,
-                detail=detail,
-                on_error=on_error,
-                **kwargs,
-            ):
-                yield row
+            return await original_ls(path, detail, **kwargs)
 
         original_get = filesystem._get_file
 
@@ -513,7 +616,7 @@ def test_recursive_cp_drains_current_operation_on_cancellation(  # noqa: C901, P
             await original_get(remote, local, **kwargs)
 
         filesystem._info = MethodType(info, filesystem)  # type: ignore[method-assign]
-        filesystem._walk = MethodType(walk, filesystem)  # type: ignore[method-assign]
+        filesystem._ls = MethodType(ls, filesystem)  # type: ignore[method-assign]
         filesystem._get_file = MethodType(get_file, filesystem)  # type: ignore[method-assign]
 
     def configure_destination(filesystem: _TreeFileSystem) -> None:
@@ -539,13 +642,13 @@ def test_recursive_cp_drains_current_operation_on_cancellation(  # noqa: C901, P
                 )
                 or (
                     phase == "destination preflight"
-                    and path == "/out/copy/file"
+                    and path == "/out/copy/docs/file"
                     and path_calls[path] == 1
                 )
                 or (
                     phase == "destination proof"
                     and path == "/out/copy/file"
-                    and path_calls[path] == 2
+                    and uploaded
                 )
             )
             if should_cancel:
@@ -574,10 +677,12 @@ def test_recursive_cp_drains_current_operation_on_cancellation(  # noqa: C901, P
             mode: str = "overwrite",
             **kwargs: object,
         ) -> None:
+            nonlocal uploaded
             del self
             if phase == "upload":
                 await cancel_then_resume()
             await original_put(local, remote, mode, **kwargs)
+            uploaded = True
 
         filesystem._info = MethodType(info, filesystem)  # type: ignore[method-assign]
         filesystem._mkdir = MethodType(mkdir, filesystem)  # type: ignore[method-assign]
@@ -598,13 +703,10 @@ def test_recursive_cp_drains_current_operation_on_cancellation(  # noqa: C901, P
 
     assert drained
     assert not [path for path in temporary_paths if Path(path).exists()]
-    if phase in {
-        "source info",
-        "target info",
-        "walk",
-        "destination preflight",
-    }:
+    if phase in {"source info", "target info", "listing"}:
         assert "/out/copy" not in destination_entries
+    elif phase == "destination preflight":
+        assert "/out/copy/docs/file" not in destination_entries
     elif phase in {"mkdir", "download"}:
         assert destination_entries["/out/copy"] is None
         assert "/out/copy/file" not in destination_entries
@@ -612,7 +714,7 @@ def test_recursive_cp_drains_current_operation_on_cancellation(  # noqa: C901, P
         assert destination_entries["/out/copy/file"] == b"x"
 
 
-def test_recursive_cp_classifies_final_source_walk_failure() -> None:
+def test_recursive_cp_classifies_final_source_listing_failure() -> None:
     source_entries: dict[str, bytes | None] = {
         "/": None,
         "/docs": None,
@@ -621,32 +723,24 @@ def test_recursive_cp_classifies_final_source_walk_failure() -> None:
     destination_entries: dict[str, bytes | None] = {"/": None, "/out": None}
 
     def configure(filesystem: _TreeFileSystem) -> None:
-        original = filesystem._walk
+        original = filesystem._ls
         calls = 0
 
-        async def walk(
+        async def ls(
             self: _TreeFileSystem,
             path: str,
-            *,
-            detail: bool,
-            on_error: str,
+            detail: bool = True,  # noqa: FBT002
             **kwargs: object,
-        ):
+        ) -> list[dict[str, object]]:
             nonlocal calls
             del self
             calls += 1
             if calls == 2:
-                message = "final walk"
+                message = "final listing"
                 raise OSError(message)
-            async for row in original(
-                path,
-                detail=detail,
-                on_error=on_error,
-                **kwargs,
-            ):
-                yield row
+            return await original(path, detail, **kwargs)
 
-        filesystem._walk = MethodType(walk, filesystem)  # type: ignore[method-assign]
+        filesystem._ls = MethodType(ls, filesystem)  # type: ignore[method-assign]
 
     result = _invoke(
         ["-R", "source:/docs", "destination:/out/copy"],
@@ -675,20 +769,15 @@ def test_recursive_cp_classifies_destination_proof_failure() -> None:
 
     def configure(filesystem: _TreeFileSystem) -> None:
         original = filesystem._info
-        file_calls = 0
 
         async def info(
             self: _TreeFileSystem,
             path: str,
             **kwargs: object,
         ) -> dict[str, object]:
-            nonlocal file_calls
-            del self
-            if path == "/out/copy/file":
-                file_calls += 1
-                if file_calls == 2:
-                    message = "proof"
-                    raise OSError(message)
+            if path == "/out/copy/file" and path in self.entries:
+                message = "proof"
+                raise OSError(message)
             return await original(path, **kwargs)
 
         filesystem._info = MethodType(info, filesystem)  # type: ignore[method-assign]
@@ -753,3 +842,87 @@ def test_recursive_cp_accepts_matching_shared_tokens() -> None:
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, "", "")
     assert destination_entries["/out/copy/file"] == b"x"
+
+
+def test_recursive_cp_reports_first_failure_in_manifest_order() -> None:  # noqa: C901 - scripted per-file timing.
+    source_entries: dict[str, bytes | None] = {"/": None, "/docs": None}
+    for index in range(20):
+        source_entries[f"/docs/f{index:02d}"] = b"x"
+    destination_entries: dict[str, bytes | None] = {"/": None, "/out": None}
+    started: list[str] = []
+    staged: list[str] = []
+    events: list[str] = []
+
+    async def yield_control(times: int) -> None:
+        for _ in range(times):
+            await asyncio.sleep(0)
+
+    def configure_source(filesystem: _TreeFileSystem) -> None:
+        original = filesystem._get_file
+
+        async def get_file(
+            self: _TreeFileSystem,
+            remote: str,
+            local: str,
+            **kwargs: object,
+        ) -> None:
+            del self
+            started.append(remote)
+            staged.append(local)
+            if remote == "/docs/f03":
+                # Earlier in manifest order, but fails after the later one.
+                await yield_control(10)
+                events.append("f03 failed")
+                message = "slow download"
+                raise OSError(message)
+            if remote != "/docs/f05":
+                await yield_control(20)
+            await original(remote, local, **kwargs)
+
+        filesystem._get_file = MethodType(get_file, filesystem)  # type: ignore[method-assign]
+
+    def configure_destination(filesystem: _TreeFileSystem) -> None:
+        original = filesystem._put_file
+
+        async def put_file(
+            self: _TreeFileSystem,
+            local: str,
+            remote: str,
+            mode: str = "overwrite",
+            **kwargs: object,
+        ) -> None:
+            del self
+            if remote == "/out/copy/f05":
+                events.append("f05 failed")
+                message = "fast upload"
+                raise OSError(message)
+            await original(local, remote, mode, **kwargs)
+
+        filesystem._put_file = MethodType(put_file, filesystem)  # type: ignore[method-assign]
+
+    result = _invoke(
+        ["-R", "source:/docs", "destination:/out/copy"],
+        {
+            "source": _source(source_entries, [], configure=configure_source),
+            "destination": _source(
+                destination_entries,
+                [],
+                configure=configure_destination,
+            ),
+        },
+    )
+
+    assert events == ["f05 failed", "f03 failed"]
+    # f03 precedes f05 in the manifest, so its category is the one rendered.
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "cp: source:/docs: transfer failure; destination residue may remain\n",
+    )
+    # Only the first bound's worth of transfers ever started: none began
+    # after the f05 failure was observed, and in-flight ones finished.
+    assert started == [f"/docs/f{index:02d}" for index in range(16)]
+    assert sorted(
+        path for path in destination_entries if path.startswith("/out/copy/")
+    ) == [f"/out/copy/f{index:02d}" for index in range(16) if index not in {3, 5}]
+    assert not [path for path in staged if Path(path).exists()]

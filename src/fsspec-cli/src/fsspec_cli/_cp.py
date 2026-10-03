@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
+import time
 from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
@@ -22,6 +24,7 @@ from ._command import (
     _usage_error,
 )
 from ._diagnostics import _render_diagnostic_value
+from ._logging import _location, _log_file_operation, _redact
 from ._manifest import _TOKEN_ALIASES, _shared_tokens_match
 from ._path import _lexical_basename, _lexical_join, _lexical_parent
 from ._recursive_cp import _canonical_operand, _run_recursive_cp
@@ -34,6 +37,7 @@ if TYPE_CHECKING:
     from ._app import AsyncFilesystemSource
 
 _MIN_OPERAND_COUNT = 2
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -373,6 +377,7 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901 - explicit copy outcome
     source_filesystem: AsyncFileSystem,
     destination_filesystem: AsyncFileSystem,
 ) -> _CpFailure | None:
+    started = time.monotonic()
     prepared = await _prepare_transfer(
         request,
         source_filesystem,
@@ -396,6 +401,11 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901 - explicit copy outcome
             backend_error=staging_error,
             category="staging failure",
         )
+    _LOGGER.debug(
+        "staged %s through %s",
+        _location(request.source.name, request.source.path),
+        _redact(temporary),
+    )
 
     primary_failure: _CpFailure | None = None
     mutated = False
@@ -457,6 +467,7 @@ async def _confirmed_cross_source_cp_file(  # noqa: C901 - explicit copy outcome
             category="staging failure",
             residue=mutated,
         )
+    _log_verified_transfer("staged", request, resolved, proof, started)
     return None
 
 
@@ -464,6 +475,7 @@ async def _confirmed_cp_file(
     request: _CpRequest,
     filesystem: AsyncFileSystem,
 ) -> _CpFailure | None:
+    started = time.monotonic()
     prepared = await _prepare_transfer(request, filesystem, filesystem)
     if isinstance(prepared, _CpFailure):
         return prepared
@@ -487,7 +499,7 @@ async def _confirmed_cp_file(
             residue=True,
         )
 
-    return await _verify_transfer(
+    failure = await _verify_transfer(
         filesystem,
         filesystem,
         request.source.path,
@@ -495,6 +507,27 @@ async def _confirmed_cp_file(
         proof,
         request.destination,
         require_source_absent=False,
+    )
+    if failure is None:
+        _log_verified_transfer("copied", request, resolved, proof, started)
+    return failure
+
+
+def _log_verified_transfer(
+    outcome: str,
+    request: _CpRequest,
+    resolved: str,
+    proof: _TransferProof,
+    started: float,
+) -> None:
+    """Record one verified file operation for an embedding host."""
+    _log_file_operation(
+        _LOGGER,
+        outcome,
+        _location(request.source.name, request.source.path),
+        _location(request.destination.name, resolved),
+        proof.expected_size,
+        started,
     )
 
 

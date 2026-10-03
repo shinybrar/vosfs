@@ -11,8 +11,11 @@ from __future__ import annotations
 import asyncio
 import datetime
 import errno
+import functools
 import hashlib
+import logging
 import os
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast, overload
 from urllib.parse import urlsplit
@@ -58,6 +61,12 @@ _SECURITY_METHOD_BY_CREDENTIAL = {
     "certificate": capabilities.CERTIFICATE_METHOD,
 }
 _GET_CONTAINER_MARKER = "_vosfs_materialize_get_container"
+#: Default fsspec bulk concurrency. fsspec otherwise derives it from the open-file
+#: limit (often thousands), far beyond the HTTP pool: queued transfers then wait
+#: on the pool past its timeout and fail spuriously with ``PoolTimeout``.
+DEFAULT_BATCH_SIZE = 32
+
+logger = logging.getLogger(__name__)
 
 
 class VOSpaceFileSystem(AsyncFileSystem):
@@ -115,6 +124,8 @@ class VOSpaceFileSystem(AsyncFileSystem):
             batch_size=batch_size,
             **storage_options,
         )
+        if batch_size is None:
+            self.batch_size = DEFAULT_BATCH_SIZE
         self._credential = config.resolve_credential(
             token=token,
             tokenfile=tokenfile,
@@ -272,10 +283,20 @@ class VOSpaceFileSystem(AsyncFileSystem):
 
     # -- node metadata and listing -------------------------------------------
 
-    async def _get_node_document(self, path: str) -> bytes:
-        """GET the node document for ``path`` or raise the mapped exception."""
+    async def _get_node_document(self, path: str, *, children: bool = True) -> bytes:
+        """GET the node document for ``path`` or raise the mapped exception.
+
+        With ``children=False`` the request carries VOSpace ``limit=0`` so a
+        container answers with its own metadata only. Metadata lookups must not
+        download (and parse) a container's entire child listing: that costs
+        time proportional to the directory size and fails outright once the
+        listing exceeds the XML parse limit. A service that ignores ``limit``
+        returns the children, which parsing a single node simply skips.
+        """
         bindings = await self._get_bindings()
         url = bindings.require_nodes() + paths.encode_url_path(path)
+        if not children:
+            url += "?limit=0"
         response = await self._send_to_service("GET", url, headers=nodes.XML_HEADERS)
         self._raise_for_status(response, path=path, allowed=(transport.HTTP_OK,))
         return response.content
@@ -300,10 +321,31 @@ class VOSpaceFileSystem(AsyncFileSystem):
             raise errors.VOSpaceError(msg)
 
     async def _info(self, path: str, **_kwargs: Any) -> dict[str, Any]:  # noqa: ANN401 - fsspec hook signature
-        """Return the fsspec metadata for ``path`` or raise ``FileNotFoundError``."""
+        """Return the fsspec metadata for ``path`` or raise ``FileNotFoundError``.
+
+        An entry already present in its parent's cached listing is returned
+        from the directory cache, which mutations invalidate; otherwise one
+        childless node GET answers.
+        """
         path = self._strip_protocol(path)
-        node = self._parse_and_note(await self._get_node_document(path))
+        cached = self._cached_info(path)
+        if cached is not None:
+            return cached
+        node = self._parse_and_note(await self._get_node_document(path, children=False))
         return nodes.to_info(node, path)
+
+    def _cached_info(self, path: str) -> dict[str, Any] | None:
+        """Return a copy of ``path``'s entry from its parent's cached listing."""
+        if path == "/":
+            return None
+        try:
+            siblings = self.dircache[coordination.canonical_path(paths.parent(path))]
+        except KeyError:
+            return None
+        for entry in siblings:
+            if entry["name"] == path:
+                return dict(entry)
+        return None
 
     async def _ls(self, path: str, detail: bool = True, **_kwargs: Any) -> list[Any]:  # noqa: ANN401, FBT001, FBT002 - fsspec hook signature
         """List the immediate children of ``path`` (or the node itself if a file).
@@ -374,7 +416,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
     async def _modified(self, path: str) -> datetime.datetime:
         """Return the OpenCADC modification date for ``path``."""
         path = self._strip_protocol(path)
-        node = self._parse_and_note(await self._get_node_document(path))
+        node = self._parse_and_note(await self._get_node_document(path, children=False))
         if node.mtime is None:
             msg = f"no modification date is available for {path}"
             raise errors.VOSpaceError(msg)
@@ -385,7 +427,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
     async def _require_authority(self) -> str:
         """Return the discovered VOSpace authority, discovering it if needed."""
         if self._authority is None:
-            self._parse_and_note(await self._get_node_document("/"))
+            self._parse_and_note(await self._get_node_document("/", children=False))
         if self._authority is None:  # pragma: no cover - root always carries a URI
             msg = "unable to discover the VOSpace authority"
             raise errors.VOSpaceError(msg)
@@ -436,9 +478,8 @@ class VOSpaceFileSystem(AsyncFileSystem):
         withdirs: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> list[str] | dict[str, dict[str, Any]]:
-        """Find paths inside the inherited-fsspec coordinator seam."""
-        result = await AsyncFileSystem._find(  # noqa: SLF001 - inherited seam
-            self._adapter,
+        """Find paths with a concurrent breadth-first walk inside the seam."""
+        result = await self._adapter._find(  # noqa: SLF001 - inherited seam
             coordination.normalize_hook_path(path),
             maxdepth=maxdepth,
             withdirs=withdirs,
@@ -517,19 +558,29 @@ class VOSpaceFileSystem(AsyncFileSystem):
         maxdepth: int | None = None,
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> int | dict[str, int]:
-        """Measure paths inside the inherited-fsspec coordinator seam."""
-        result = await AsyncFileSystem._du(  # noqa: SLF001 - inherited seam
-            self._adapter,
-            coordination.normalize_hook_path(path),
-            total=total,
-            maxdepth=maxdepth,
-            **kwargs,
+        """Measure paths from listing sizes, without one ``info`` per file.
+
+        fsspec's inherited ``_du`` walks the tree and then requests ``info``
+        for every path it found, one at a time, although each listing already
+        carries the sizes. Only an entry the walk could not describe (an
+        unlistable operand that is itself a file) costs one more lookup.
+        """
+        found = cast(
+            "dict[str, dict[str, Any]]",
+            await self._adapter._find(  # noqa: SLF001 - inherited seam
+                coordination.normalize_hook_path(path),
+                maxdepth=maxdepth,
+                detail=True,
+                **kwargs,
+            ),
         )
-        if isinstance(result, dict):
-            return {
-                coordination.canonical_path(key): value for key, value in result.items()
-            }
-        return result
+        sizes: dict[str, int] = {}
+        for name, info in found.items():
+            described = info if "size" in info else await self._adapter._info(name)  # noqa: SLF001
+            sizes[coordination.canonical_path(described["name"])] = described["size"]
+        if total:
+            return sum(sizes.values())
+        return sizes
 
     async def _get_file(
         self,
@@ -539,13 +590,22 @@ class VOSpaceFileSystem(AsyncFileSystem):
     ) -> None:
         """Stream one negotiated whole-object GET to a local file."""
         rpath = self._strip_protocol(rpath)
+        target_validated = False
         if kwargs.pop(_GET_CONTAINER_MARKER, False):
             info = await self._info(rpath)
             if info["type"] == "directory":
                 Path(lpath).mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
                 return
+            # The metadata already in hand is enough to reject an external
+            # LinkNode, so the read needs no second node GET.
+            await _transfer.reject_external_link_info(self, info)
+            target_validated = True
         callback: Callback = kwargs.get("callback", DEFAULT_CALLBACK)
-        await self._download_file(rpath, lpath, callback=callback)
+        started = time.monotonic()
+        size = await self._download_file(
+            rpath, lpath, callback=callback, target_validated=target_validated
+        )
+        _log_transfer("downloaded", rpath, lpath, size, started)
 
     async def _download_file(
         self,
@@ -554,24 +614,31 @@ class VOSpaceFileSystem(AsyncFileSystem):
         *,
         callback: Callback = DEFAULT_CALLBACK,
         target_validated: bool = False,
-    ) -> None:
-        """Stream one read to disk, optionally reusing a safe preflight."""
+    ) -> int:
+        """Stream one read to disk, optionally reusing a safe preflight.
+
+        Returns:
+            The number of bytes written.
+        """
         response = await _transfer.open_read_stream(
             self,
             rpath,
             target_validated=target_validated,
         )
+        written = 0
         try:
             size = response.headers.get("content-length")
             callback.set_size(int(size) if size is not None else None)
             with Path(lpath).open("wb") as local:  # noqa: ASYNC230 - staging to local disk
                 if response.status_code == transport.HTTP_NO_CONTENT:
-                    return
+                    return 0
                 async for chunk in response.aiter_raw(_integrity.READ_CHUNK):
                     local.write(chunk)
+                    written += len(chunk)
                     callback.relative_update(len(chunk))
         finally:
             await response.aclose()
+        return written
 
     async def _cat_file(
         self,
@@ -720,13 +787,15 @@ class VOSpaceFileSystem(AsyncFileSystem):
             sync(self.loop, _transfer.preflight_read_target, self, path)
             temp_path = staging.new_temp_path()
             try:
-                sync(
+                started = time.monotonic()
+                size = sync(
                     self.loop,
                     self._download_file,
                     path,
                     temp_path,
                     target_validated=True,
                 )
+                _log_transfer("staged", path, temp_path, size, started)
                 return staging.StagedReadFile(temp_path)
             except BaseException:
                 staging.unlink_temp_path(temp_path)
@@ -817,6 +886,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = f"path already exists: {path}"
             raise FileExistsError(msg)
         await self._materialize_write_parent(path, state)
+        started = time.monotonic()
         await _transfer.write_whole(
             self,
             path,
@@ -825,6 +895,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
             content_type=kwargs.get("content_type"),
             expected_digest=hashlib.md5(value, usedforsecurity=False).digest(),
         )
+        _log_transfer("uploaded", "<bytes>", path, len(value), started)
 
     async def _put_file(
         self,
@@ -841,16 +912,41 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = f"path already exists: {rpath}"
             raise FileExistsError(msg)
         await self._materialize_write_parent(rpath, state)
+        started = time.monotonic()
+        size = await self._upload_file(
+            lpath, rpath, callback=callback, content_type=kwargs.get("content_type")
+        )
+        _log_transfer("uploaded", lpath, rpath, size, started)
+
+    async def _upload_file(
+        self,
+        lpath: str,
+        rpath: str,
+        *,
+        callback: Callback = DEFAULT_CALLBACK,
+        content_type: str | None = None,
+    ) -> int:
+        """Stream one local file through one negotiated PUT, hashing in flight.
+
+        The MD5 is accumulated while the body streams and compared with any
+        server-returned digest once the PUT completes, so the file is read once
+        and the event loop never blocks on a whole-file hashing pass.
+
+        Returns:
+            The number of bytes uploaded.
+        """
         size = Path(lpath).stat().st_size  # noqa: ASYNC240 - local-disk stat, not remote I/O
         callback.set_size(size)
+        digest = _integrity.new_md5()
         await _transfer.write_whole(
             self,
             rpath,
-            _integrity.file_body(lpath, callback),
+            _integrity.file_body(lpath, callback, digest),
             size=size,
-            content_type=kwargs.get("content_type"),
-            expected_digest=_integrity.md5_of_file(lpath),
+            content_type=content_type,
+            expected_digest=digest.digest,
         )
+        return size
 
     def touch(
         self,
@@ -900,6 +996,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
             )
         finally:
             self._invalidate(path)
+        logger.info("removed %s", path, extra={"vosfs_outcome": "removed"})
 
     async def _mkdir(
         self,
@@ -996,16 +1093,39 @@ class VOSpaceFileSystem(AsyncFileSystem):
         self,
         path: str | list[str],
         recursive: bool = False,  # noqa: FBT001, FBT002 - fsspec hook signature
-        batch_size: int | None = None,  # noqa: ARG002 - accepted for fsspec compatibility
+        batch_size: int | None = None,
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> None:
-        """Delete files and, with ``recursive``, empty-check or leaves-first trees."""
+        """Delete files and, with ``recursive``, empty-check or leaves-first trees.
+
+        Independent targets are removed concurrently, at most ``batch_size`` at
+        a time; after a failure no further target starts and the first failing
+        target, in argument order, is raised. Nested or repeated targets keep
+        the sequential order.
+        """
         if kwargs.get("maxdepth") is not None:
             msg = "rm(maxdepth=...) is unsupported"
             raise NotImplementedError(msg)
-        targets = path if isinstance(path, list) else [path]
-        for target in targets:
-            await self._rm_one(self._strip_protocol(target), recursive=recursive)
+        targets = [
+            self._strip_protocol(target)
+            for target in (path if isinstance(path, list) else [path])
+        ]
+        if _overlapping(targets):
+            # A target inside (or equal to) another must observe the earlier
+            # removal, exactly as the sequential contract describes.
+            for target in targets:
+                await self._rm_one(target, recursive=recursive)
+            return
+        await coordination.run_bounded(
+            [
+                functools.partial(self._rm_one, target, recursive=recursive)
+                for target in targets
+            ],
+            coordination.effective_limit(
+                batch_size if batch_size is not None else self.batch_size,
+                len(targets),
+            ),
+        )
 
     async def _rm_one(self, path: str, *, recursive: bool) -> None:
         """Delete a single path, dispatching by node type and recursion."""
@@ -1029,32 +1149,44 @@ class VOSpaceFileSystem(AsyncFileSystem):
         path2 = self._strip_protocol(path2)
         # Resolve the source first so a missing source fails before any
         # destination container is created (no orphaned parent on error).
-        source_is_dir = (
-            await _transfer.validate_read_target(self, path1)
-        ).node_type == "container"
+        # A cached listing entry (from the coordinator's expansion) suffices.
+        source = await self._info(path1)
+        await _transfer.reject_external_link_info(self, source)
+        source_is_dir = source["type"] == "directory"
         # Then materialize the destination's parent, for both a directory and a
         # file target, so copying into a not-yet-created subtree (for example a
         # recursive glob into ``target/newdir``) never orphans an intermediate
         # ContainerNode.
-        parent = coordination.canonical_path(paths.parent(path2))
-        if parent not in ("/", path2) and not await self._exists(parent):
-            await self._makedirs(parent, exist_ok=True)
-        if source_is_dir:
-            await self._ensure_container(path2)
-            return
+        # Inside a bulk copy the parents are materialized once per operation;
+        # otherwise every concurrent sibling copy would race to create them.
+        state = coordination.join_write_scope(self)
+        if state is not None:
+            if source_is_dir:
+                await self._materialize_write_containers(path2, state)
+                return
+            await self._materialize_write_parent(path2, state)
+        else:
+            parent = coordination.canonical_path(paths.parent(path2))
+            if parent not in ("/", path2) and not await self._exists(parent):
+                await self._makedirs(parent, exist_ok=True)
+            if source_is_dir:
+                await self._ensure_container(path2)
+                return
         # Relay through a disk-staged temporary file so an arbitrarily large
         # object is never held whole in memory; the staged PUT still validates
         # the round-trip md5.
         temp_path = staging.new_temp_path()
+        started = time.monotonic()
         try:
             await self._download_file(
                 path1,
                 temp_path,
                 target_validated=True,
             )
-            await self._put_file(temp_path, path2, mode="overwrite")
+            size = await self._upload_file(temp_path, path2)
         finally:
             staging.unlink_temp_path(temp_path)
+        _log_transfer("copied", path1, path2, size, started)
 
     async def _mv_file(self, path1: str, path2: str) -> None:
         """Move one DataNode through the shared async executor."""
@@ -1070,17 +1202,22 @@ class VOSpaceFileSystem(AsyncFileSystem):
         batch_size: int | None = None,
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> None:
-        """Copy paths inside the inherited-fsspec coordinator seam."""
-        await AsyncFileSystem._copy(  # noqa: SLF001 - inherited seam
-            self._adapter,
-            coordination.normalize_hook_paths(path1),
-            coordination.normalize_hook_paths(path2),
-            recursive=recursive,
-            on_error=on_error,
-            maxdepth=maxdepth,
-            batch_size=batch_size,
-            **kwargs,
-        )
+        """Copy paths inside the inherited-fsspec coordinator seam.
+
+        The copy runs in one write scope, so destination containers shared by
+        many concurrently copied files are checked and created once.
+        """
+        async with coordination.write_scope(self):
+            await AsyncFileSystem._copy(  # noqa: SLF001 - inherited seam
+                self._adapter,
+                coordination.normalize_hook_paths(path1),
+                coordination.normalize_hook_paths(path2),
+                recursive=recursive,
+                on_error=on_error,
+                maxdepth=maxdepth,
+                batch_size=batch_size,
+                **kwargs,
+            )
 
     def mv(
         self,
@@ -1119,6 +1256,7 @@ class VOSpaceFileSystem(AsyncFileSystem):
         **kwargs: Any,  # noqa: ANN401 - fsspec hook signature
     ) -> None:
         """Plan and execute one client-derived move."""
+        started = time.monotonic()
         plan = await _moving.plan(
             self,
             path1,
@@ -1128,6 +1266,15 @@ class VOSpaceFileSystem(AsyncFileSystem):
             file_only=file_only,
         )
         await _moving.execute(self, plan, **kwargs)
+        if plan.entries:
+            logger.info(
+                "moved %s -> %s (%d entries, %.3f s)",
+                plan.source,
+                plan.destination,
+                len(plan.entries),
+                time.monotonic() - started,
+                extra={"vosfs_outcome": "moved"},
+            )
 
     def _invalidate(self, path: str) -> None:
         """Invalidate the directory cache for ``path``, its subtree, and parent.
@@ -1178,6 +1325,41 @@ class VOSpaceFileSystem(AsyncFileSystem):
             msg = "use 'await aclose()' to close an asynchronous filesystem"
             raise RuntimeError(msg)
         sync(self.loop, self.aclose)
+
+
+def _log_transfer(
+    outcome: str, source: str, destination: str, size: int, started: float
+) -> None:
+    """Emit the one INFO record for a completed single-file transfer."""
+    seconds = time.monotonic() - started
+    logger.info(
+        "%s %s -> %s (%d bytes, %.3f s)",
+        outcome,
+        source,
+        destination,
+        size,
+        seconds,
+        extra={
+            "vosfs_outcome": outcome,
+            "vosfs_source": source,
+            "vosfs_destination": destination,
+            "vosfs_bytes": size,
+            "vosfs_seconds": seconds,
+        },
+    )
+
+
+def _overlapping(targets: list[str]) -> bool:
+    """Whether any removal target repeats or lies inside another target."""
+    unique = set(targets)
+    if len(unique) != len(targets):
+        return True
+    return any(
+        ancestor in unique
+        for target in targets
+        for ancestor in ["/", *_ancestors_top_down(target)[:-1]]
+        if target != "/"
+    )
 
 
 def _canonical_result(

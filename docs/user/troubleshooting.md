@@ -130,6 +130,11 @@ fs = fsspec.filesystem(
 )
 ```
 
+A bulk `get`, `put`, `copy`, or `cat` runs at most `batch_size` transfers at
+once (32 by default). If you raise `batch_size` far above the HTTP pool's 100
+connections, queued transfers can wait past the `pool` timeout and fail; keep
+it at or below 100.
+
 ## `OSError` with `errno.ENOSPC`
 
 A storage quota is exhausted. Free space or request more; this is not a client

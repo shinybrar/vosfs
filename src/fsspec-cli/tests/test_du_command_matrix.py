@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TypeVar
 
 import httpx
+import pytest
 from fsspec.asyn import AsyncFileSystem
 from fsspec.implementations.asyn_wrapper import AsyncFileSystemWrapper
 from fsspec.implementations.local import LocalFileSystem
@@ -21,8 +22,6 @@ from ._vosfs_matrix_support import (
     _CAPABILITIES,
     _vos_child,
     _vos_container,
-    _vos_data,
-    _vos_link,
     _vosfs_source,
 )
 
@@ -37,18 +36,6 @@ _DOCS = _vos_container(
 _RESPONSES: dict[tuple[str, str], httpx.Response] = {
     ("GET", "/arc/capabilities"): httpx.Response(200, content=_CAPABILITIES),
     ("GET", "/arc/nodes/docs"): httpx.Response(200, content=_DOCS),
-    ("GET", "/arc/nodes/docs/.hidden"): httpx.Response(
-        200, content=_vos_data("/docs/.hidden", length=7)
-    ),
-    ("GET", "/arc/nodes/docs/guide.md"): httpx.Response(
-        200, content=_vos_data("/docs/guide.md", length=8)
-    ),
-    ("GET", "/arc/nodes/docs/notes.txt"): httpx.Response(
-        200, content=_vos_data("/docs/notes.txt", length=1536)
-    ),
-    ("GET", "/arc/nodes/docs/shortcut"): httpx.Response(
-        200, content=_vos_link("/docs/shortcut", "/docs/guide.md")
-    ),
 }
 
 
@@ -88,13 +75,11 @@ def _exercise_du_profile(  # noqa: PLR0913 - matrix golden expectations.
         "enter",
         "exit",
     ] * 4
-    du_calls = [call for call in source.calls if call.operation == "du"]
-    assert [(call.path, call.total, call.kwargs) for call in du_calls] == [
-        (path, False, {}),
-        (path, False, {}),
-        (path, True, {}),
-        (path, True, {}),
-    ]
+    # One listing GET per directory; no per-file metadata lookups.
+    assert [
+        (call.operation, call.source_id, call.path, call.detail, call.kwargs)
+        for call in source.calls
+    ] == [("ls", source_id, path, True, {}) for source_id in range(1, 5)]
     assert not source.errors
 
 
@@ -148,6 +133,29 @@ def test_adapted_memory_du_profile_has_isolated_state(
     assert all(isinstance(fs.sync_fs, MemoryFileSystem) for fs in source.filesystems)
 
 
+@pytest.mark.parametrize("arguments", [[], ["-s"]])
+def test_adapted_memory_du_reports_a_missing_operand_as_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+    arguments: list[str],
+) -> None:
+    source = _memory_source(monkeypatch)
+
+    result = CliRunner().invoke(
+        App({"memory": source}).typer_app,
+        ["du", *arguments, "memory:/docs/missing"],
+    )
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        1,
+        "",
+        "du: memory:/docs/missing: not found\n",
+    )
+    assert [(call.operation, call.path) for call in source.calls] == [
+        ("ls", "/docs/missing"),
+    ]
+    assert source.exit_calls[0].exc_type is FileNotFoundError
+
+
 def test_native_vosfs_du_profile_uses_only_mocked_transport() -> None:
     source, transports = _vosfs_source(_RESPONSES)
 
@@ -176,10 +184,6 @@ def test_native_vosfs_du_profile_uses_only_mocked_transport() -> None:
     expected_requests = [
         ("GET", "/arc/capabilities"),
         ("GET", "/arc/nodes/docs"),
-        ("GET", "/arc/nodes/docs/.hidden"),
-        ("GET", "/arc/nodes/docs/guide.md"),
-        ("GET", "/arc/nodes/docs/notes.txt"),
-        ("GET", "/arc/nodes/docs/shortcut"),
     ]
     assert [transport.requests for transport in transports] == [
         expected_requests,

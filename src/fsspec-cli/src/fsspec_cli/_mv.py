@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,7 @@ from ._command import (
 from ._cp import (
     _CpFailure,
     _CpRequest,
+    _log_verified_transfer,
     _prepare_transfer,
     _render_failure,
     _require_directory,
@@ -54,6 +56,7 @@ def _plan_mv(
 async def _confirmed_mv_file(
     request: _CpRequest, filesystem: AsyncFileSystem
 ) -> _CpFailure | None:
+    started = time.monotonic()
     prepared = await _prepare_transfer(request, filesystem, filesystem)
     if isinstance(prepared, _CpFailure):
         return prepared
@@ -77,7 +80,7 @@ async def _confirmed_mv_file(
             residue=True,
         )
 
-    return await _verify_transfer(
+    failure = await _verify_transfer(
         filesystem,
         filesystem,
         request.source.path,
@@ -86,6 +89,9 @@ async def _confirmed_mv_file(
         request.destination,
         require_source_absent=True,
     )
+    if failure is None:
+        _log_verified_transfer("moved", request, resolved, proof, started)
+    return failure
 
 
 async def _run_mv(

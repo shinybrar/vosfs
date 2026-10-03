@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, TypeGuard
+from typing import TYPE_CHECKING, Literal, TypeGuard, cast
 
 from ._command import (
+    _call,
     _collate,
-    _drain_current_operation,
     _Failure,
     _MappedOperand,
     _run_single_operand_text,
 )
 from ._metadata import valid_display_text
+from ._walk import _IncompatibleListingError, _ListedRow, _walk
 
 if TYPE_CHECKING:
     from fsspec.asyn import AsyncFileSystem
@@ -28,40 +29,42 @@ class _FindRequest:
     operand: _MappedOperand
 
 
-def _render_result(request: _FindRequest, result: object) -> str | _Failure:
-    paths = _directory_paths(result) if request.kind == "d" else _file_paths(result)
-    if paths is None:
-        return _Failure(request.operand)
+def _render_paths(request: _FindRequest, paths: list[str]) -> str:
     if request.maxdepth == 0:
         root = request.operand.path.rstrip("/")
         paths = [path for path in paths if path.rstrip("/") == root]
     paths.sort(key=_collate)
-    return "".join(f"{path}\n" for path in paths)
+    return "".join(f"{path}\n" for path in dict.fromkeys(paths))
 
 
-def _file_paths(result: object) -> list[str] | None:
-    if type(result) is not list:
-        return None
-    paths: list[str] = []
-    for path in result:
-        if not _valid_path(path):
+def _selected_paths(
+    request: _FindRequest,
+    root_info: object,
+    rows: list[_ListedRow],
+) -> list[str] | None:
+    """Select displayable file or directory paths, or ``None`` if invalid.
+
+    File entries are every non-directory row entry, as fsspec's ``_find``
+    reports them; ``--type d`` reports the operand itself when it is a
+    directory plus every listed directory.
+    """
+    infos: list[Mapping[object, object]] = []
+    if request.kind == "d":
+        if not isinstance(root_info, Mapping):
             return None
-        paths.append(path)
-    return paths
-
-
-def _directory_paths(result: object) -> list[str] | None:
-    if not isinstance(result, Mapping):
-        return None
+        infos.append(cast("Mapping[object, object]", root_info))
+    for row in rows:
+        if request.kind == "d":
+            infos.extend(row.directories.values())
+        infos.extend(row.files.values())
     paths: list[str] = []
     try:
-        for path, info in result.items():
-            if not _valid_path(path) or not isinstance(info, Mapping):
-                return None
+        for info in infos:
+            path = info.get("name")
             kind = info.get("type")
-            if type(kind) is not str:
+            if not _valid_path(path) or type(kind) is not str:
                 return None
-            if kind == "directory":
+            if (kind == "directory") == (request.kind == "d"):
                 paths.append(path)
     except Exception:  # noqa: BLE001 - fail closed on hostile mapping consumption.
         return None
@@ -77,17 +80,24 @@ async def _search(
     filesystem: AsyncFileSystem,
 ) -> str | _Failure:
     try:
-        result = await _drain_current_operation(
-            filesystem._find(
-                request.operand.path,
-                maxdepth=1 if request.maxdepth == 0 else request.maxdepth,
-                withdirs=request.kind == "d",
-                detail=request.kind == "d",
-            )
+        root_info = (
+            await _call(filesystem, "_info", request.operand.path)
+            if request.kind == "d"
+            else None
         )
+        rows = await _walk(
+            filesystem,
+            request.operand.path,
+            maxdepth=1 if request.maxdepth == 0 else request.maxdepth,
+        )
+    except _IncompatibleListingError:
+        return _Failure(request.operand)
     except Exception as error:  # noqa: BLE001 - classify awaited backend failure.
         return _Failure(request.operand, backend_error=error)
-    return _render_result(request, result)
+    paths = _selected_paths(request, root_info, rows)
+    if paths is None:
+        return _Failure(request.operand)
+    return _render_paths(request, paths)
 
 
 async def _run_find(
