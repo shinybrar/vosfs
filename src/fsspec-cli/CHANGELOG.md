@@ -44,6 +44,13 @@
 * Parameterize private command orchestration with concrete command labels
   without adding a supported command or public runner.
 
+## [0.10.0](https://github.com/shinybrar/vosfs/compare/fsspec-cli-v0.9.0...fsspec-cli-v0.10.0) (2026-10-04)
+
+
+### Features
+
+* log transfers and cut round trips in tree and bulk operations ([#347](https://github.com/shinybrar/vosfs/issues/347)) ([4463709](https://github.com/shinybrar/vosfs/commit/44637094edcb8f55dc91bcc12b6bf054ad3f0151))
+
 ## [0.9.0](https://github.com/shinybrar/vosfs/compare/fsspec-cli-v0.8.0...fsspec-cli-v0.9.0) (2026-10-02)
 
 
